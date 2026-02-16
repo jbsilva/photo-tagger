@@ -69,29 +69,22 @@ build-backend = "uv_build"
 [tool.ruff]
 line-length = 100
 indent-width = 4
-extend-exclude = ["migrations"]
 target-version = "py314"
 fix = true
 unsafe-fixes = false
 
-[tool.ruff.lint.flake8-pytest-style]
-fixture-parentheses = true
-
-[tool.ruff.lint.flake8-annotations]
-allow-star-arg-any = true
-
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "D203",   # one-blank-line-before-class
-    "D212",   # multi-line-summary-first-line
-    "ANN401", # Allow Any type annotations in certain cases
+    "D203", # one-blank-line-before-class
+    "D212", # multi-line-summary-first-line
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/{test_*.py,conftest.py}" = [
     "S101",   # Allow assert in tests
-    "S106",   # Allow hardcoded password in tests
+    "S105",   # Allow hardcoded password in strings in tests
+    "S106",   # Allow hardcoded password in function calls in tests
     "ARG001", # Allow unused arguments in tests (for pytest fixtures)
 ]
 "**/__init__.py" = [
