@@ -3,7 +3,7 @@ name = "photo-tagger"
 version = "0.1.0"
 description = "CLI tool to describe photos and add keywords using AI"
 readme = "README.md"
-requires-python = ">=3.13,<4"
+requires-python = ">=3.14,<4"
 dependencies = [
     "cyclopts>=4.2.1",
     "rawpy>=0.25.1",
@@ -25,8 +25,8 @@ dev = [
 [tool.ruff]
 line-length = 100
 indent-width = 4
-target-version = "py313"
 extend-exclude = ["migrations"]
+target-version = "py314"
 fix = true
 unsafe-fixes = false
 
