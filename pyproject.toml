@@ -5,6 +5,7 @@ description = "CLI tool to describe photos and add keywords using AI"
 readme = "README.md"
 requires-python = ">=3.14,<4"
 authors = [{ name = "Julio Batista Silva", email = "python@juliobs.com" }]
+license = "MIT"
 dependencies = [
     "cyclopts>=4.2.1",
     "rawpy>=0.25.1",
