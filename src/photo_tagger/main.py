@@ -1464,9 +1464,13 @@ def tag(
 
     """
     # Setup logging
-    setup_logging(file_log_level=file_log_level, console_log_level=console_log_level)
+    setup_logging(
+        file_log_level=file_log_level,
+        console_log_level=console_log_level,
+        log_folder=log_folder,
+    )
     logger.info(
-        "starting_ai_photo_tagger",
+        "starting_photo_tagger",
         inputs=[str(p) for p in (inputs or [])],
         extensions=image_extensions,
         model=model_name,
@@ -1485,6 +1489,7 @@ def tag(
         jpeg_dimensions=jpeg_dimensions,
         jpeg_quality=jpeg_quality,
         retries=retries,
+        log_folder=str(log_folder),
     )
 
     image_files = _resolve_image_batch(inputs, image_extensions, recursive=recursive)
