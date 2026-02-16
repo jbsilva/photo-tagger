@@ -113,13 +113,18 @@ app = App(
 )
 
 
-def setup_logging(file_log_level: LogLevel = "DEBUG", console_log_level: LogLevel = "INFO") -> None:
+def setup_logging(
+    file_log_level: LogLevel = "DEBUG",
+    console_log_level: LogLevel = "INFO",
+    log_folder: Path = Path("logs"),
+) -> None:
     """
     Configure Loguru for both console and file logging.
 
     Args:
         file_log_level: Log level for file (use 'OFF' to disable)
         console_log_level: Log level for console (use 'OFF' to disable)
+        log_folder: Directory where log files are stored
 
     """
     # Remove default handler
@@ -127,7 +132,10 @@ def setup_logging(file_log_level: LogLevel = "DEBUG", console_log_level: LogLeve
 
     # Add file logging
     if file_log_level != "OFF":
-        log_file = Path(datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S-ai_photo_tagger.log"))
+        log_folder.mkdir(parents=True, exist_ok=True)
+        log_file = log_folder / Path(
+            datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S-photo_tagger.log"),
+        )
         logger.add(
             log_file,
             level=file_log_level,
