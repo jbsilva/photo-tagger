@@ -949,7 +949,8 @@ def process_photo(
         preserve_existing_kw: If True, merge with existing keywords rather than overwriting
         write_description: If True, also generate and write a short description
         write_title: If True, also generate and write a short title
-        backup_xmp: If True, create a backup of existing XMP file before overwriting
+        backup_xmp: If True, let ExifTool create _original backups when updating metadata
+        use_sidecar: If True, write to an XMP sidecar; otherwise embed metadata in the image file
         temperature: Sampling temperature for generation (0.0-1.0)
         max_tokens: Maximum tokens to generate in the model response
         jpeg_dimensions: Max dimension in pixels for the resized JPEG sent to the model
@@ -1014,14 +1015,69 @@ def process_photo(
     # Step 5: Merge AI-generated keywords with existing keywords
     merged_keywords = merge_keywords(existing_keywords, keywords)
 
-    # Step 6: Write to XMP sidecar
-    return write_xmp(
+    # Step 6: Persist metadata (sidecar or embedded)
+    return write_metadata(
         image_path,
         merged_keywords,
         description=description if write_description else None,
         title=title if write_title else None,
         backup=backup_xmp,
+        use_sidecar=use_sidecar,
     )
+
+
+def _execute_process(
+    image_file: Path,
+    *,
+    agent: Agent,
+    preserve_existing_kw: bool,
+    write_description: bool,
+    write_title: bool,
+    backup_xmp: bool,
+    use_sidecar: bool,
+    temperature: float,
+    max_tokens: int,
+    jpeg_dimensions: int,
+    jpeg_quality: int,
+    index: str,
+    retry: bool = False,
+) -> bool:
+    """Run process_photo once with consistent logging and error handling."""
+    context_kwargs: dict[str, Any] = {"file": image_file.name}
+    if retry:
+        context_kwargs["retry"] = True
+
+    with logger.contextualize(**context_kwargs):
+        try:
+            ok = process_photo(
+                image_file,
+                agent=agent,
+                preserve_existing_kw=preserve_existing_kw,
+                write_description=write_description,
+                write_title=write_title,
+                backup_xmp=backup_xmp,
+                use_sidecar=use_sidecar,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                jpeg_dimensions=jpeg_dimensions,
+                jpeg_quality=jpeg_quality,
+            )
+        except Exception as exc:  # noqa: BLE001
+            event = "processing_retry_exception" if retry else "processing_exception"
+            logger.exception(event, error=str(exc))
+            return False
+
+        if ok:
+            event = "retry_success" if retry else "processing_success"
+            logger.info(event, index=index)
+            return True
+
+        event = "retry_failed" if retry else "processing_failed"
+        if retry:
+            logger.error(event, index=index)
+        else:
+            logger.error(event, index=index, queued_for_retry=True)
+        return False
 
 
 def _parse_extensions(image_extensions: str) -> set[str]:
@@ -1081,6 +1137,144 @@ def _resolve_image_files(
     return combined
 
 
+def _resolve_image_batch(
+    inputs: list[Path] | None,
+    image_extensions: str,
+    *,
+    recursive: bool,
+) -> list[Path]:
+    ext_set = _parse_extensions(image_extensions)
+    if not ext_set:
+        logger.error("no_valid_extensions_provided", raw_input=image_extensions)
+        raise SystemExit(1)
+    logger.debug("parsed_extensions", extensions=sorted(ext_set))
+
+    if not inputs:
+        logger.error(
+            "no_inputs_provided",
+            hint=("Pass one or more --input/-i paths (files or directories)"),
+        )
+        raise SystemExit(1)
+
+    image_files = _resolve_image_files(inputs, ext_set, recursive=recursive)
+    if not image_files:
+        logger.error(
+            "no_image_files_found",
+            inputs=[str(p) for p in inputs],
+            recursive=recursive,
+            extensions=sorted(ext_set),
+        )
+        raise SystemExit(1)
+
+    logger.info("image_files_discovered", count=len(image_files))
+    return image_files
+
+
+def _load_skip_list(skip_file: Path) -> set[str]:
+    try:
+        content = skip_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.error("skip_file_read_failed", file=str(skip_file), error=str(exc))
+        raise SystemExit(1) from exc
+
+    entries: set[str] = set()
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        entries.add(stripped)
+
+    if entries:
+        logger.info("skip_entries_loaded", count=len(entries), file=str(skip_file))
+    else:
+        logger.warning("skip_file_has_no_entries", file=str(skip_file))
+    return entries
+
+
+def _filter_skipped_files(
+    image_files: list[Path],
+    skip_entries: set[str],
+) -> tuple[list[Path], int]:
+    if not skip_entries:
+        return image_files, 0
+
+    name_keys = {
+        entry.casefold() for entry in skip_entries if os.sep not in entry and "/" not in entry
+    }
+    path_keys = {entry.casefold() for entry in skip_entries if entry.casefold() not in name_keys}
+
+    filtered: list[Path] = []
+    skipped = 0
+    for path in image_files:
+        name_key = path.name.casefold()
+        path_key = str(path).casefold()
+        if name_key in name_keys or path_key in path_keys:
+            logger.debug("skipping_file_from_list", file=str(path))
+            skipped += 1
+            continue
+        filtered.append(path)
+
+    return filtered, skipped
+
+
+def _apply_skip_file(
+    image_files: list[Path],
+    skip_file: Path | None,
+) -> list[Path]:
+    if not skip_file:
+        return image_files
+
+    skip_entries = _load_skip_list(skip_file)
+    filtered, skipped = _filter_skipped_files(image_files, skip_entries)
+    if skipped:
+        logger.info(
+            "skip_list_applied",
+            skipped=skipped,
+            remaining=len(filtered),
+            file=str(skip_file),
+        )
+    elif skip_entries:
+        logger.warning("skip_list_matched_no_files", file=str(skip_file))
+    return filtered
+
+
+def _create_agent(
+    provider_name: Literal["ollama", "lmstudio"],
+    model_name: str,
+    *,
+    api_base_url: str | None,
+    api_key: str | None,
+    retries: int,
+) -> Agent:
+    resolved_url = api_base_url or PROVIDER_URLS.get(provider_name, DEFAULT_OLLAMA_BASE_URL)
+    if api_base_url is None:
+        logger.debug("using_default_provider_url", url=resolved_url)
+
+    logger.info(
+        "provider_config_resolved",
+        provider=provider_name,
+        url=resolved_url,
+        model=model_name,
+    )
+    logger.debug("setting_up_llm_agent", provider=provider_name, url=resolved_url, model=model_name)
+
+    if provider_name == "ollama":
+        resolved_api_key = api_key or DEFAULT_OLLAMA_API_KEY
+        provider = OllamaProvider(base_url=resolved_url, api_key=resolved_api_key)
+    else:
+        resolved_api_key = api_key or DEFAULT_LMSTUDIO_API_KEY
+        _validate_lmstudio_model(resolved_url, model_name, resolved_api_key)
+        provider = OpenAIProvider(base_url=resolved_url, api_key=resolved_api_key)
+
+    chat_model = OpenAIChatModel(model_name=model_name, provider=provider)
+    return Agent(
+        chat_model,
+        output_type=GeneratedMetadata,
+        retries=retries,
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+    )
+
+
 @app.default
 def tag(
     inputs: Annotated[
@@ -1091,6 +1285,14 @@ def tag(
             help="One or more paths: files and/or directories (repeat this option)",
         ),
     ] = None,
+    skip_from: Annotated[
+        Path | None,
+        Parameter(
+            name=("--skip-from",),
+            validator=validators.Path(exists=True, file_okay=True, dir_okay=False),
+            help="Path to newline-delimited text file listing filenames to skip",
+        ),
+    ] = None,
     *,
     image_extensions: Annotated[
         str,
@@ -1098,7 +1300,7 @@ def tag(
             name=("--ext", "--extensions"),
             help="Comma-separated image file extensions to process (case insensitive)",
         ),
-    ] = "cr3,jpg",
+    ] = "cr3",
     model_name: Annotated[
         str,
         Parameter(
@@ -1157,7 +1359,15 @@ def tag(
         Parameter(
             name=("--backup-xmp",),
             negative="--no-backup-xmp",
-            help="Create a backup of existing XMP files before overwriting",
+            help="Create an ExifTool backup (_original) before overwriting metadata",
+        ),
+    ] = True,
+    use_sidecar: Annotated[
+        bool,
+        Parameter(
+            name=("--write-sidecar",),
+            negative="--embed-in-photo",
+            help="Write metadata to XMP sidecars (default) instead of embedding in the image",
         ),
     ] = True,
     temperature: Annotated[
@@ -1192,7 +1402,7 @@ def tag(
         int,
         Parameter(
             name=("--retries",),
-            help="Number of automatic validation retries (0-3)",
+            help="Number of automatic validation retries",
         ),
     ] = DEFAULT_RETRIES,
     file_log_level: Annotated[
@@ -1211,7 +1421,7 @@ def tag(
     ] = "DEBUG",
 ) -> None:
     """
-    Tag images with AI and write Lightroom-compatible XMP sidecars.
+    Tag images with AI and write Lightroom-compatible metadata (sidecar or embedded).
 
     Requirements:
     - ExifTool installed and on PATH.
@@ -1226,8 +1436,9 @@ def tag(
     - Loads image (RAW supported), converts to in-memory JPEG, queries the model.
     - Generates title, description, and keywords; merges with existing XMP by default
         (use --overwrite-keywords to replace).
-    - Writes a non-destructive XMP sidecar next to the image. Use --no-write-title/
-        --no-write-description to skip fields; --no-backup-xmp to avoid backups.
+    - Writes metadata to an XMP sidecar (default) or embeds it directly when --embed-in-photo
+        is used. Use --no-write-title/--no-write-description to skip fields; --no-backup-xmp
+        to avoid backups.
 
     Exit status: returns 1 if no inputs, no images found, or any file fails.
 
@@ -1248,10 +1459,12 @@ def tag(
         api_base_url=api_base_url,
         api_key_present=bool(api_key),
         recursive=recursive,
+        skip_from=str(skip_from) if skip_from else None,
         preserve_keywords=preserve_keywords,
         write_description=write_description,
         write_title=write_title,
         backup_xmp=backup_xmp,
+        use_sidecar=use_sidecar,
         temperature=temperature,
         max_tokens=max_tokens,
         jpeg_dimensions=jpeg_dimensions,
@@ -1259,100 +1472,89 @@ def tag(
         retries=retries,
     )
 
-    # Parse and normalize extensions
-    ext_set = _parse_extensions(image_extensions)
-    if not ext_set:
-        logger.error("no_valid_extensions_provided", raw_input=image_extensions)
-        raise SystemExit(1)
-    logger.debug("parsed_extensions", extensions=sorted(ext_set))
-
-    # Resolve inputs into a concrete file list
-    if not inputs:
-        logger.error(
-            "no_inputs_provided",
-            hint=("Pass one or more --input/-i paths (files or directories)"),
-        )
-        raise SystemExit(1)
-
-    image_files = _resolve_image_files(inputs, ext_set, recursive=recursive)
+    image_files = _resolve_image_batch(inputs, image_extensions, recursive=recursive)
+    image_files = _apply_skip_file(image_files, skip_from)
     if not image_files:
-        logger.error(
-            "no_image_files_found",
-            inputs=[str(p) for p in inputs],
-            recursive=recursive,
-            extensions=sorted(ext_set),
-        )
-        raise SystemExit(1)
+        logger.info("no_files_to_process_after_skipping")
+        return
     file_count = len(image_files)
-    logger.info("image_files_discovered", count=file_count)
 
-    # Initialize with provider default URL if not overridden
-    if api_base_url is None:
-        api_base_url = PROVIDER_URLS.get(provider_name, DEFAULT_OLLAMA_BASE_URL)
-        logger.debug("using_default_provider_url", url=api_base_url)
-    logger.info(
-        "provider_config_resolved",
-        provider=provider_name,
-        url=api_base_url,
-        model=model_name,
-    )
-
-    # LLM agent setup (Ollama or LM Studio)
-    logger.debug("setting_up_llm_agent", provider=provider_name, url=api_base_url, model=model_name)
-    if provider_name == "ollama":
-        provider = OllamaProvider(
-            base_url=api_base_url,
-            api_key=api_key or DEFAULT_OLLAMA_API_KEY,
-        )
-    elif provider_name == "lmstudio":
-        provider = OpenAIProvider(
-            base_url=api_base_url,
-            api_key=api_key or DEFAULT_LMSTUDIO_API_KEY,
-        )
-    chat_model = OpenAIChatModel(
-        model_name=model_name,
-        provider=provider,
-    )
-    agent = Agent(
-        chat_model,
-        output_type=GeneratedMetadata,
+    agent = _create_agent(
+        provider_name,
+        model_name,
+        api_base_url=api_base_url,
+        api_key=api_key,
         retries=retries,
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
     )
+
+    process_kwargs: dict[str, Any] = {
+        "agent": agent,
+        "preserve_existing_kw": preserve_keywords,
+        "write_description": write_description,
+        "write_title": write_title,
+        "backup_xmp": backup_xmp,
+        "use_sidecar": use_sidecar,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "jpeg_dimensions": jpeg_dimensions,
+        "jpeg_quality": jpeg_quality,
+    }
 
     # Process each file
     success_count = 0
+    pending_failures: list[Path] = []
     for idx, image_file in enumerate(image_files, start=1):
-        with logger.contextualize(file=image_file.name):
-            ok = process_photo(
+        index = f"{idx}/{file_count}"
+        if _execute_process(
+            image_file,
+            index=index,
+            **process_kwargs,
+        ):
+            success_count += 1
+        else:
+            logger.warning("file_queued_for_retry", file=image_file.name)
+            pending_failures.append(image_file)
+
+    # Retry failed files
+    initial_failures = len(pending_failures)
+    retry_successes = 0
+    if pending_failures:
+        logger.info("retrying_failed_files", count=initial_failures)
+        remaining_failures: list[Path] = []
+        for idx, image_file in enumerate(pending_failures, start=1):
+            index = f"{idx}/{initial_failures}"
+            if _execute_process(
                 image_file,
-                agent=agent,
-                preserve_existing_kw=preserve_keywords,
-                write_description=write_description,
-                write_title=write_title,
-                backup_xmp=backup_xmp,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                jpeg_dimensions=jpeg_dimensions,
-                jpeg_quality=jpeg_quality,
-            )
-            if ok:
+                index=index,
+                retry=True,
+                **process_kwargs,
+            ):
                 success_count += 1
-                logger.info("processing_success", index=f"{idx}/{file_count}")
+                retry_successes += 1
             else:
-                logger.error("processing_failed", index=f"{idx}/{file_count}")
+                logger.error("file_failed_after_retry", file=image_file.name)
+                remaining_failures.append(image_file)
+        pending_failures = remaining_failures
 
     # Summary
+    failed_count = len(pending_failures)
     logger.info(
         "processing_summary",
         total_files=file_count,
         successful=success_count,
-        failed=file_count - success_count,
+        failed=failed_count,
+        initial_failures=initial_failures,
+        retry_successes=retry_successes,
     )
+    if pending_failures:
+        logger.error(
+            "files_failed_after_retry",
+            files=[str(path) for path in pending_failures],
+        )
 
     if success_count < file_count:
         raise SystemExit(1)
 
 
 if __name__ == "__main__":
-    app(["tests/"])
+    app()
