@@ -1440,7 +1440,7 @@ def tag(
 
     Requirements:
     - ExifTool installed and on PATH.
-    - Ollama server running and reachable (with a vision-language model).
+    - Vision-language model API reachable (e.g., Ollama server).
 
     Inputs:
     - One or more --input/-i paths (files and/or directories; repeatable).
@@ -1458,9 +1458,15 @@ def tag(
     Exit status: returns 1 if no inputs, no images found, or any file fails.
 
     Examples:
-        photo-tagger tag -i ./photos/IMG_0001.CR3
-        photo-tagger tag -i ./photos --ext cr3,jpg -r
-        photo-tagger tag -i ./photos -i ./photos/IMG_0001.CR3 --ext cr3,jpg
+        photo-tagger -i ./photos/IMG_0001.CR3
+
+        photo-tagger \
+            --extensions cr3,jpg \
+            --provider lmstudio \
+            --url http://localhost:1234/v1 \
+            --recursive \
+            --skip-from processed.txt \
+            Pictures/Camera
 
     """
     # Setup logging
