@@ -53,6 +53,12 @@ test = [
     "pytest>=9.0.2",
 ]
 
+[project.urls]
+Homepage = "https://juliobs.com/projects/photo-tagger/"
+Documentation = "https://github.com/jbsilva/photo-tagger"
+Repository = "https://github.com/jbsilva/photo-tagger"
+Issues = "https://github.com/jbsilva/photo-tagger/issues"
+
 [tool.ruff]
 line-length = 100
 indent-width = 4
