@@ -1420,6 +1420,13 @@ def tag(
             help="Log level for file (use 'OFF' to disable)",
         ),
     ] = "DEBUG",
+    log_folder: Annotated[
+        Path,
+        Parameter(
+            name=("--log-folder",),
+            help="Folder where log files are stored",
+        ),
+    ] = Path("logs"),
     console_log_level: Annotated[
         LogLevel,
         Parameter(
