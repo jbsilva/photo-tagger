@@ -28,10 +28,10 @@ from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-import exiftool
 import httpx
 import rawpy
 from cyclopts import App, Parameter, validators
+from exiftool import ExifToolHelper  # type: ignore[attr-defined]
 from exiftool.exceptions import ExifToolExecuteError
 from loguru import logger
 from PIL import Image
@@ -462,7 +462,7 @@ def read_existing_keywords(image_path: Path) -> dict[str, list[str]]:
     iptc_keywords_added = 0
 
     try:
-        with exiftool.ExifToolHelper() as et:
+        with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
             metadata_blocks = et.get_tags(files=targets, tags=tags_to_extract)
     except (ValueError, TypeError, ExifToolExecuteError) as e:
         logger.exception("failed_to_read_existing_keywords", error=str(e))
@@ -546,7 +546,7 @@ def read_location_tags(image_path: Path) -> dict[str, str]:
         return {}
 
     collected: dict[str, str] = {}
-    with exiftool.ExifToolHelper() as et:
+    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
         try:
             metadata_blocks = et.get_tags(files=targets, tags=list(LOCATION_TAGS))
         except (ValueError, TypeError, ExifToolExecuteError) as e:
@@ -577,7 +577,7 @@ def read_gps_coordinates(image_path: Path) -> dict[str, str]:
     if not targets:
         return {}
 
-    with exiftool.ExifToolHelper() as et:
+    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
         try:
             metadata_blocks = et.get_tags(files=targets, tags=["Composite:GPSPosition"])
         except (ValueError, TypeError, ExifToolExecuteError) as e:
@@ -902,7 +902,7 @@ def write_metadata(
         return False
 
     try:
-        with exiftool.ExifToolHelper() as et:
+        with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
             if backup:
                 et.set_tags(tags=tags_to_write, files=[str(target_path)])
             else:
