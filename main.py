@@ -282,7 +282,7 @@ def _pil_from_image_path(image_path: Path) -> Image.Image:
         logger.info("skipping_rawpy_for_known_format", extension=suffix)
     else:
         try:
-            with rawpy.imread(str(image_path)) as raw:
+            with rawpy.imread(str(image_path)) as raw:  # type: ignore[no-untyped-call]
                 rgb = raw.postprocess()  # 8-bit RGB np.ndarray
             logger.info("image_opened_with_rawpy")
             return Image.fromarray(rgb)
@@ -495,7 +495,7 @@ def read_existing_keywords(image_path: Path) -> dict[str, list[str]]:
     return result
 
 
-def _format_metadata_value(value: Any) -> str:
+def _format_metadata_value(value: Any) -> str:  # noqa: ANN401
     """
     Coerce metadata values (lists, numbers) into a readable string.
 
@@ -866,7 +866,7 @@ def write_metadata(
 
     Args:
         image_path: Path to the image file. Sidecar will share the name, but with a .xmp extension
-        keywords: Dictionary with 'subject' and 'hierarchical' keyword lists (optionally 'weighted').
+        keywords: Dictionary with 'subject' and 'hierarchical' keyword lists (optionally weighted).
         description: Optional short description to write to XMP (and ImageDescription)
         title: Optional short title to write to XMP-dc:Title and IPTC:ObjectName
         backup: If True, let ExifTool create a backup (_original suffix when applicable)
