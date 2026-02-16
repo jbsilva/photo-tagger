@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "charliermarsh.ruff",
+    "ms-python.python",
+    "pycqa.bandit-pycqa",
+    "streetsidesoftware.code-spell-checker",
+    "tamasfe.even-better-toml",
+    "zuban.zubanls"
+  ]
+}
