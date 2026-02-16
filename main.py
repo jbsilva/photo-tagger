@@ -1269,7 +1269,7 @@ def _create_agent(
     chat_model = OpenAIChatModel(model_name=model_name, provider=provider)
     return Agent(
         chat_model,
-        output_type=GeneratedMetadata,
+        output_type=GeneratedMetadata,  # type: ignore[arg-type]
         retries=retries,
         system_prompt=DEFAULT_SYSTEM_PROMPT,
     )
