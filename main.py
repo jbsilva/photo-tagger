@@ -100,7 +100,7 @@ DEFAULT_USER_PROMPT = (
 # Cyclopts app
 __version__ = "0.1.0"
 app = App(
-    name="ai-photo-tagger",
+    name="photo-tagger",
     version=__version__,
 )
 
@@ -1119,9 +1119,9 @@ def tag(
     Exit status: returns 1 if no inputs, no images found, or any file fails.
 
     Examples:
-        ai-photo-tagger tag -i ./photos/IMG_0001.CR3
-        ai-photo-tagger tag -i ./photos --ext cr3,jpg -r
-        ai-photo-tagger tag -i ./photos -i ./photos/IMG_0001.CR3 --ext cr3,jpg
+        photo-tagger tag -i ./photos/IMG_0001.CR3
+        photo-tagger tag -i ./photos --ext cr3,jpg -r
+        photo-tagger tag -i ./photos -i ./photos/IMG_0001.CR3 --ext cr3,jpg
 
     """
     # Setup logging

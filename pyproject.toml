@@ -1,5 +1,5 @@
 [project]
-name = "ai-photo-tagger"
+name = "photo-tagger"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
