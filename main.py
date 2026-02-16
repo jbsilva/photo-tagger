@@ -433,48 +433,64 @@ def read_existing_keywords(image_path: Path) -> dict[str, list[str]]:
         {'subject': [], 'hierarchical': [], 'weighted': []}
 
     Note:
-        Returns empty lists if XMP file doesn't exist or has no keywords.
+        Returns empty lists if neither the primary file nor its sidecar contain keywords.
 
     """
-    # XMP sidecar has same name with .xmp extension
-    xmp_path = image_path.with_suffix(".xmp")
+    targets = _metadata_targets(image_path)
 
     # Initialize empty result
     result: dict[str, list[str]] = {"subject": [], "hierarchical": [], "weighted": []}
-
-    # Check if XMP sidecar exists
-    if not xmp_path.exists():
-        logger.info("no_existing_xmp")
+    if not targets:
+        logger.info("no_metadata_targets_found")
         return result
 
-    tags_to_extract = ["XMP:Subject", "XMP:HierarchicalSubject", "XMP:WeightedFlatSubject"]
+    tags_to_extract = [
+        "XMP:Subject",
+        "XMP:HierarchicalSubject",
+        "XMP:WeightedFlatSubject",
+        "IPTC:Keywords",
+    ]
 
     # Map the full tag names to the desired short keys for the result dictionary
     key_map = {
         "XMP:Subject": "subject",
         "XMP:HierarchicalSubject": "hierarchical",
         "XMP:WeightedFlatSubject": "weighted",
+        "IPTC:Keywords": "subject",
     }
 
-    with exiftool.ExifToolHelper() as et:
-        try:
-            metadata = et.get_tags(files=str(xmp_path), tags=tags_to_extract)[0]
-        except (ValueError, TypeError, ExifToolExecuteError) as e:
-            logger.exception(
-                "failed_to_read_existing_keywords",
-                error=str(e),
-            )
-            return result
+    iptc_keywords_added = 0
 
-    for exif_key, result_key in key_map.items():
-        if exif_key in metadata:
-            result[result_key] = metadata[exif_key]
+    try:
+        with exiftool.ExifToolHelper() as et:
+            metadata_blocks = et.get_tags(files=targets, tags=tags_to_extract)
+    except (ValueError, TypeError, ExifToolExecuteError) as e:
+        logger.exception("failed_to_read_existing_keywords", error=str(e))
+        return result
+
+    for block in metadata_blocks:
+        for exif_key, result_key in key_map.items():
+            if exif_key not in block:
+                continue
+            raw_value = block[exif_key]
+            if isinstance(raw_value, (list, tuple, set)):
+                values = [str(item) for item in raw_value if str(item).strip()]
+            else:
+                values = [str(raw_value)] if str(raw_value).strip() else []
+            result[result_key].extend(values)
+            if exif_key == "IPTC:Keywords":
+                iptc_keywords_added += len(values)
+
+    for key, values in result.items():
+        if values:
+            result[key] = list(dict.fromkeys(values))
 
     logger.debug(
         "existing_keywords_read",
         subject_count=len(result.get("subject", [])),
         hierarchical_count=len(result.get("hierarchical", [])),
         weighted_count=len(result.get("weighted", [])),
+        iptc_keywords_count=iptc_keywords_added,
     )
     return result
 
@@ -836,43 +852,44 @@ def merge_keywords(
     return merged
 
 
-def write_xmp(
+def write_metadata(
     image_path: Path,
     keywords: dict[str, list[str]],
     *,
     description: str | None = None,
     title: str | None = None,
     backup: bool = True,
+    use_sidecar: bool = True,
 ) -> bool:
     """
-    Write tags to an XMP sidecar file in Lightroom-compatible format.
+    Write tags to either the image file or an XMP sidecar in Lightroom-compatible format.
 
     Args:
-        image_path: Path to the image file. XMP sidecar will have same name with .xmp extension
-        keywords: Dictionary with 'subject', 'hierarchical', and 'weighted' keyword lists
+        image_path: Path to the image file. Sidecar will share the name, but with a .xmp extension
+        keywords: Dictionary with 'subject' and 'hierarchical' keyword lists (optionally 'weighted').
         description: Optional short description to write to XMP (and ImageDescription)
         title: Optional short title to write to XMP-dc:Title and IPTC:ObjectName
-        backup: If True, create a backup of existing XMP file before overwriting
+        backup: If True, let ExifTool create a backup (_original suffix when applicable)
+        use_sidecar: If True, write metadata to a sidecar; otherwise embed it in the source file
 
     Returns:
-        True if XMP write succeeded, False otherwise.
+        True if the metadata write succeeded, False otherwise.
 
     References:
         - Lightroom XMP format: https://www.adobe.com/products/xmp.html
         - MWG Guidelines: http://www.metadataworkinggroup.org/
 
     """
-    xmp_path = image_path.with_suffix(".xmp")
+    target_path = image_path.with_suffix(".xmp") if use_sidecar else image_path
     tags_to_write: dict[str, str | list[str]] = {}
 
     # Build a dictionary of tags to write.
-    # pyexiftool handles passing lists for tags that support multiple values.
     if keywords.get("subject"):
         tags_to_write["XMP-dc:Subject"] = keywords["subject"]
+        # Lightroom prioritizes IPTC:Keywords for JPEGs, so mirror the Subject list there.
+        tags_to_write["IPTC:Keywords"] = keywords["subject"]
     if keywords.get("hierarchical"):
         tags_to_write["XMP-lr:HierarchicalSubject"] = keywords["hierarchical"]
-    if keywords.get("weighted"):
-        tags_to_write["XMP-lr:WeightedFlatSubject"] = keywords["weighted"]
     if description:
         tags_to_write["XMP-dc:Description"] = description
         tags_to_write["XMP-exif:ImageDescription"] = description
@@ -887,27 +904,23 @@ def write_xmp(
     try:
         with exiftool.ExifToolHelper() as et:
             if backup:
-                # Creates a backup of the original XMP file if it exists (_original suffix)
-                et.set_tags(tags=tags_to_write, files=[str(xmp_path)])
+                et.set_tags(tags=tags_to_write, files=[str(target_path)])
             else:
                 et.set_tags(
                     tags=tags_to_write,
-                    files=[str(xmp_path)],
+                    files=[str(target_path)],
                     params=["-overwrite_original"],
                 )
     except (ValueError, TypeError, ExifToolExecuteError) as e:
-        logger.exception(
-            "xmp_write_failed",
-            error=str(e),
-        )
+        logger.exception("xmp_write_failed", error=str(e), target=str(target_path))
         return False
     else:
         logger.info(
-            "xmp_written_successfully",
-            xmp_file=xmp_path.name,
+            "metadata_written_successfully",
+            target=str(target_path),
+            mode="sidecar" if use_sidecar else "embedded",
             subject_keywords=len(keywords.get("subject", [])),
             hierarchical_keywords=len(keywords.get("hierarchical", [])),
-            weighted_keywords=len(keywords.get("weighted", [])),
             backup_created=backup,
         )
         return True
@@ -921,13 +934,14 @@ def process_photo(
     write_description: bool = True,
     write_title: bool = True,
     backup_xmp: bool = True,
+    use_sidecar: bool = True,
     temperature: float = DEFAULT_TEMPERATURE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     jpeg_dimensions: int = DEFAULT_DIMENSIONS,
     jpeg_quality: int = DEFAULT_JPEG_QUALITY,
 ) -> bool:
     """
-    Convert image to JPEG bytes in memory, analyze with AI, merge and write metadata to XMP.
+    Convert image to JPEG bytes in memory, analyze with AI, then write metadata to XMP or embed it.
 
     Args:
         image_path: Path to the image file to process
