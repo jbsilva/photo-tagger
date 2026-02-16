@@ -59,6 +59,9 @@ Documentation = "https://github.com/jbsilva/photo-tagger"
 Repository = "https://github.com/jbsilva/photo-tagger"
 Issues = "https://github.com/jbsilva/photo-tagger/issues"
 
+[project.scripts]
+photo-tagger = "photo_tagger.main:app"
+
 [tool.ruff]
 line-length = 100
 indent-width = 4
