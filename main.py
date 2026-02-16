@@ -256,17 +256,41 @@ def parse_hierarchical_keyword(keyword: str) -> tuple[str, list[str]]:
 
 
 def _pil_from_image_path(image_path: Path) -> Image.Image:
-    """Open an image from a path with PIL, handling RAW via rawpy when needed."""
-    try:
-        # Try RAW first
-        with rawpy.imread(str(image_path)) as raw:
-            rgb = raw.postprocess()  # 8-bit RGB np.ndarray
-        logger.info("image_opened_with_rawpy")
-        return Image.fromarray(rgb)
-    except Exception as e:  # noqa: BLE001
-        # Fallback to PIL's open for non-RAW formats
-        logger.warning("rawpy_failed_falling_back_to_pil", error=str(e))
-        return Image.open(image_path)
+    """Open an image from a path with PIL, using rawpy unless format is known non-RAW."""
+    non_raw_exts = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".bmp",
+        ".gif",
+        ".jpe",
+        ".jp2",
+        ".tif",
+        ".tiff",
+        ".heic",
+        ".heif",
+        ".avif",
+        ".psd",
+        ".ico",
+        ".ppm",
+        ".pgm",
+        ".pbm",
+    }
+    suffix = image_path.suffix.lower()
+    if suffix in non_raw_exts:
+        logger.info("skipping_rawpy_for_known_format", extension=suffix)
+    else:
+        try:
+            with rawpy.imread(str(image_path)) as raw:
+                rgb = raw.postprocess()  # 8-bit RGB np.ndarray
+            logger.info("image_opened_with_rawpy")
+            return Image.fromarray(rgb)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("rawpy_failed_falling_back_to_pil", error=str(exc))
+
+    logger.info("opening_image_with_pil", extension=suffix or "")
+    return Image.open(image_path)
 
 
 def prepare_image_for_agent(
@@ -382,19 +406,25 @@ def analyze_image_with_ai(
         temperature=temperature,
         max_tokens=max_tokens,
     )
+    logger.debug(
+        "ai_generated_metadata",
+        title=result.output.title,
+        description=result.output.description,
+        keywords=result.output.keywords,
+    )
     return result.output.title, result.output.description, result.output.keywords
 
 
 def read_existing_keywords(image_path: Path) -> dict[str, list[str]]:
     """
-    Read existing keywords from XMP sidecar using pyexiftool.
+    Read existing keywords from either the image or its XMP sidecar using pyexiftool.
 
     Args:
-        image_path: Path to the image file. Will check for adjacent .xmp file
+        image_path: Path to the image file. Reads embedded metadata and any adjacent XMP file.
 
     Returns:
         Dictionary with three keys:
-        - 'subject': List of flat keywords from XMP-dc:Subject
+        - 'subject': Flat keywords aggregated from XMP-dc:Subject and IPTC:Keywords
         - 'hierarchical': List of hierarchical keywords from XMP-lr:HierarchicalSubject
         - 'weighted': List of flat keywords from XMP-lr:WeightedFlatSubject
 
