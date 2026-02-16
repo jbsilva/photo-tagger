@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
-# ruff: noqa: PLR0913
 """
-AI Photo Tagger: CLI app to describe photos and add keywords using AI.
+Photo Tagger: CLI app to describe photos and add keywords using AI.
 
-Non-destructive: create/update XMP sidecar files with Lightroom-compatible tags.
+Optionally non-destructive: create/update XMP sidecar files with Lightroom-compatible tags.
+Alternatively, pass --embed-in-photo to write metadata directly into the original file.
+Unfortunately, Lightroom uses XMP sidecar files only for proprietary raw formats (e.g., CR3, NEF).
+For JPEG, DNG and other formats, you'll often prefer embedding the metadata directly into the file.
+This can be done with ExifTool manually as well:
+    exiftool -tagsFromFile image.xmp -all:all image.jpg
 
 Requirements:
  - Exiftool installed and available in PATH.
- - Ollama server running and containing a vision-language model.
+ - Ollama or LM Studio server running and containing a vision-language model.
 
-Tested with Canon CR3 RAW files using Qwen3-VL:32b (Ollama on MacBook M4 Max with 128 GB RAM), but
-should work with different image formats and vision-language models.
 """
+# ruff: noqa: PLR0913
 
 import contextlib
 import os
 import sys
 import time
-from collections.abc import Iterable
+import urllib.parse
 from datetime import UTC, datetime
+from http import HTTPStatus
 from io import BytesIO
 from itertools import chain
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import exiftool
+import httpx
 import rawpy
 from cyclopts import App, Parameter, validators
 from exiftool.exceptions import ExifToolExecuteError
@@ -37,21 +42,24 @@ from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "OFF"]
 MIN_HIERARCHICAL_DEPTH = 2
-
 
 # Configuration defaults
 DEFAULT_OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 DEFAULT_OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
 DEFAULT_LMSTUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
 DEFAULT_LMSTUDIO_API_KEY = os.getenv("LM_STUDIO_API_KEY", os.getenv("OPENAI_API_KEY"))
-DEFAULT_MODEL_NAME = os.getenv("MODEL_NAME", "qwen3-vl:32b")
+DEFAULT_MODEL_NAME = os.getenv("MODEL_NAME", "qwen/qwen3-vl-30b")
 DEFAULT_JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "80"))
 DEFAULT_DIMENSIONS = int(os.getenv("JPEG_DIMENSIONS", "1280"))
 DEFAULT_TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
 DEFAULT_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "400"))
-DEFAULT_RETRIES = int(os.getenv("RETRIES", "2"))
+DEFAULT_RETRIES = int(os.getenv("RETRIES", "5"))
 PROVIDER_URLS = {
     "ollama": DEFAULT_OLLAMA_BASE_URL,
     "lmstudio": DEFAULT_LMSTUDIO_BASE_URL,
@@ -126,8 +134,8 @@ def setup_logging(file_log_level: LogLevel = "DEBUG", console_log_level: LogLeve
             format=(
                 "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
                 "{level: <8} | "
-                "{name}:{function}:{line} | "
-                "{message} | "
+                "{name:<8}:{function:<25}:{line:>4} | "
+                "{message:<40} | "
                 "{extra}"
             ),
             rotation="500 MB",
@@ -143,9 +151,62 @@ def setup_logging(file_log_level: LogLevel = "DEBUG", console_log_level: LogLeve
             colorize=True,
             format=(
                 "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-                "<level>{level: <8}</level> | <level>{message}</level> | <yellow>{extra}</yellow>"
+                "<level>{level: <7}</level> | "
+                "<level>{message:<40.50}</level> | "
+                "<yellow>{extra}</yellow>"
             ),
         )
+
+
+def _validate_lmstudio_model(api_base_url: str, model_name: str, api_key: str | None) -> None:
+    """Fail fast when LM Studio cannot resolve the requested model name."""
+    url = urllib.parse.urljoin(api_base_url.rstrip("/") + "/", "models")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        logger.error("lmstudio_model_listing_invalid_scheme", url=url, scheme=parsed.scheme)
+        raise SystemExit(1)
+    if not parsed.netloc:
+        logger.error("lmstudio_model_listing_missing_host", url=url)
+        raise SystemExit(1)
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        response = httpx.get(url, headers=headers, timeout=5.0)
+    except httpx.HTTPError as exc:
+        logger.error("lmstudio_model_listing_error", error=str(exc), url=url)
+        raise SystemExit(1) from exc
+
+    if response.status_code != HTTPStatus.OK:
+        logger.error(
+            "lmstudio_model_listing_failed",
+            status=response.status_code,
+            url=url,
+            body=response.text,
+        )
+        raise SystemExit(1)
+
+    try:
+        listing = response.json()
+    except ValueError as exc:
+        logger.error("lmstudio_model_listing_invalid_json", error=str(exc), url=url)
+        raise SystemExit(1) from exc
+
+    models = [
+        str(entry["id"])
+        for entry in listing.get("data", [])
+        if isinstance(entry, dict) and "id" in entry
+    ]
+
+    if model_name not in models:
+        logger.error(
+            "lmstudio_model_not_available",
+            requested=model_name,
+            available=models,
+        )
+        raise SystemExit(1)
+
+    logger.debug("lmstudio_model_validated", model=model_name)
 
 
 def parse_hierarchical_keyword(keyword: str) -> tuple[str, list[str]]:
@@ -170,12 +231,20 @@ def parse_hierarchical_keyword(keyword: str) -> tuple[str, list[str]]:
     """
     keyword = keyword.strip()
 
-    if "<" not in keyword:
+    if not keyword:
+        return ("", [""])
+
+    # Remove stray '>' characters that occasionally appear in model output.
+    sanitized = keyword.replace(">", "")
+
+    if "<" not in sanitized:
         # Flat keyword
-        return (keyword, [keyword])
+        return (sanitized, [sanitized])
 
     # Parse hierarchical keyword: "Duck<Bird<Animal" -> ["Duck", "Bird", "Animal"]
-    parts = [p.strip() for p in keyword.split("<")]
+    parts = [p.strip() for p in sanitized.split("<") if p.strip()]
+    if not parts:
+        return ("", [])
 
     # Reverse to get root-to-leaf order: ["Animal", "Bird", "Duck"]
     parts_reversed = list(reversed(parts))
