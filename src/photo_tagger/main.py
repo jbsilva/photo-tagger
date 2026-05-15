@@ -35,7 +35,6 @@ from exiftool import ExifToolHelper  # type: ignore[attr-defined]
 from exiftool.exceptions import ExifToolExecuteError
 from loguru import logger
 from PIL import Image
-from pydantic import BaseModel, Field
 from pydantic_ai import Agent, AgentRunResult, BinaryContent, ModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
@@ -58,6 +57,7 @@ from photo_tagger.config import (
     PROVIDER_URLS,
     LogLevel,
 )
+from photo_tagger.models import GeneratedMetadata
 
 
 if TYPE_CHECKING:
@@ -316,14 +316,6 @@ def prepare_image_for_agent(
         )
         # Return as BinaryContent for Pydantic AI
         return BinaryContent(data=jpeg_bytes, media_type="image/jpeg")
-
-
-class GeneratedMetadata(BaseModel):
-    """Schema for structured generation results."""
-
-    title: str
-    description: str
-    keywords: list[str] = Field(default_factory=list)
 
 
 def analyze_image_with_ai(
