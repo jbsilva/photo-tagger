@@ -14,8 +14,8 @@ Requirements:
  - Ollama or LM Studio server running and containing a vision-language model.
 
 """
-# ruff: noqa: PLR0913
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -42,29 +42,176 @@ __version__ = "0.1.0"
 app = App(name="photo-tagger", version=__version__)
 
 
-def _log_startup(
+# --- CLI option groups ---------------------------------------------------------------------------
+# Each dataclass below is a group of related CLI flags. Cyclopts' `Parameter(name="*")` flattens
+# the fields onto the top-level CLI, so users still pass `--temperature 0.5`, `--no-backup-xmp`,
+# etc. The grouping exists purely to keep the `tag` function signature small enough that Sonar's
+# S107 parameter-count rule is satisfied without burying the option metadata in a side module.
+
+
+@dataclass
+class ProviderConfig:
+    """Backend provider, model id, and credential overrides."""
+
+    model_name: Annotated[
+        str,
+        Parameter(name=("--model", "-m"), help="Vision-language model name"),
+    ] = DEFAULT_MODEL_NAME
+    provider_name: Annotated[
+        Literal["ollama", "lmstudio"],
+        Parameter(name=("--provider",), help="Backend provider: 'ollama' or 'lmstudio'"),
+    ] = "lmstudio"
+    api_base_url: Annotated[
+        str | None,
+        Parameter(name=("--url", "-u"), help="Provider API base URL"),
+    ] = None
+    api_key: Annotated[
+        str | None,
+        Parameter(name=("--api-key", "-k"), help="Provider API key. Will try env vars if not set"),
+    ] = None
+    retries: Annotated[
+        int,
+        Parameter(name=("--retries",), help="Number of automatic validation retries"),
+    ] = DEFAULT_RETRIES
+
+
+@dataclass
+class InferenceConfig:
+    """Sampling and image-encoding knobs sent to the model."""
+
+    temperature: Annotated[
+        float,
+        Parameter(name=("--temperature",), help="Sampling temperature (0.0-1.0)"),
+    ] = DEFAULT_TEMPERATURE
+    max_tokens: Annotated[
+        int,
+        Parameter(name=("--max-tokens",), help="Maximum tokens to generate"),
+    ] = DEFAULT_MAX_TOKENS
+    jpeg_dimensions: Annotated[
+        int,
+        Parameter(
+            name=("--jpeg-dimensions",),
+            help="Max dimension in pixels for the resized JPEG sent to the model",
+        ),
+    ] = DEFAULT_DIMENSIONS
+    jpeg_quality: Annotated[
+        int,
+        Parameter(
+            name=("--jpeg-quality",),
+            help="JPEG quality (1-100) for the image sent to the model",
+        ),
+    ] = DEFAULT_JPEG_QUALITY
+
+
+@dataclass
+class OutputConfig:
+    """How metadata is merged with existing tags and where it is written."""
+
+    preserve_keywords: Annotated[
+        bool,
+        Parameter(
+            name=("--preserve-keywords",),
+            negative="--overwrite-keywords",
+            help="Preserve existing keywords in XMP files (merge) vs overwrite them",
+        ),
+    ] = True
+    write_description: Annotated[
+        bool,
+        Parameter(
+            name=("--write-description",),
+            negative="--no-write-description",
+            help="Also generate and write a short description (IFD0/XMP)",
+        ),
+    ] = True
+    write_title: Annotated[
+        bool,
+        Parameter(
+            name=("--write-title",),
+            negative="--no-write-title",
+            help="Also generate and write a title (XMP-dc:Title / IPTC:ObjectName)",
+        ),
+    ] = True
+    backup_xmp: Annotated[
+        bool,
+        Parameter(
+            name=("--backup-xmp",),
+            negative="--no-backup-xmp",
+            help="Create an ExifTool backup (_original) before overwriting metadata",
+        ),
+    ] = True
+    use_sidecar: Annotated[
+        bool,
+        Parameter(
+            name=("--write-sidecar",),
+            negative="--embed-in-photo",
+            help="Write metadata to XMP sidecars (default) instead of embedding in the image",
+        ),
+    ] = True
+
+
+@dataclass
+class LogConfig:
+    """Loguru sink levels and the directory used for rotating log files."""
+
+    file_log_level: Annotated[
+        LogLevel,
+        Parameter(name="--file-log-level", help="Log level for file (use 'OFF' to disable)"),
+    ] = "DEBUG"
+    console_log_level: Annotated[
+        LogLevel,
+        Parameter(
+            name="--console-log-level",
+            help="Log level for console (use 'OFF' to disable)",
+        ),
+    ] = "DEBUG"
+    log_folder: Annotated[
+        Path,
+        Parameter(name=("--log-folder",), help="Folder where log files are stored"),
+    ] = field(default_factory=lambda: Path("logs"))
+
+
+# Default group instances. Hoisted to module scope so the function-default expressions in
+# `tag` are simple name lookups and ruff's B008 (call-in-default) is satisfied.
+_DEFAULT_PROVIDER = ProviderConfig()
+_DEFAULT_OUTPUT = OutputConfig()
+_DEFAULT_INFERENCE = InferenceConfig()
+_DEFAULT_LOG = LogConfig()
+
+
+def _to_processing_options(output: OutputConfig, inference: InferenceConfig) -> ProcessingOptions:
+    """Combine the CLI's output + inference groups into the pipeline's options dataclass."""
+    return ProcessingOptions(
+        preserve_existing_kw=output.preserve_keywords,
+        write_description=output.write_description,
+        write_title=output.write_title,
+        backup_xmp=output.backup_xmp,
+        use_sidecar=output.use_sidecar,
+        temperature=inference.temperature,
+        max_tokens=inference.max_tokens,
+        jpeg_dimensions=inference.jpeg_dimensions,
+        jpeg_quality=inference.jpeg_quality,
+    )
+
+
+def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
     *,
     inputs: list[Path] | None,
     skip_from: Path | None,
     image_extensions: str,
-    model_name: str,
-    provider_name: str,
-    api_base_url: str | None,
-    api_key: str | None,
     recursive: bool,
+    provider: ProviderConfig,
     options: ProcessingOptions,
-    retries: int,
-    log_folder: Path,
+    log: LogConfig,
 ) -> None:
     """Single-shot info log so the run's full configuration is captured up-front."""
     logger.info(
         "starting_photo_tagger",
         inputs=[str(p) for p in (inputs or [])],
         extensions=image_extensions,
-        model=model_name,
-        provider=provider_name,
-        api_base_url=api_base_url,
-        api_key_present=bool(api_key),
+        model=provider.model_name,
+        provider=provider.provider_name,
+        api_base_url=provider.api_base_url,
+        api_key_present=bool(provider.api_key),
         recursive=recursive,
         skip_from=str(skip_from) if skip_from else None,
         preserve_keywords=options.preserve_existing_kw,
@@ -76,13 +223,13 @@ def _log_startup(
         max_tokens=options.max_tokens,
         jpeg_dimensions=options.jpeg_dimensions,
         jpeg_quality=options.jpeg_quality,
-        retries=retries,
-        log_folder=str(log_folder),
+        retries=provider.retries,
+        log_folder=str(log.log_folder),
     )
 
 
 @app.default
-def tag(
+def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
     inputs: Annotated[
         list[Path] | None,
         Parameter(
@@ -107,22 +254,6 @@ def tag(
             help="Comma-separated image file extensions to process (case insensitive)",
         ),
     ] = "cr3",
-    model_name: Annotated[
-        str,
-        Parameter(name=("--model", "-m"), help="Vision-language model name"),
-    ] = DEFAULT_MODEL_NAME,
-    provider_name: Annotated[
-        Literal["ollama", "lmstudio"],
-        Parameter(name=("--provider",), help="Backend provider: 'ollama' or 'lmstudio'"),
-    ] = "lmstudio",
-    api_base_url: Annotated[
-        str | None,
-        Parameter(name=("--url", "-u"), help="Provider API base URL"),
-    ] = None,
-    api_key: Annotated[
-        str | None,
-        Parameter(name=("--api-key", "-k"), help="Provider API key. Will try env vars if not set"),
-    ] = None,
     recursive: Annotated[
         bool,
         Parameter(
@@ -130,87 +261,10 @@ def tag(
             help="Process files in subdirectories recursively",
         ),
     ] = False,
-    preserve_keywords: Annotated[
-        bool,
-        Parameter(
-            name=("--preserve-keywords",),
-            negative="--overwrite-keywords",
-            help="Preserve existing keywords in XMP files (merge) vs overwrite them",
-        ),
-    ] = True,
-    write_description: Annotated[
-        bool,
-        Parameter(
-            name=("--write-description",),
-            negative="--no-write-description",
-            help="Also generate and write a short description (IFD0/XMP)",
-        ),
-    ] = True,
-    write_title: Annotated[
-        bool,
-        Parameter(
-            name=("--write-title",),
-            negative="--no-write-title",
-            help="Also generate and write a title (XMP-dc:Title / IPTC:ObjectName)",
-        ),
-    ] = True,
-    backup_xmp: Annotated[
-        bool,
-        Parameter(
-            name=("--backup-xmp",),
-            negative="--no-backup-xmp",
-            help="Create an ExifTool backup (_original) before overwriting metadata",
-        ),
-    ] = True,
-    use_sidecar: Annotated[
-        bool,
-        Parameter(
-            name=("--write-sidecar",),
-            negative="--embed-in-photo",
-            help="Write metadata to XMP sidecars (default) instead of embedding in the image",
-        ),
-    ] = True,
-    temperature: Annotated[
-        float,
-        Parameter(name=("--temperature",), help="Sampling temperature (0.0-1.0)"),
-    ] = DEFAULT_TEMPERATURE,
-    max_tokens: Annotated[
-        int,
-        Parameter(name=("--max-tokens",), help="Maximum tokens to generate"),
-    ] = DEFAULT_MAX_TOKENS,
-    jpeg_dimensions: Annotated[
-        int,
-        Parameter(
-            name=("--jpeg-dimensions",),
-            help="Max dimension in pixels for the resized JPEG sent to the model",
-        ),
-    ] = DEFAULT_DIMENSIONS,
-    jpeg_quality: Annotated[
-        int,
-        Parameter(
-            name=("--jpeg-quality",),
-            help="JPEG quality (1-100) for the image sent to the model",
-        ),
-    ] = DEFAULT_JPEG_QUALITY,
-    retries: Annotated[
-        int,
-        Parameter(name=("--retries",), help="Number of automatic validation retries"),
-    ] = DEFAULT_RETRIES,
-    file_log_level: Annotated[
-        LogLevel,
-        Parameter(name="--file-log-level", help="Log level for file (use 'OFF' to disable)"),
-    ] = "DEBUG",
-    log_folder: Annotated[
-        Path,
-        Parameter(name=("--log-folder",), help="Folder where log files are stored"),
-    ] = Path("logs"),
-    console_log_level: Annotated[
-        LogLevel,
-        Parameter(
-            name="--console-log-level",
-            help="Log level for console (use 'OFF' to disable)",
-        ),
-    ] = "DEBUG",
+    provider: Annotated[ProviderConfig, Parameter(name="*")] = _DEFAULT_PROVIDER,
+    output: Annotated[OutputConfig, Parameter(name="*")] = _DEFAULT_OUTPUT,
+    inference: Annotated[InferenceConfig, Parameter(name="*")] = _DEFAULT_INFERENCE,
+    log: Annotated[LogConfig, Parameter(name="*")] = _DEFAULT_LOG,
 ) -> None:
     """
     Tag images with AI and write Lightroom-compatible metadata (sidecar or embedded).
@@ -247,35 +301,20 @@ def tag(
 
     """
     setup_logging(
-        file_log_level=file_log_level,
-        console_log_level=console_log_level,
-        log_folder=log_folder,
+        file_log_level=log.file_log_level,
+        console_log_level=log.console_log_level,
+        log_folder=log.log_folder,
     )
 
-    options = ProcessingOptions(
-        preserve_existing_kw=preserve_keywords,
-        write_description=write_description,
-        write_title=write_title,
-        backup_xmp=backup_xmp,
-        use_sidecar=use_sidecar,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        jpeg_dimensions=jpeg_dimensions,
-        jpeg_quality=jpeg_quality,
-    )
-
+    options = _to_processing_options(output, inference)
     _log_startup(
         inputs=inputs,
         skip_from=skip_from,
         image_extensions=image_extensions,
-        model_name=model_name,
-        provider_name=provider_name,
-        api_base_url=api_base_url,
-        api_key=api_key,
         recursive=recursive,
+        provider=provider,
         options=options,
-        retries=retries,
-        log_folder=log_folder,
+        log=log,
     )
 
     image_files = apply_skip_file(
@@ -287,11 +326,11 @@ def tag(
         return
 
     agent = create_agent(
-        provider_name,
-        model_name,
-        api_base_url=api_base_url,
-        api_key=api_key,
-        retries=retries,
+        provider.provider_name,
+        provider.model_name,
+        api_base_url=provider.api_base_url,
+        api_key=provider.api_key,
+        retries=provider.retries,
     )
     run_batch(image_files, agent, options)
 
