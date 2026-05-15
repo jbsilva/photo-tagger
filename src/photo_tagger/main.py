@@ -21,16 +21,13 @@ import os
 import time
 import urllib.parse
 from http import HTTPStatus
-from io import BytesIO
 from itertools import chain
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import httpx
-import rawpy
 from cyclopts import App, Parameter, validators
 from loguru import logger
-from PIL import Image
 from pydantic_ai import Agent, AgentRunResult, BinaryContent, ModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
@@ -51,6 +48,7 @@ from photo_tagger.config import (
     PROVIDER_URLS,
     LogLevel,
 )
+from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.metadata import (
@@ -120,102 +118,6 @@ def _validate_lmstudio_model(api_base_url: str, model_name: str, api_key: str | 
         raise SystemExit(1)
 
     logger.debug("lmstudio_model_validated", model=model_name)
-
-
-def _pil_from_image_path(image_path: Path) -> Image.Image:
-    """Open an image from a path with PIL, using rawpy unless format is known non-RAW."""
-    non_raw_exts = {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".webp",
-        ".bmp",
-        ".gif",
-        ".jpe",
-        ".jp2",
-        ".tif",
-        ".tiff",
-        ".heic",
-        ".heif",
-        ".avif",
-        ".psd",
-        ".ico",
-        ".ppm",
-        ".pgm",
-        ".pbm",
-    }
-    suffix = image_path.suffix.lower()
-    if suffix in non_raw_exts:
-        logger.info("skipping_rawpy_for_known_format", extension=suffix)
-    else:
-        try:
-            with rawpy.imread(str(image_path)) as raw:  # type: ignore[no-untyped-call]
-                rgb = raw.postprocess()  # 8-bit RGB np.ndarray
-            logger.info("image_opened_with_rawpy")
-            return Image.fromarray(rgb)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("rawpy_failed_falling_back_to_pil", error=str(exc))
-
-    logger.info("opening_image_with_pil", extension=suffix or "")
-    return Image.open(image_path)
-
-
-def prepare_image_for_agent(
-    image_path: Path,
-    jpg_quality: int = DEFAULT_JPEG_QUALITY,
-    max_size: int = DEFAULT_DIMENSIONS,
-) -> BinaryContent:
-    """
-    Prepare an image for Pydantic AI agent processing.
-
-    Handles RAW (CR2, CR3, NEF, ARW, RW2, RAF, DNG) and standard (JPG, PNG, WEBP, BMP) formats.
-    Converts RAW to RGB, resizes if needed, and returns as BinaryContent ready for the agent.
-    The entire process is done in memory; no temporary files are created.
-
-    Args:
-        image_path: Path to the input image file
-        jpg_quality: JPEG compression quality (1-100, recommended: 80)
-        max_size: Maximum dimension in pixels for resizing (recommended: <=1280)
-
-    Returns:
-        BinaryContent object ready for Pydantic AI agent
-
-    """
-    try:
-        img = _pil_from_image_path(image_path)
-
-        # Composite alpha onto white background if present
-        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-            logger.info("compositing_alpha_to_white")
-            alpha = img.convert("RGBA")
-            bg = Image.new("RGBA", alpha.size, (255, 255, 255, 255))
-            img = Image.alpha_composite(bg, alpha).convert("RGB")
-        else:
-            logger.info("converting_image_to_rgb")
-            img = img.convert("RGB")
-
-        # Resize in-place maintaining aspect ratio (downscale only) with high-quality filter
-        logger.info("resizing_image", max_size=max_size)
-        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-
-        # Encode to JPEG bytes in memory
-        logger.info("encoding_image_to_jpeg", quality=jpg_quality)
-        buf = BytesIO()
-        img.save(buf, format="JPEG", quality=jpg_quality)
-        jpeg_bytes = buf.getvalue()
-
-    except Exception as e:
-        logger.exception("image_preparation_failed", error=str(e))
-        raise
-    else:
-        logger.debug(
-            "image_prepared_for_agent",
-            width=img.width,
-            height=img.height,
-            size_kb=len(jpeg_bytes) // 1024,
-        )
-        # Return as BinaryContent for Pydantic AI
-        return BinaryContent(data=jpeg_bytes, media_type="image/jpeg")
 
 
 def analyze_image_with_ai(
