@@ -18,10 +18,8 @@ Requirements:
 
 import contextlib
 import os
-import sys
 import time
 import urllib.parse
-from datetime import UTC, datetime
 from http import HTTPStatus
 from io import BytesIO
 from itertools import chain
@@ -57,6 +55,7 @@ from photo_tagger.config import (
     PROVIDER_URLS,
     LogLevel,
 )
+from photo_tagger.logging_setup import setup_logging
 from photo_tagger.models import GeneratedMetadata
 
 
@@ -70,59 +69,6 @@ app = App(
     name="photo-tagger",
     version=__version__,
 )
-
-
-def setup_logging(
-    file_log_level: LogLevel = "DEBUG",
-    console_log_level: LogLevel = "INFO",
-    log_folder: Path = Path("logs"),
-) -> None:
-    """
-    Configure Loguru for both console and file logging.
-
-    Args:
-        file_log_level: Log level for file (use 'OFF' to disable)
-        console_log_level: Log level for console (use 'OFF' to disable)
-        log_folder: Directory where log files are stored
-
-    """
-    # Remove default handler
-    logger.remove()
-
-    # Add file logging
-    if file_log_level != "OFF":
-        log_folder.mkdir(parents=True, exist_ok=True)
-        log_file = log_folder / Path(
-            datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S-photo_tagger.log"),
-        )
-        logger.add(
-            log_file,
-            level=file_log_level,
-            format=(
-                "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
-                "{level: <8} | "
-                "{name:<8}:{function:<25}:{line:>4} | "
-                "{message:<40} | "
-                "{extra}"
-            ),
-            rotation="500 MB",
-            retention="10 days",
-            compression="zip",
-        )
-
-    # Add console logging
-    if console_log_level != "OFF":
-        logger.add(
-            sys.stderr,
-            level=console_log_level,
-            colorize=True,
-            format=(
-                "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-                "<level>{level: <7}</level> | "
-                "<level>{message:<40.50}</level> | "
-                "<yellow>{extra}</yellow>"
-            ),
-        )
 
 
 def _validate_lmstudio_model(api_base_url: str, model_name: str, api_key: str | None) -> None:
