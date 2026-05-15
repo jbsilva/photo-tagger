@@ -72,6 +72,12 @@ Key options:
 - `--no-backup-xmp` – avoid creating `*_original` snapshot before writing
 - `--embed-in-photo` – write metadata directly into the image instead of creating an XMP sidecar
 - `--dry-run` – run the model and log the proposed metadata without writing XMP
+- `-w/--workers N` – process N photos concurrently using a thread pool (default 1)
+- `--no-progress` – hide the live rich progress bar (auto-disabled on non-interactive stdouts)
+- `--max-keywords N` – cap how many AI-generated keywords are kept per photo before merging
+- `--prompt-file PATH` – override the default user prompt with the contents of `PATH`
+- `--summary-file PATH` – write a JSON run summary (token usage, success/failure counts) to
+  `PATH` on completion
 - `--jpeg-dimensions`, `--jpeg-quality`, `--temperature`, `--max-tokens`, `--retries` – control
   inference behavior
 
@@ -139,6 +145,18 @@ Preview proposed metadata without writing anything (useful when iterating on pro
 
 ```bash
 photo-tagger -i ./sample --dry-run
+```
+
+Process a large folder concurrently with a live progress bar and a JSON summary:
+
+```bash
+photo-tagger -i ~/Pictures/Trip -r --workers 4 --summary-file ~/Pictures/Trip/run.json
+```
+
+Use a custom prompt tuned for wildlife photography:
+
+```bash
+photo-tagger -i ./shoot --prompt-file prompts/wildlife.txt --max-keywords 12
 ```
 
 ## Logging
