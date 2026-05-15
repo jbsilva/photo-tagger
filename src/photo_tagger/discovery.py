@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from exiftool import ExifToolHelper  # type: ignore[attr-defined]
+
 
 def parse_extensions(image_extensions: str) -> set[str]:
     """
@@ -172,30 +174,34 @@ def apply_skip_file(image_files: list[Path], skip_file: Path | None) -> list[Pat
     return filtered
 
 
-def apply_skip_tagged(image_files: list[Path], *, skip_tagged: bool) -> list[Path]:
+def apply_skip_tagged(
+    image_files: list[Path],
+    *,
+    skip_tagged: bool,
+    et: ExifToolHelper | None = None,
+) -> list[Path]:
     """
     Drop images that already have keywords, a description, or a title.
 
     Useful when a folder mixes new shots with photos that have already been processed
     (by photo-tagger, Lightroom, or by hand) and the user does not want to redo the work.
+    Pass *et* to reuse an already-open ExifToolHelper across the batch.
     """
     if not skip_tagged or not image_files:
         return image_files
 
-    tagged = find_tagged_images(image_files)
+    tagged = find_tagged_images(image_files, et=et)
     if not tagged:
         logger.info("skip_tagged_no_matches", checked=len(image_files))
         return image_files
 
-    kept = [path for path in image_files if path not in tagged]
+    kept: list[Path] = []
     for path in image_files:
         if path in tagged:
             logger.debug("skipping_already_tagged_file", file=str(path))
-    logger.info(
-        "skip_tagged_applied",
-        skipped=len(tagged),
-        remaining=len(kept),
-    )
+        else:
+            kept.append(path)
+    logger.info("skip_tagged_applied", skipped=len(tagged), remaining=len(kept))
     return kept
 
 

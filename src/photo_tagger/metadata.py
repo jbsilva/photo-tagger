@@ -1,5 +1,6 @@
 """Read and write XMP/IPTC metadata via pyexiftool."""
 
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 from exiftool import ExifToolHelper  # type: ignore[attr-defined]
@@ -8,7 +9,7 @@ from loguru import logger
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
     from pathlib import Path
 
 from photo_tagger.config import (
@@ -18,6 +19,16 @@ from photo_tagger.config import (
     TAG_XMP_SUBJECT,
     TAG_XMP_WEIGHTED_FLAT_SUBJECT,
 )
+
+
+@contextlib.contextmanager
+def _helper(et: ExifToolHelper | None) -> Iterator[ExifToolHelper]:
+    """Yield *et* if supplied, otherwise spin up and tear down a one-shot helper."""
+    if et is not None:
+        yield et
+        return
+    with ExifToolHelper() as own:  # type: ignore[no-untyped-call]
+        yield own
 
 
 _GPS_TAG = "Composite:GPSPosition"
@@ -110,12 +121,18 @@ def _accumulate_keyword_blocks(
     return iptc_count
 
 
-def read_existing_keywords(image_path: Path) -> dict[str, list[str]]:
+def read_existing_keywords(
+    image_path: Path,
+    *,
+    et: ExifToolHelper | None = None,
+) -> dict[str, list[str]]:
     """
     Read existing keywords from either the image or its XMP sidecar.
 
     Args:
         image_path: Path to the image file. Reads embedded metadata and any adjacent XMP file.
+        et: Optional already-open ExifToolHelper to reuse so a batch can avoid spinning up one
+            subprocess per call. A one-shot helper is opened when omitted.
 
     Returns:
         Dictionary with three keys:
@@ -135,8 +152,8 @@ def read_existing_keywords(image_path: Path) -> dict[str, list[str]]:
 
     tags_to_extract = [tag for tag, _ in _KEYWORD_TAG_TO_BUCKET]
     try:
-        with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
-            blocks = et.get_tags(files=targets, tags=tags_to_extract)
+        with _helper(et) as helper:
+            blocks = helper.get_tags(files=targets, tags=tags_to_extract)
     except (ValueError, TypeError, ExifToolExecuteError) as e:
         logger.exception("failed_to_read_existing_keywords", error=str(e))
         return result
@@ -175,7 +192,11 @@ def _block_has_indicator(blocks: list[dict[str, Any]]) -> bool:
     return False
 
 
-def find_tagged_images(image_paths: Iterable[Path]) -> set[Path]:
+def find_tagged_images(
+    image_paths: Iterable[Path],
+    *,
+    et: ExifToolHelper | None = None,
+) -> set[Path]:
     """
     Return the subset of *image_paths* that already carry meaningful metadata.
 
@@ -190,13 +211,13 @@ def find_tagged_images(image_paths: Iterable[Path]) -> set[Path]:
 
     tagged: set[Path] = set()
     try:
-        with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
+        with _helper(et) as helper:
             for image_path in paths:
                 targets = metadata_targets(image_path)
                 if not targets:
                     continue
                 try:
-                    blocks = et.get_tags(files=targets, tags=list(_TAGGED_INDICATOR_TAGS))
+                    blocks = helper.get_tags(files=targets, tags=list(_TAGGED_INDICATOR_TAGS))
                 except (ValueError, TypeError, ExifToolExecuteError) as exc:
                     logger.warning(
                         "failed_to_check_tagged_status",
@@ -215,19 +236,23 @@ def find_tagged_images(image_paths: Iterable[Path]) -> set[Path]:
     return tagged
 
 
-def read_location_tags(image_path: Path) -> dict[str, str]:
+def read_location_tags(
+    image_path: Path,
+    *,
+    et: ExifToolHelper | None = None,
+) -> dict[str, str]:
     """Read selected IPTC/XMP location tags from the image or its sidecar."""
     targets = metadata_targets(image_path)
     if not targets:
         return {}
 
     collected: dict[str, str] = {}
-    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
-        try:
-            blocks = et.get_tags(files=targets, tags=list(LOCATION_TAGS))
-        except (ValueError, TypeError, ExifToolExecuteError) as e:
-            logger.exception("failed_to_read_location_tags", error=str(e))
-            return {}
+    try:
+        with _helper(et) as helper:
+            blocks = helper.get_tags(files=targets, tags=list(LOCATION_TAGS))
+    except (ValueError, TypeError, ExifToolExecuteError) as e:
+        logger.exception("failed_to_read_location_tags", error=str(e))
+        return {}
 
     for block in blocks:
         for tag in LOCATION_TAGS:
@@ -240,18 +265,22 @@ def read_location_tags(image_path: Path) -> dict[str, str]:
     return collected
 
 
-def read_gps_coordinates(image_path: Path) -> dict[str, str]:
+def read_gps_coordinates(
+    image_path: Path,
+    *,
+    et: ExifToolHelper | None = None,
+) -> dict[str, str]:
     """Read GPS coordinates from either the primary file or its XMP sidecar."""
     targets = metadata_targets(image_path)
     if not targets:
         return {}
 
-    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
-        try:
-            blocks = et.get_tags(files=targets, tags=[_GPS_TAG])
-        except (ValueError, TypeError, ExifToolExecuteError) as e:
-            logger.exception("failed_to_read_gps", error=str(e))
-            return {}
+    try:
+        with _helper(et) as helper:
+            blocks = helper.get_tags(files=targets, tags=[_GPS_TAG])
+    except (ValueError, TypeError, ExifToolExecuteError) as e:
+        logger.exception("failed_to_read_gps", error=str(e))
+        return {}
 
     for block in blocks:
         value = block.get(_GPS_TAG)
@@ -325,6 +354,7 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
     title: str | None = None,
     backup: bool = True,
     use_sidecar: bool = True,
+    et: ExifToolHelper | None = None,
 ) -> bool:
     """
     Write tags to either the image file or an XMP sidecar in Lightroom-compatible format.
@@ -336,6 +366,7 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         title: Optional short title to write to XMP-dc:Title and IPTC:ObjectName.
         backup: If True, let ExifTool create a backup (`_original` suffix where applicable).
         use_sidecar: If True, write to a sidecar; otherwise embed in the source file.
+        et: Optional already-open ExifToolHelper to reuse across a batch.
 
     Returns:
         True on success, False on failure.
@@ -347,16 +378,13 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         logger.warning("no_data_to_write", file=image_path.name)
         return False
 
+    set_kwargs: dict[str, Any] = {"tags": payload, "files": [str(target_path)]}
+    if not backup:
+        set_kwargs["params"] = ["-overwrite_original"]
+
     try:
-        with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
-            if backup:
-                et.set_tags(tags=payload, files=[str(target_path)])
-            else:
-                et.set_tags(
-                    tags=payload,
-                    files=[str(target_path)],
-                    params=["-overwrite_original"],
-                )
+        with _helper(et) as helper:
+            helper.set_tags(**set_kwargs)
     except (ValueError, TypeError, ExifToolExecuteError) as e:
         logger.exception("xmp_write_failed", error=str(e), target=str(target_path))
         return False
