@@ -1,12 +1,46 @@
 """Static configuration: defaults, prompts, and shared constants."""
 
 import os
+import warnings
 from typing import Literal
 
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "OFF"]
 
 MIN_HIERARCHICAL_DEPTH = 2
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read *name* from the environment as an int, warning and falling back if malformed."""
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        warnings.warn(
+            f"{name}={raw!r} is not a valid integer; using default {default}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read *name* from the environment as a float, warning and falling back if malformed."""
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        warnings.warn(
+            f"{name}={raw!r} is not a valid float; using default {default}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return default
+
 
 # Provider URLs and API keys are read from the environment so the user can override them
 # without changing code. Defaults are local-only addresses for Ollama and LM Studio.
@@ -16,11 +50,11 @@ DEFAULT_LMSTUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:12
 DEFAULT_LMSTUDIO_API_KEY = os.getenv("LM_STUDIO_API_KEY", os.getenv("OPENAI_API_KEY"))
 
 DEFAULT_MODEL_NAME = os.getenv("MODEL_NAME", "qwen/qwen3-vl-30b")
-DEFAULT_JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "80"))
-DEFAULT_DIMENSIONS = int(os.getenv("JPEG_DIMENSIONS", "1280"))
-DEFAULT_TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
-DEFAULT_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1200"))
-DEFAULT_RETRIES = int(os.getenv("RETRIES", "5"))
+DEFAULT_JPEG_QUALITY = _env_int("JPEG_QUALITY", 80)
+DEFAULT_DIMENSIONS = _env_int("JPEG_DIMENSIONS", 1280)
+DEFAULT_TEMPERATURE = _env_float("TEMPERATURE", 0.2)
+DEFAULT_MAX_TOKENS = _env_int("MAX_TOKENS", 1200)
+DEFAULT_RETRIES = _env_int("RETRIES", 5)
 
 PROVIDER_URLS = {
     "ollama": DEFAULT_OLLAMA_BASE_URL,
