@@ -32,7 +32,12 @@ from photo_tagger.config import (
     DEFAULT_TEMPERATURE,
     LogLevel,
 )
-from photo_tagger.discovery import apply_skip_file, resolve_image_batch
+from photo_tagger.discovery import (
+    apply_skip_file,
+    apply_skip_tagged,
+    make_skip_list_appender,
+    resolve_image_batch,
+)
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.pipeline import ProcessingOptions, run_batch
 
@@ -197,6 +202,8 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
     *,
     inputs: list[Path] | None,
     skip_from: Path | None,
+    append_to_skip_file: Path | None,
+    skip_tagged: bool,
     image_extensions: str,
     recursive: bool,
     provider: ProviderConfig,
@@ -214,6 +221,8 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
         api_key_present=bool(provider.api_key),
         recursive=recursive,
         skip_from=str(skip_from) if skip_from else None,
+        append_to_skip_file=str(append_to_skip_file) if append_to_skip_file else None,
+        skip_tagged=skip_tagged,
         preserve_keywords=options.preserve_existing_kw,
         write_description=options.write_description,
         write_title=options.write_title,
@@ -246,6 +255,18 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             help="Path to newline-delimited text file listing filenames to skip",
         ),
     ] = None,
+    append_to_skip_file: Annotated[
+        Path | None,
+        Parameter(
+            name=("--append-to-skip-file",),
+            validator=validators.Path(file_okay=True, dir_okay=False),
+            help=(
+                "Append the name of each successfully-processed file to this path. "
+                "Created if it does not exist. Pass the same path to --skip-from on later "
+                "runs to resume work without redoing finished photos"
+            ),
+        ),
+    ] = None,
     *,
     image_extensions: Annotated[
         str,
@@ -259,6 +280,16 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         Parameter(
             name=("--recursive", "-r"),
             help="Process files in subdirectories recursively",
+        ),
+    ] = False,
+    skip_tagged: Annotated[
+        bool,
+        Parameter(
+            name=("--skip-tagged",),
+            help=(
+                "Skip files whose image or XMP sidecar already has keywords, a description, "
+                "or a title (set by an earlier run, Lightroom, or another tool)"
+            ),
         ),
     ] = False,
     provider: Annotated[ProviderConfig, Parameter(name="*")] = _DEFAULT_PROVIDER,
@@ -286,6 +317,13 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         is used. Use --no-write-title/--no-write-description to skip fields; --no-backup-xmp
         to avoid backups.
 
+    Skipping:
+    - --skip-from FILE: skip filenames listed in FILE (one per line).
+    - --append-to-skip-file FILE: append each successfully processed filename to FILE so a
+        later run with --skip-from FILE resumes where this one stopped.
+    - --skip-tagged: skip files that already have keywords, a description, or a title in
+        the image or its XMP sidecar.
+
     Exit status: returns 1 if no inputs, no images found, or any file fails.
 
     Examples:
@@ -297,7 +335,10 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             --url http://localhost:1234/v1 \
             --recursive \
             --skip-from processed.txt \
+            --append-to-skip-file processed.txt \
             Pictures/Camera
+
+        photo-tagger -i Pictures/Mixed --skip-tagged
 
     """
     setup_logging(
@@ -310,6 +351,8 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
     _log_startup(
         inputs=inputs,
         skip_from=skip_from,
+        append_to_skip_file=append_to_skip_file,
+        skip_tagged=skip_tagged,
         image_extensions=image_extensions,
         recursive=recursive,
         provider=provider,
@@ -321,6 +364,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         resolve_image_batch(inputs, image_extensions, recursive=recursive),
         skip_from,
     )
+    image_files = apply_skip_tagged(image_files, skip_tagged=skip_tagged)
     if not image_files:
         logger.info("no_files_to_process_after_skipping")
         return
@@ -332,7 +376,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         api_key=provider.api_key,
         retries=provider.retries,
     )
-    run_batch(image_files, agent, options)
+    run_batch(image_files, agent, options, on_success=make_skip_list_appender(append_to_skip_file))
 
 
 if __name__ == "__main__":
