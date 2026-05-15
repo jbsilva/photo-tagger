@@ -46,7 +46,7 @@ Environment variables provide defaults so you can keep the CLI concise:
 - `OLLAMA_API_KEY` – optional API key passed to Ollama requests
 - `LM_STUDIO_BASE_URL` – override the LM Studio endpoint (default `http://localhost:1234/v1`)
 - `LM_STUDIO_API_KEY` / `OPENAI_API_KEY` – API key for LM Studio’s OpenAI-compatible server
-- `MODEL_NAME` – default model name (default `qwen3-vl:32b`)
+- `MODEL_NAME` – default model name (default `qwen/qwen3-vl-30b`)
 - `JPEG_DIMENSIONS`, `JPEG_QUALITY`, `TEMPERATURE`, `MAX_TOKENS`, `RETRIES` – fine-tune runtime
 
 Any CLI flag takes precedence over the environment.
@@ -71,8 +71,36 @@ Key options:
 - `--no-write-title` / `--no-write-description` – skip writing those fields
 - `--no-backup-xmp` – avoid creating `*_original` snapshot before writing
 - `--embed-in-photo` – write metadata directly into the image instead of creating an XMP sidecar
+- `--dry-run` – run the model and log the proposed metadata without writing XMP
 - `--jpeg-dimensions`, `--jpeg-quality`, `--temperature`, `--max-tokens`, `--retries` – control
   inference behavior
+
+### Skipping and resuming
+
+Three flags work together so you can re-run on a folder without redoing finished work:
+
+- `--skip-from FILE` – skip filenames listed in `FILE` (one per line; `#` lines are comments).
+- `--append-to-skip-file FILE` – append each successfully tagged filename to `FILE` as the
+  run progresses. The file is created if missing, so the same path can be passed to both flags
+  from the very first run.
+- `--skip-tagged` – skip files that already have keywords, a description, or a title in either
+  the image or its XMP sidecar. Catches photos tagged in Lightroom or by hand without needing a
+  skip list at all.
+
+Resume-on-failure pattern: pass the same path to both flags so a killed run can be restarted
+with a single command.
+
+```bash
+photo-tagger -i ~/Pictures/Shoot -r \
+  --skip-from processed.txt \
+  --append-to-skip-file processed.txt
+```
+
+To process a folder mixing already-tagged and untagged photos:
+
+```bash
+photo-tagger -i ~/Pictures/Mixed --skip-tagged
+```
 
 A successful run creates or updates an `.xmp` sidecar for every processed image (unless you embed
 the metadata). Existing metadata is merged so Lightroom keeps hierarchical keywords such as
@@ -105,6 +133,12 @@ Send requests to a remote Ollama host with a custom model:
 
 ```bash
 photo-tagger -i ./shoot --provider ollama --model llava:34b --url http://ollama-box:11434/v1
+```
+
+Preview proposed metadata without writing anything (useful when iterating on prompts):
+
+```bash
+photo-tagger -i ./sample --dry-run
 ```
 
 ## Logging
