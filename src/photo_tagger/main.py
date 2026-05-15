@@ -41,68 +41,27 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from photo_tagger.config import (
+    DEFAULT_DIMENSIONS,
+    DEFAULT_JPEG_QUALITY,
+    DEFAULT_LMSTUDIO_API_KEY,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_MODEL_NAME,
+    DEFAULT_OLLAMA_API_KEY,
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_RETRIES,
+    DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_USER_PROMPT,
+    LOCATION_TAGS,
+    MIN_HIERARCHICAL_DEPTH,
+    PROVIDER_URLS,
+    LogLevel,
+)
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
-
-LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "OFF"]
-MIN_HIERARCHICAL_DEPTH = 2
-
-# Configuration defaults
-DEFAULT_OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-DEFAULT_OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
-DEFAULT_LMSTUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
-DEFAULT_LMSTUDIO_API_KEY = os.getenv("LM_STUDIO_API_KEY", os.getenv("OPENAI_API_KEY"))
-DEFAULT_MODEL_NAME = os.getenv("MODEL_NAME", "qwen/qwen3-vl-30b")
-DEFAULT_JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "80"))
-DEFAULT_DIMENSIONS = int(os.getenv("JPEG_DIMENSIONS", "1280"))
-DEFAULT_TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
-DEFAULT_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "800"))
-DEFAULT_RETRIES = int(os.getenv("RETRIES", "5"))
-PROVIDER_URLS = {
-    "ollama": DEFAULT_OLLAMA_BASE_URL,
-    "lmstudio": DEFAULT_LMSTUDIO_BASE_URL,
-}
-LOCATION_TAGS = (
-    "XMP-photoshop:Country",
-    "IPTC:Country-PrimaryLocationName",
-    "XMP-photoshop:City",
-    "IPTC:City",
-)
-
-# Prompt templates
-DEFAULT_SYSTEM_PROMPT = (
-    "<|im_start|>system\n"
-    "**Persona**: You are a specialist AI photo archivist named 'Metis'. "
-    "Your expertise is in analyzing visual information and creating rich, structured metadata.\n"
-    "\n"
-    "**Mission**: Your mission is to meticulously analyze the provided image and generate a "
-    "complete metadata object. The output must strictly conform to the Pydantic schema provided by "
-    "the user.\n"
-    "\n"
-    "**Process**:\n"
-    "1.  **Analyze**: Perform a comprehensive visual analysis of the image. Identify the primary "
-    "subject, setting, composition, colors, and emotional tone.\n"
-    "2.  **Generate Title**: Create a short, descriptive title (under 10 words).\n"
-    "3.  **Generate Description**: Write a single, concise sentence (15-25 words) that captures "
-    "the essence of the scene.\n"
-    "4.  **Generate Keywords**:\n"
-    "    *   **Identify Core Concepts**: Brainstorm a list of all identifiable elements: subjects, "
-    "objects, environment, actions, mood, and artistic style.\n"
-    "    *   **Format and Refine**: Convert these concepts into 10-15 keywords. Each keyword must "
-    "be in Title Case.\n"
-    "    *   **Build Hierarchies**: For relevant keywords, construct a logical hierarchy from "
-    "specific to general using '<' as a separator (e.g., 'Golden Eagle<Bird of Prey<Animal'). "
-    "Do not exceed 5 levels.\n"
-    "5.  **Final Output**: Assemble the title, description, and keywords into a single, structured "
-    "response. Ensure all constraints are met before finalizing.\n"
-    "<|im_end|>"
-)
-
-DEFAULT_USER_PROMPT = (
-    "Execute your mission: analyze this image and generate the structured metadata."
-)
 
 
 # Cyclopts app
