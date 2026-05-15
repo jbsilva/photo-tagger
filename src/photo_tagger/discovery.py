@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from photo_tagger.metadata import find_tagged_images
+
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -167,3 +170,84 @@ def apply_skip_file(image_files: list[Path], skip_file: Path | None) -> list[Pat
     elif skip_entries:
         logger.warning("skip_list_matched_no_files", file=str(skip_file))
     return filtered
+
+
+def apply_skip_tagged(image_files: list[Path], *, skip_tagged: bool) -> list[Path]:
+    """
+    Drop images that already have keywords, a description, or a title.
+
+    Useful when a folder mixes new shots with photos that have already been processed
+    (by photo-tagger, Lightroom, or by hand) and the user does not want to redo the work.
+    """
+    if not skip_tagged or not image_files:
+        return image_files
+
+    tagged = find_tagged_images(image_files)
+    if not tagged:
+        logger.info("skip_tagged_no_matches", checked=len(image_files))
+        return image_files
+
+    kept = [path for path in image_files if path not in tagged]
+    for path in image_files:
+        if path in tagged:
+            logger.debug("skipping_already_tagged_file", file=str(path))
+    logger.info(
+        "skip_tagged_applied",
+        skipped=len(tagged),
+        remaining=len(kept),
+    )
+    return kept
+
+
+def make_skip_list_appender(skip_file: Path | None) -> Callable[[Path], None] | None:
+    """
+    Build a callback that appends a filename to *skip_file* on each successful process.
+
+    Existing entries are preserved; duplicates are not appended a second time. The file is
+    created if it does not exist yet, so the same path can also be passed to
+    ``--skip-from`` on later runs to short-circuit work that already completed.
+    """
+    if skip_file is None:
+        return None
+
+    seen: set[str] = set()
+    if skip_file.exists():
+        # Preload entries already on disk so re-runs do not duplicate them. Failures are
+        # logged but non-fatal: the appender still works on a fresh in-memory set.
+        try:
+            content = skip_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning(
+                "append_skip_file_unreadable_starting_fresh",
+                file=str(skip_file),
+                error=str(exc),
+            )
+        else:
+            seen = {
+                stripped
+                for line in content.splitlines()
+                if (stripped := line.strip()) and not stripped.startswith("#")
+            }
+    else:
+        # Touch the parent directory check; let open() handle creation lazily on first write.
+        logger.info("append_skip_file_will_be_created", file=str(skip_file))
+
+    def append(image_path: Path) -> None:
+        name = image_path.name
+        if name in seen:
+            return
+        try:
+            with skip_file.open("a", encoding="utf-8") as handle:
+                handle.write(name + "\n")
+        except OSError as exc:
+            logger.warning(
+                "append_skip_file_write_failed",
+                file=str(skip_file),
+                entry=name,
+                error=str(exc),
+            )
+            return
+        seen.add(name)
+        logger.debug("appended_to_skip_file", file=str(skip_file), entry=name)
+
+    return append

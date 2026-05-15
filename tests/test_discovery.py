@@ -1,13 +1,16 @@
 """Tests for input discovery and skip-list handling."""
 
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
 from photo_tagger.discovery import (
     apply_skip_file,
+    apply_skip_tagged,
     filter_skipped_files,
     load_skip_list,
+    make_skip_list_appender,
     parse_extensions,
     resolve_image_batch,
 )
@@ -114,3 +117,85 @@ def test_apply_skip_file_filters(tmp_path: Path) -> None:
     skip_file = tmp_path / "skip.txt"
     skip_file.write_text("a.cr3\n")
     assert apply_skip_file([a, b], skip_file) == [b]
+
+
+def test_apply_skip_tagged_disabled_returns_input(tmp_path: Path) -> None:
+    """skip_tagged=False is a no-op even when find_tagged_images would match."""
+    a = tmp_path / "a.cr3"
+    a.write_text("x")
+    # Patch as a sanity check: nothing should call find_tagged_images when disabled.
+    with patch("photo_tagger.discovery.find_tagged_images") as finder:
+        result = apply_skip_tagged([a], skip_tagged=False)
+    assert result == [a]
+    finder.assert_not_called()
+
+
+def test_apply_skip_tagged_empty_input_skips_metadata_call(tmp_path: Path) -> None:
+    """An empty batch returns immediately without invoking exiftool."""
+    with patch("photo_tagger.discovery.find_tagged_images") as finder:
+        result = apply_skip_tagged([], skip_tagged=True)
+    assert result == []
+    finder.assert_not_called()
+
+
+def test_apply_skip_tagged_drops_tagged_paths(tmp_path: Path) -> None:
+    """Paths returned by find_tagged_images are filtered out of the batch."""
+    a = tmp_path / "a.cr3"
+    b = tmp_path / "b.cr3"
+    c = tmp_path / "c.cr3"
+    for path in (a, b, c):
+        path.write_text("x")
+    with patch("photo_tagger.discovery.find_tagged_images", return_value={a, c}):
+        kept = apply_skip_tagged([a, b, c], skip_tagged=True)
+    assert kept == [b]
+
+
+def test_apply_skip_tagged_returns_all_when_none_tagged(tmp_path: Path) -> None:
+    """If no images are detected as tagged, the original batch passes through."""
+    a = tmp_path / "a.cr3"
+    a.write_text("x")
+    with patch("photo_tagger.discovery.find_tagged_images", return_value=set()):
+        kept = apply_skip_tagged([a], skip_tagged=True)
+    assert kept == [a]
+
+
+def test_make_skip_list_appender_returns_none_for_no_path() -> None:
+    """No path means no callback (callers treat None as 'do nothing')."""
+    assert make_skip_list_appender(None) is None
+
+
+def test_make_skip_list_appender_creates_and_appends(tmp_path: Path) -> None:
+    """A non-existent skip file is created and gets one line per success."""
+    skip_file = tmp_path / "processed.txt"
+    appender = make_skip_list_appender(skip_file)
+    assert appender is not None
+    appender(tmp_path / "IMG_0001.CR3")
+    appender(tmp_path / "IMG_0002.CR3")
+    assert skip_file.read_text(encoding="utf-8").splitlines() == [
+        "IMG_0001.CR3",
+        "IMG_0002.CR3",
+    ]
+
+
+def test_make_skip_list_appender_skips_existing_entries(tmp_path: Path) -> None:
+    """Filenames already in the file (from earlier runs) are not appended a second time."""
+    skip_file = tmp_path / "processed.txt"
+    skip_file.write_text("IMG_0001.CR3\n# user note\n\n")
+    appender = make_skip_list_appender(skip_file)
+    assert appender is not None
+    appender(tmp_path / "IMG_0001.CR3")  # already there, should not duplicate
+    appender(tmp_path / "IMG_0002.CR3")
+    lines = skip_file.read_text(encoding="utf-8").splitlines()
+    assert lines.count("IMG_0001.CR3") == 1
+    assert "IMG_0002.CR3" in lines
+
+
+def test_make_skip_list_appender_does_not_repeat_within_a_run(tmp_path: Path) -> None:
+    """Repeated calls with the same name in one run only append it once."""
+    skip_file = tmp_path / "processed.txt"
+    appender = make_skip_list_appender(skip_file)
+    assert appender is not None
+    target = tmp_path / "IMG_0001.CR3"
+    appender(target)
+    appender(target)
+    assert skip_file.read_text(encoding="utf-8").splitlines() == ["IMG_0001.CR3"]
