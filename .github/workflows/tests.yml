@@ -27,3 +27,33 @@ jobs:
       - name: Run tests
         # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock; --no-build is dotnet-only.
         run: uv run pytest
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install dev dependencies
+        # NOSONAR S8541,S8544 - uv sync reads uv.lock (committed); --no-build is a dotnet flag.
+        run: uv sync --group dev --group test
+
+      - name: ruff check
+        # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock; --no-build is dotnet-only.
+        run: uv run ruff check .
+
+      - name: ruff format
+        # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock; --no-build is dotnet-only.
+        run: uv run ruff format --check .
+
+      - name: zuban type check
+        # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock; --no-build is dotnet-only.
+        run: uv run zuban check
