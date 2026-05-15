@@ -10,6 +10,7 @@ from photo_tagger.keywords import (
     parse_hierarchical_keyword,
     process_new_keywords,
 )
+from photo_tagger.metadata import build_contextual_prompt
 
 
 def test_parse_hierarchical_keyword_handles_flat_and_hierarchical() -> None:
@@ -86,7 +87,7 @@ def test_merge_keywords_preserves_existing_and_adds_hierarchies() -> None:
 
 def test_build_contextual_prompt_includes_metadata_and_truncates_keywords() -> None:
     """The contextual prompt surfaces existing metadata and shortens long keyword lists."""
-    prompt = m.build_contextual_prompt(
+    prompt = build_contextual_prompt(
         "Analyze the scene.",
         ["Beach", "Sunset", "Travel", "Landscape", "Vacation"],
         {
