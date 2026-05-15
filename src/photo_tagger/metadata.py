@@ -8,6 +8,7 @@ from loguru import logger
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
 from photo_tagger.config import (
@@ -20,6 +21,20 @@ from photo_tagger.config import (
 
 
 _GPS_TAG = "Composite:GPSPosition"
+
+# Any of these tags being non-empty marks an image as already tagged. Covers the cases
+# where another tool (Lightroom, exiftool by hand, a previous photo-tagger run) wrote
+# keywords, a description, or a title to either the image or its XMP sidecar.
+_TAGGED_INDICATOR_TAGS: tuple[str, ...] = (
+    TAG_XMP_SUBJECT,
+    TAG_XMP_HIERARCHICAL_SUBJECT,
+    TAG_XMP_WEIGHTED_FLAT_SUBJECT,
+    TAG_IPTC_KEYWORDS,
+    "XMP:Description",
+    "EXIF:ImageDescription",
+    "XMP:Title",
+    "IPTC:ObjectName",
+)
 
 # Tags read from a photo when collecting "existing" keywords. The mapping is
 # applied in order, so XMP entries arrive before IPTC fall-backs.
@@ -140,6 +155,64 @@ def read_existing_keywords(image_path: Path) -> dict[str, list[str]]:
         iptc_keywords_count=iptc_count,
     )
     return result
+
+
+def _value_is_present(value: Any) -> bool:  # noqa: ANN401
+    """Return True if an exiftool tag value carries any non-blank content."""
+    if value is None:
+        return False
+    if isinstance(value, (list, tuple, set)):
+        return any(str(item).strip() for item in value)
+    return bool(str(value).strip())
+
+
+def _block_has_indicator(blocks: list[dict[str, Any]]) -> bool:
+    """Return True if any indicator tag in the exiftool result blocks is populated."""
+    for block in blocks:
+        for tag in _TAGGED_INDICATOR_TAGS:
+            if _value_is_present(block.get(tag)):
+                return True
+    return False
+
+
+def find_tagged_images(image_paths: Iterable[Path]) -> set[Path]:
+    """
+    Return the subset of *image_paths* that already carry meaningful metadata.
+
+    An image counts as tagged if either it or its XMP sidecar has any of the indicator
+    tags populated (keywords, hierarchical keywords, description, or title). The check
+    runs through a single persistent ExifToolHelper context so the pipeline does not pay
+    the per-file process startup cost.
+    """
+    paths = list(image_paths)
+    if not paths:
+        return set()
+
+    tagged: set[Path] = set()
+    try:
+        with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
+            for image_path in paths:
+                targets = metadata_targets(image_path)
+                if not targets:
+                    continue
+                try:
+                    blocks = et.get_tags(files=targets, tags=list(_TAGGED_INDICATOR_TAGS))
+                except (ValueError, TypeError, ExifToolExecuteError) as exc:
+                    logger.warning(
+                        "failed_to_check_tagged_status",
+                        file=str(image_path),
+                        error=str(exc),
+                    )
+                    continue
+                if _block_has_indicator(blocks):
+                    tagged.add(image_path)
+    except (ValueError, TypeError, ExifToolExecuteError) as exc:
+        logger.exception("failed_to_open_exiftool_for_tagged_check", error=str(exc))
+        return set()
+
+    if tagged:
+        logger.debug("tagged_images_detected", count=len(tagged))
+    return tagged
 
 
 def read_location_tags(image_path: Path) -> dict[str, str]:

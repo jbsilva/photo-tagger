@@ -1,11 +1,21 @@
 """Tests for metadata helpers that don't need a real exiftool binary."""
 
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
+
 from photo_tagger.metadata import (
+    _block_has_indicator,
     _build_write_payload,
     _coerce_to_list,
+    _value_is_present,
     build_contextual_prompt,
+    find_tagged_images,
     format_metadata_value,
 )
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_format_metadata_value_passes_strings_through() -> None:
@@ -72,3 +82,74 @@ def test_build_write_payload_skips_blank_values() -> None:
     """Empty keyword lists / blank title and description produce no entries."""
     payload = _build_write_payload({}, description=None, title=None)
     assert payload == {}
+
+
+def test_value_is_present_distinguishes_blanks_from_content() -> None:
+    """Blank strings, None, and empty lists count as "no value"."""
+    assert _value_is_present("hello") is True
+    assert _value_is_present(["", "x"]) is True
+    assert _value_is_present(0) is True  # numeric 0 stringifies to "0"
+    assert _value_is_present(None) is False
+    assert _value_is_present("") is False
+    assert _value_is_present("   ") is False
+    assert _value_is_present([]) is False
+    assert _value_is_present(["", " "]) is False
+
+
+def test_block_has_indicator_matches_any_indicator_tag() -> None:
+    """Any populated indicator tag flips the indicator True; otherwise False."""
+    assert _block_has_indicator([{"XMP:Subject": ["Beach"]}]) is True
+    assert _block_has_indicator([{"XMP:Description": "A scene."}]) is True
+    assert _block_has_indicator([{"IPTC:ObjectName": "A title"}]) is True
+    # Non-indicator tag alone (e.g., file size) should not trigger the indicator.
+    assert _block_has_indicator([{"File:FileSize": 1234}]) is False
+    assert _block_has_indicator([{"XMP:Subject": []}]) is False
+    assert _block_has_indicator([]) is False
+
+
+def test_find_tagged_images_returns_paths_with_indicator(tmp_path: Path) -> None:
+    """Images whose exiftool block carries an indicator tag are returned."""
+    a = tmp_path / "a.cr3"
+    b = tmp_path / "b.cr3"
+    a.write_text("x")
+    b.write_text("x")
+
+    fake_helper = MagicMock()
+    fake_helper.__enter__.return_value = fake_helper
+    fake_helper.__exit__.return_value = False
+    # First image has keywords; second has nothing.
+    fake_helper.get_tags.side_effect = [
+        [{"XMP:Subject": ["Beach"]}],
+        [{"File:FileSize": 100}],
+    ]
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        tagged = find_tagged_images([a, b])
+
+    assert tagged == {a}
+
+
+def test_find_tagged_images_returns_empty_for_empty_input() -> None:
+    """An empty input list short-circuits without invoking exiftool."""
+    with patch("photo_tagger.metadata.ExifToolHelper") as helper:
+        assert find_tagged_images([]) == set()
+    helper.assert_not_called()
+
+
+def test_find_tagged_images_skips_paths_with_no_targets(tmp_path: Path) -> None:
+    """Paths that have no readable file or sidecar are silently skipped."""
+    ghost = tmp_path / "missing.cr3"  # never created
+
+    fake_helper = MagicMock()
+    fake_helper.__enter__.return_value = fake_helper
+    fake_helper.__exit__.return_value = False
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        assert find_tagged_images([ghost]) == set()
+    fake_helper.get_tags.assert_not_called()
