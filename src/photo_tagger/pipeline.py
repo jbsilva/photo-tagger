@@ -25,9 +25,12 @@ from photo_tagger.metadata import (
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from pydantic_ai import Agent
+
+    OnSuccess = Callable[[Path], None]
 
 
 @dataclass(slots=True)
@@ -141,10 +144,21 @@ class _BatchTotals:
     retry_successes: int = 0
 
 
+def _notify_success(on_success: OnSuccess | None, image_file: Path) -> None:
+    """Invoke *on_success* defensively; a callback failure must not abort the batch."""
+    if on_success is None:
+        return
+    try:
+        on_success(image_file)
+    except Exception as exc:  # noqa: BLE001 - any callback error must not break the batch.
+        logger.exception("on_success_callback_failed", file=image_file.name, error=str(exc))
+
+
 def _run_initial_pass(
     image_files: list[Path],
     agent: Agent,
     options: ProcessingOptions,
+    on_success: OnSuccess | None = None,
 ) -> tuple[int, list[Path]]:
     """First pass over the batch; returns (success_count, files_to_retry)."""
     total = len(image_files)
@@ -153,6 +167,7 @@ def _run_initial_pass(
     for idx, image_file in enumerate(image_files, start=1):
         if execute_process(image_file, agent, options, index=f"{idx}/{total}"):
             successes += 1
+            _notify_success(on_success, image_file)
         else:
             logger.warning("file_queued_for_retry", file=image_file.name)
             pending.append(image_file)
@@ -163,6 +178,7 @@ def _run_retry_pass(
     pending: list[Path],
     agent: Agent,
     options: ProcessingOptions,
+    on_success: OnSuccess | None = None,
 ) -> tuple[int, list[Path]]:
     """Retry every previously failed file once; returns (retry_successes, still_failing)."""
     if not pending:
@@ -180,6 +196,7 @@ def _run_retry_pass(
             retry=True,
         ):
             successes += 1
+            _notify_success(on_success, image_file)
         else:
             logger.error("file_failed_after_retry", file=image_file.name)
             still_failing.append(image_file)
@@ -190,10 +207,19 @@ def run_batch(
     image_files: list[Path],
     agent: Agent,
     options: ProcessingOptions,
+    *,
+    on_success: OnSuccess | None = None,
 ) -> _BatchTotals:
-    """Run the initial pass plus a single retry pass and return summary totals."""
-    success, pending = _run_initial_pass(image_files, agent, options)
-    retry_successes, still_failing = _run_retry_pass(pending, agent, options)
+    """
+    Run the initial pass plus a single retry pass and return summary totals.
+
+    The optional *on_success* callback fires once per image that completes successfully
+    (whether on the first pass or after a retry). It receives the image path. The CLI
+    uses this to append filenames to a skip list as work progresses, so a killed run can
+    be resumed without redoing finished photos.
+    """
+    success, pending = _run_initial_pass(image_files, agent, options, on_success=on_success)
+    retry_successes, still_failing = _run_retry_pass(pending, agent, options, on_success=on_success)
 
     totals = _BatchTotals(
         success=success + retry_successes,

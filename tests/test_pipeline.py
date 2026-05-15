@@ -1,7 +1,5 @@
 """Tests for the photo processing pipeline using lightweight stubs."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
@@ -167,3 +165,58 @@ def test_run_batch_retry_recovers_a_failure(tmp_path: Path) -> None:
     assert totals.success == 1
     assert totals.initial_failures == 1
     assert totals.retry_successes == 1
+
+
+def test_run_batch_calls_on_success_for_each_completed_file(tmp_path: Path) -> None:
+    """on_success fires for first-pass and retry-pass successes, never for failures."""
+    success_first = tmp_path / "ok.cr3"
+    success_retry = tmp_path / "retry.cr3"
+    failure = tmp_path / "fail.cr3"
+    for path in (success_first, success_retry, failure):
+        path.write_text("x")
+
+    # Map (filename, attempt_number) -> outcome. The retry file fails first then succeeds.
+    attempts: dict[str, int] = {}
+    retry_attempt_threshold = 2  # success_retry passes from its second attempt onwards.
+
+    def fake_process_photo(image: Path, *_a: Any, **_kw: Any) -> bool:  # noqa: ANN401
+        attempts[image.name] = attempts.get(image.name, 0) + 1
+        if image.name == success_first.name:
+            return True
+        if image.name == failure.name:
+            return False
+        return attempts[image.name] >= retry_attempt_threshold
+
+    notified: list[Path] = []
+
+    with (
+        patch("photo_tagger.pipeline.process_photo", side_effect=fake_process_photo),
+        pytest.raises(SystemExit),
+    ):
+        run_batch(
+            [success_first, success_retry, failure],
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            on_success=notified.append,
+        )
+
+    assert notified == [success_first, success_retry]
+
+
+def test_run_batch_swallows_on_success_callback_errors(tmp_path: Path) -> None:
+    """A callback that raises must not abort the batch; success count still reflects work."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    def boom(_path: Path) -> None:
+        msg = "callback exploded"
+        raise RuntimeError(msg)
+
+    with patch("photo_tagger.pipeline.process_photo", return_value=True):
+        totals = run_batch(
+            [image],
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            on_success=boom,
+        )
+    assert totals.success == 1
