@@ -41,7 +41,6 @@ dependencies = [
 [dependency-groups]
 dev = [
     "bandit>=1.9.4",
-    "litellm>=1.84.0",
     "ruff>=0.15.13",
     "zuban>=0.7.2",
 ]
