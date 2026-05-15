@@ -1,8 +1,8 @@
 """Regression tests for keyword utilities and contextual prompt helpers."""
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-import photo_tagger.main as m
+from photo_tagger.discovery import parse_extensions, resolve_image_files
 from photo_tagger.keywords import (
     collect_cumulative_entries,
     merge_keywords,
@@ -11,6 +11,10 @@ from photo_tagger.keywords import (
     process_new_keywords,
 )
 from photo_tagger.metadata import build_contextual_prompt
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_parse_hierarchical_keyword_handles_flat_and_hierarchical() -> None:
@@ -106,13 +110,11 @@ def test_build_contextual_prompt_includes_metadata_and_truncates_keywords() -> N
 
 def test_parse_extensions_normalizes_input() -> None:
     """Comma-separated extensions are normalized with leading dots preserved."""
-    extensions = m._parse_extensions("cr3, jpg ,PNG")  # noqa: SLF001
-    assert extensions == {".cr3", ".jpg", ".PNG"}
+    assert parse_extensions("cr3, jpg ,PNG") == {".cr3", ".jpg", ".PNG"}
 
 
 def test_resolve_image_files_deduplicates_and_preserves_explicit(tmp_path: Path) -> None:
     """Explicit paths stay first and duplicates discovered via directories are filtered out."""
-    assert isinstance(tmp_path, Path)
     folder = tmp_path / "images"
     folder.mkdir()
 
@@ -123,7 +125,7 @@ def test_resolve_image_files_deduplicates_and_preserves_explicit(tmp_path: Path)
     extra = folder / "other.jpg"
     extra.write_text("data")
 
-    result = m._resolve_image_files(  # noqa: SLF001
+    result = resolve_image_files(
         [explicit, folder],
         ext_set={".cr3", ".jpg"},
         recursive=False,

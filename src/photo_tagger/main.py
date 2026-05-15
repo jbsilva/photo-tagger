@@ -16,9 +16,6 @@ Requirements:
 """
 # ruff: noqa: PLR0913
 
-import contextlib
-import os
-from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -36,6 +33,7 @@ from photo_tagger.config import (
     DEFAULT_USER_PROMPT,
     LogLevel,
 )
+from photo_tagger.discovery import apply_skip_file, resolve_image_batch
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
 from photo_tagger.logging_setup import setup_logging
@@ -212,164 +210,6 @@ def _execute_process(
         else:
             logger.error(event, index=index, queued_for_retry=True)
         return False
-
-
-def _parse_extensions(image_extensions: str) -> set[str]:
-    """
-    Normalize comma-separated extensions into a set like {".cr3", ".jpg"}.
-
-    Examples:
-        >>> _parse_extensions("cr3, jpg ,PNG")
-        {'.cr3', '.jpg', '.PNG'}
-
-    """
-    return {
-        f".{ext.strip().lstrip('.')}"
-        for ext in image_extensions.split(",")
-        if ext.strip().lstrip(".")
-    }
-
-
-def _resolve_image_files(
-    inputs: list[Path],
-    ext_set: set[str],
-    *,
-    recursive: bool,
-) -> list[Path]:
-    """
-    Resolve provided inputs into a list of files.
-
-    - Directories are expanded by extension (honoring --recursive)
-    - Explicit files are accepted as-is (extension filter not applied)
-    - Order is preserved and duplicates removed
-    """
-    pattern = "**/*" if recursive else "*"
-
-    files_from_dirs: list[Path] = []
-    files_explicit: list[Path] = []
-
-    for path in inputs:
-        path_resolved = path
-        with contextlib.suppress(Exception):
-            path_resolved = path.resolve()
-        if path_resolved.is_dir():
-            for ext in ext_set:
-                files_from_dirs.extend(path_resolved.glob(f"{pattern}{ext}"))
-        elif path_resolved.is_file():
-            files_explicit.append(path_resolved)
-        else:
-            logger.warning("input_not_file_or_dir", path=str(path))
-
-    combined: list[Path] = []
-    seen = set()
-    for f in chain(files_explicit, files_from_dirs):
-        key = str(f.resolve()) if f.exists() else str(f)
-        if key not in seen:
-            combined.append(f)
-            seen.add(key)
-
-    return combined
-
-
-def _resolve_image_batch(
-    inputs: list[Path] | None,
-    image_extensions: str,
-    *,
-    recursive: bool,
-) -> list[Path]:
-    ext_set = _parse_extensions(image_extensions)
-    if not ext_set:
-        logger.error("no_valid_extensions_provided", raw_input=image_extensions)
-        raise SystemExit(1)
-    logger.debug("parsed_extensions", extensions=sorted(ext_set))
-
-    if not inputs:
-        logger.error(
-            "no_inputs_provided",
-            hint=("Pass one or more --input/-i paths (files or directories)"),
-        )
-        raise SystemExit(1)
-
-    image_files = _resolve_image_files(inputs, ext_set, recursive=recursive)
-    if not image_files:
-        logger.error(
-            "no_image_files_found",
-            inputs=[str(p) for p in inputs],
-            recursive=recursive,
-            extensions=sorted(ext_set),
-        )
-        raise SystemExit(1)
-
-    logger.info("image_files_discovered", count=len(image_files))
-    return image_files
-
-
-def _load_skip_list(skip_file: Path) -> set[str]:
-    try:
-        content = skip_file.read_text(encoding="utf-8")
-    except OSError as exc:
-        logger.error("skip_file_read_failed", file=str(skip_file), error=str(exc))
-        raise SystemExit(1) from exc
-
-    entries: set[str] = set()
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        entries.add(stripped)
-
-    if entries:
-        logger.info("skip_entries_loaded", count=len(entries), file=str(skip_file))
-    else:
-        logger.warning("skip_file_has_no_entries", file=str(skip_file))
-    return entries
-
-
-def _filter_skipped_files(
-    image_files: list[Path],
-    skip_entries: set[str],
-) -> tuple[list[Path], int]:
-    if not skip_entries:
-        return image_files, 0
-
-    name_keys = {
-        entry.casefold() for entry in skip_entries if os.sep not in entry and "/" not in entry
-    }
-    path_keys = {entry.casefold() for entry in skip_entries if entry.casefold() not in name_keys}
-
-    filtered: list[Path] = []
-    skipped = 0
-    for path in image_files:
-        name_key = path.name.casefold()
-        path_key = str(path).casefold()
-        if name_key in name_keys or path_key in path_keys:
-            logger.debug("skipping_file_from_list", file=str(path))
-            skipped += 1
-            continue
-        filtered.append(path)
-
-    return filtered, skipped
-
-
-def _apply_skip_file(
-    image_files: list[Path],
-    skip_file: Path | None,
-) -> list[Path]:
-    if not skip_file:
-        return image_files
-
-    skip_entries = _load_skip_list(skip_file)
-    filtered, skipped = _filter_skipped_files(image_files, skip_entries)
-    if skipped:
-        logger.info(
-            "skip_list_applied",
-            skipped=skipped,
-            remaining=len(filtered),
-            file=str(skip_file),
-        )
-    elif skip_entries:
-        logger.warning("skip_list_matched_no_files", file=str(skip_file))
-    return filtered
 
 
 @app.default
@@ -587,8 +427,8 @@ def tag(
         log_folder=str(log_folder),
     )
 
-    image_files = _resolve_image_batch(inputs, image_extensions, recursive=recursive)
-    image_files = _apply_skip_file(image_files, skip_from)
+    image_files = resolve_image_batch(inputs, image_extensions, recursive=recursive)
+    image_files = apply_skip_file(image_files, skip_from)
     if not image_files:
         logger.info("no_files_to_process_after_skipping")
         return
