@@ -19,7 +19,7 @@ DEFAULT_MODEL_NAME = os.getenv("MODEL_NAME", "qwen/qwen3-vl-30b")
 DEFAULT_JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "80"))
 DEFAULT_DIMENSIONS = int(os.getenv("JPEG_DIMENSIONS", "1280"))
 DEFAULT_TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
-DEFAULT_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "800"))
+DEFAULT_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1200"))
 DEFAULT_RETRIES = int(os.getenv("RETRIES", "5"))
 
 PROVIDER_URLS = {
