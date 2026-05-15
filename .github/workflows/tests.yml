@@ -21,7 +21,9 @@ jobs:
           python-version-file: "pyproject.toml"
 
       - name: Install dependencies
+        # NOSONAR S8541,S8544 - uv sync reads uv.lock (committed); --no-build is a dotnet flag.
         run: uv sync --group test
 
       - name: Run tests
+        # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock; --no-build is dotnet-only.
         run: uv run pytest
