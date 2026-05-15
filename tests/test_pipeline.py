@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 from pydantic_ai import BinaryContent
 
+from photo_tagger.ai import InferenceResult
 from photo_tagger.pipeline import (
     ProcessingOptions,
     execute_process,
@@ -26,13 +27,13 @@ _FAKE_AGENT = cast("Agent", object())
 
 
 @contextlib.contextmanager
-def _stub_helper(_et: object | None = None) -> "Iterator[object]":
+def _stub_helper(_et: object | None = None) -> Iterator[object]:
     """Stand-in for photo_tagger.metadata._helper that never spawns an exiftool process."""
     yield object()
 
 
 @pytest.fixture(autouse=True)
-def _no_real_exiftool() -> "Iterator[None]":
+def _no_real_exiftool() -> Iterator[None]:
     """Make every test in this file safe to run without an exiftool binary on PATH."""
     with patch("photo_tagger.pipeline._helper", _stub_helper):
         yield
@@ -57,7 +58,15 @@ def patched_pipeline(stub_image_bytes: BinaryContent) -> Any:  # noqa: ANN401
         patch("photo_tagger.pipeline.read_gps_coordinates", return_value={}),
         patch(
             "photo_tagger.pipeline.analyze_image_with_ai",
-            return_value=("Title", "Description.", ["Beach", "Sunset"]),
+            return_value=InferenceResult(
+                title="Title",
+                description="Description.",
+                keywords=["Beach", "Sunset"],
+                input_tokens=10,
+                output_tokens=5,
+                total_tokens=15,
+                seconds=0.1,
+            ),
         ) as analyze,
         patch("photo_tagger.pipeline.write_metadata", return_value=True) as write,
     ):
@@ -307,3 +316,71 @@ def test_run_batch_progress_callback_fires_per_image(tmp_path: Path) -> None:
         )
 
     assert received == [(image.name, True)]
+
+
+def test_run_batch_aggregates_token_usage_from_inference(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """Per-call token counts add up into the BatchTotals returned to the CLI."""
+    del patched_pipeline  # fixture installs the stubbed analyze_image_with_ai
+    files = [tmp_path / f"img{i}.cr3" for i in range(2)]
+    for f in files:
+        f.write_text("x")
+
+    totals = run_batch(files, agent=_FAKE_AGENT, options=ProcessingOptions())
+
+    expected_input = 10 * 2
+    expected_output = 5 * 2
+    expected_total = 15 * 2
+    expected_calls = 2
+    assert totals.input_tokens == expected_input
+    assert totals.output_tokens == expected_output
+    assert totals.total_tokens == expected_total
+    assert totals.inference_calls == expected_calls
+    assert sorted(totals.successful_files) == sorted(str(f) for f in files)
+    assert totals.failed_files == []
+
+
+def test_run_batch_calls_on_complete_with_totals_even_on_failure(tmp_path: Path) -> None:
+    """on_complete fires before SystemExit so the CLI can persist a summary file."""
+    files = [tmp_path / "img.cr3"]
+    files[0].write_text("x")
+    received: list[Any] = []
+
+    with (
+        patch("photo_tagger.pipeline.process_photo", return_value=False),
+        pytest.raises(SystemExit),
+    ):
+        run_batch(
+            files,
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            on_complete=received.append,
+        )
+
+    assert len(received) == 1
+    totals = received[0]
+    assert totals.success == 0
+    assert totals.failed_files == [str(files[0])]
+
+
+def test_run_batch_swallows_on_complete_errors(tmp_path: Path) -> None:
+    """An on_complete that raises is logged but does not change the exit semantics."""
+    from photo_tagger.pipeline import BatchTotals  # noqa: PLC0415 - test-local import.
+
+    files = [tmp_path / "img.cr3"]
+    files[0].write_text("x")
+
+    def boom(_totals: BatchTotals) -> None:
+        msg = "summary writer crashed"
+        raise RuntimeError(msg)
+
+    with patch("photo_tagger.pipeline.process_photo", return_value=True):
+        totals = run_batch(
+            files,
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            on_complete=boom,
+        )
+    assert totals.success == 1

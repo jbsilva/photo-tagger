@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def batch_progress(total: int, *, enabled: bool = True) -> "Iterator[ProgressCallback | None]":
+def batch_progress(total: int, *, enabled: bool = True) -> Iterator[ProgressCallback | None]:
     """
     Yield a per-image progress callback for :func:`photo_tagger.pipeline.run_batch`.
 
@@ -54,7 +54,7 @@ def batch_progress(total: int, *, enabled: bool = True) -> "Iterator[ProgressCal
     with Progress(*columns, transient=False) as progress:
         task_id = progress.add_task("photos", total=total)
 
-        def advance(path: "Path", ok: bool) -> None:  # noqa: FBT001 - matches pipeline contract.
+        def advance(path: Path, ok: bool) -> None:  # noqa: FBT001 - matches pipeline contract.
             # The bar is the dominant feedback while running; keep the per-photo log
             # in the file sink (DEBUG) and just nudge the bar here.
             del path, ok

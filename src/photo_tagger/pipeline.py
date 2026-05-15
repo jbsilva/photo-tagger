@@ -1,14 +1,14 @@
 """High-level photo processing pipeline shared by the CLI and the retry loop."""
 
 import contextlib
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from exiftool import ExifToolHelper  # type: ignore[attr-defined]
 from loguru import logger
 
-from photo_tagger.ai import analyze_image_with_ai
+from photo_tagger.ai import InferenceResult, analyze_image_with_ai
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
     DEFAULT_JPEG_QUALITY,
@@ -32,10 +32,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
 
+    from exiftool import ExifToolHelper  # type: ignore[attr-defined]
     from pydantic_ai import Agent
 
     OnSuccess = Callable[[Path], None]
     ProgressCallback = Callable[[Path, bool], None]
+    OnComplete = Callable[["BatchTotals"], None]
 
 
 @dataclass(slots=True)
@@ -63,9 +65,41 @@ _EMPTY_KEYWORDS: dict[str, list[str]] = {
 
 
 @contextlib.contextmanager
-def _no_helper() -> "Iterator[None]":
+def _no_helper() -> Iterator[None]:
     """Yield None as the shared ExifToolHelper for the concurrent path."""
     yield None
+
+
+@dataclass(slots=True)
+class _UsageAccumulator:
+    """Thread-safe running totals for token usage across a batch."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    inference_seconds: float = 0.0
+    inference_calls: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def add(self, result: InferenceResult) -> None:
+        """Fold *result*'s usage into the running totals under the lock."""
+        with self._lock:
+            self.input_tokens += result.input_tokens
+            self.output_tokens += result.output_tokens
+            self.total_tokens += result.total_tokens
+            self.inference_seconds += result.seconds
+            self.inference_calls += 1
+
+
+_BATCH_USAGE: _UsageAccumulator | None = None
+_BATCH_USAGE_LOCK = threading.Lock()
+
+
+def _set_batch_usage(usage: _UsageAccumulator | None) -> None:
+    """Install the run-wide accumulator so process_photo can tally without a kwarg."""
+    global _BATCH_USAGE  # noqa: PLW0603 - shared by all worker threads in a single batch.
+    with _BATCH_USAGE_LOCK:
+        _BATCH_USAGE = usage
 
 
 def process_photo(
@@ -117,13 +151,20 @@ def process_photo(
             read_gps_coordinates(image_path, et=helper),
         )
 
-        title, description, keywords = analyze_image_with_ai(
+        inference = analyze_image_with_ai(
             image_bytes=jpeg_bytes,
             agent=agent,
             user_prompt=contextual_prompt,
             temperature=options.temperature,
             max_tokens=options.max_tokens,
         )
+        usage = _BATCH_USAGE
+        if usage is not None:
+            usage.add(inference)
+
+        title = inference.title
+        description = inference.description
+        keywords = inference.keywords
 
         if options.max_new_keywords is not None and len(keywords) > options.max_new_keywords:
             logger.info(
@@ -194,10 +235,30 @@ def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_
 
 
 @dataclass(slots=True)
-class _BatchTotals:
+class BatchTotals:
+    """
+    Public summary of one ``run_batch`` invocation.
+
+    The CLI surfaces this in logs and uses it to write the optional JSON summary file.
+    """
+
+    total_files: int = 0
     success: int = 0
     initial_failures: int = 0
     retry_successes: int = 0
+    failed_files: list[str] = field(default_factory=list)
+    successful_files: list[str] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    inference_seconds: float = 0.0
+    inference_calls: int = 0
+    workers: int = 1
+    dry_run: bool = False
+
+
+# Backwards-compatible alias for tests that still import the private name.
+_BatchTotals = BatchTotals
 
 
 def _notify_success(on_success: OnSuccess | None, image_file: Path) -> None:
@@ -371,7 +432,8 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
     user_prompt: str = DEFAULT_USER_PROMPT,
     workers: int = 1,
     progress: ProgressCallback | None = None,
-) -> _BatchTotals:
+    on_complete: OnComplete | None = None,
+) -> BatchTotals:
     """
     Run the initial pass plus a single retry pass and return summary totals.
 
@@ -388,51 +450,81 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
     The optional *progress* callback fires once per image (success or failure). It is
     used by the CLI to drive a rich progress bar.
     """
-    with _helper(None) if workers <= 1 else _no_helper() as et:
-        success, pending = _run_pass(
-            image_files,
-            agent,
-            options,
-            retry=False,
-            et=et,
-            user_prompt=user_prompt,
-            on_success=on_success,
-            workers=workers,
-            progress=progress,
-        )
-        retry_successes, still_failing = _run_pass(
-            pending,
-            agent,
-            options,
-            retry=True,
-            et=et,
-            user_prompt=user_prompt,
-            on_success=on_success,
-            workers=workers,
-            progress=progress,
-        )
+    usage = _UsageAccumulator()
+    successful_files: list[Path] = []
 
-    totals = _BatchTotals(
+    def _record_success(path: Path) -> None:
+        successful_files.append(path)
+        if on_success is not None:
+            on_success(path)
+
+    _set_batch_usage(usage)
+    try:
+        with _helper(None) if workers <= 1 else _no_helper() as et:
+            success, pending = _run_pass(
+                image_files,
+                agent,
+                options,
+                retry=False,
+                et=et,
+                user_prompt=user_prompt,
+                on_success=_record_success,
+                workers=workers,
+                progress=progress,
+            )
+            retry_successes, still_failing = _run_pass(
+                pending,
+                agent,
+                options,
+                retry=True,
+                et=et,
+                user_prompt=user_prompt,
+                on_success=_record_success,
+                workers=workers,
+                progress=progress,
+            )
+    finally:
+        _set_batch_usage(None)
+
+    totals = BatchTotals(
+        total_files=len(image_files),
         success=success + retry_successes,
         initial_failures=len(pending),
         retry_successes=retry_successes,
+        failed_files=[str(path) for path in still_failing],
+        successful_files=[str(path) for path in successful_files],
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        total_tokens=usage.total_tokens,
+        inference_seconds=round(usage.inference_seconds, 3),
+        inference_calls=usage.inference_calls,
+        workers=workers,
+        dry_run=options.dry_run,
     )
 
     logger.info(
         "processing_summary",
-        total_files=len(image_files),
+        total_files=totals.total_files,
         successful=totals.success,
         failed=len(still_failing),
         initial_failures=totals.initial_failures,
         retry_successes=totals.retry_successes,
+        input_tokens=totals.input_tokens,
+        output_tokens=totals.output_tokens,
+        total_tokens=totals.total_tokens,
+        inference_calls=totals.inference_calls,
+        inference_seconds=totals.inference_seconds,
         dry_run=options.dry_run,
         workers=workers,
     )
     if still_failing:
-        logger.error(
-            "files_failed_after_retry",
-            files=[str(path) for path in still_failing],
-        )
+        logger.error("files_failed_after_retry", files=totals.failed_files)
+
+    if on_complete is not None:
+        try:
+            on_complete(totals)
+        except Exception as exc:  # noqa: BLE001 - summary writers must not abort the run.
+            logger.exception("on_complete_callback_failed", error=str(exc))
 
     if totals.success < len(image_files):
         raise SystemExit(1)
