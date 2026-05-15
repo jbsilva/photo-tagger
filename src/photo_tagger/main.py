@@ -15,7 +15,9 @@ Requirements:
 
 """
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -30,9 +32,9 @@ from photo_tagger.config import (
     DEFAULT_MODEL_NAME,
     DEFAULT_RETRIES,
     DEFAULT_TEMPERATURE,
+    DEFAULT_USER_PROMPT,
     LogLevel,
 )
-from photo_tagger.config import DEFAULT_USER_PROMPT
 from photo_tagger.discovery import (
     apply_skip_file,
     apply_skip_tagged,
@@ -40,7 +42,7 @@ from photo_tagger.discovery import (
     resolve_image_batch,
 )
 from photo_tagger.logging_setup import setup_logging
-from photo_tagger.pipeline import ProcessingOptions, run_batch
+from photo_tagger.pipeline import BatchTotals, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
 
 
@@ -239,6 +241,34 @@ def _read_prompt_file(prompt_file: Path | None) -> str:
     return text
 
 
+def _write_summary_file(  # noqa: PLR0913 - distinct optional fields are clearer as kwargs.
+    summary_file: Path | None,
+    totals: BatchTotals | None,
+    *,
+    started_at: datetime,
+    model_name: str,
+    provider_name: str,
+    user_prompt_chars: int,
+) -> None:
+    """Serialise *totals* to *summary_file* as JSON. Errors are logged, never raised."""
+    if summary_file is None or totals is None:
+        return
+    payload: dict[str, object] = {
+        "started_at": started_at.isoformat(),
+        "finished_at": datetime.now(tz=UTC).isoformat(),
+        "provider": provider_name,
+        "model": model_name,
+        "user_prompt_chars": user_prompt_chars,
+        **asdict(totals),
+    }
+    try:
+        summary_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        logger.error("summary_file_write_failed", file=str(summary_file), error=str(exc))
+        return
+    logger.info("summary_file_written", file=str(summary_file))
+
+
 def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
     *,
     inputs: list[Path] | None,
@@ -373,6 +403,17 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             ),
         ),
     ] = None,
+    summary_file: Annotated[
+        Path | None,
+        Parameter(
+            name=("--summary-file",),
+            validator=validators.Path(file_okay=True, dir_okay=False),
+            help=(
+                "Write a JSON summary of the run (success counts, failed files, token usage, "
+                "wall time) to this path on completion. Created if missing"
+            ),
+        ),
+    ] = None,
     provider: Annotated[ProviderConfig, Parameter(name="*")] = _DEFAULT_PROVIDER,
     output: Annotated[OutputConfig, Parameter(name="*")] = _DEFAULT_OUTPUT,
     inference: Annotated[InferenceConfig, Parameter(name="*")] = _DEFAULT_INFERENCE,
@@ -473,12 +514,27 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         api_key=provider.api_key,
         retries=provider.retries,
     )
+    started_at = datetime.now(tz=UTC)
+
+    def _on_complete(totals: BatchTotals) -> None:
+        # Runs once before run_batch raises SystemExit, so the JSON file is written
+        # whether the batch succeeded fully or only partially.
+        _write_summary_file(
+            summary_file,
+            totals,
+            started_at=started_at,
+            model_name=provider.model_name,
+            provider_name=provider.provider_name,
+            user_prompt_chars=len(user_prompt),
+        )
+
     with batch_progress(len(image_files), enabled=progress_bar) as progress:
         run_batch(
             image_files,
             agent,
             options,
             on_success=make_skip_list_appender(append_to_skip_file),
+            on_complete=_on_complete,
             user_prompt=user_prompt,
             workers=max(1, workers),
             progress=progress,

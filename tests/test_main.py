@@ -10,6 +10,7 @@ elsewhere by the per-module unit tests.
 from __future__ import annotations
 
 import contextlib
+import json
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -46,6 +47,9 @@ def _patches(captured: dict[str, Any]) -> Any:  # noqa: ANN401 - context manager
         captured["image_files"] = list(image_files)
         captured["options"] = options
         captured["on_success"] = kwargs.get("on_success")
+        captured["on_complete"] = kwargs.get("on_complete")
+        captured["user_prompt"] = kwargs.get("user_prompt")
+        captured["workers"] = kwargs.get("workers")
         return None
 
     return (
@@ -127,3 +131,67 @@ def test_cli_exits_when_no_inputs_passed() -> None:
     setup, create_agent, run_batch = _patches({})
     with setup, create_agent, run_batch, pytest.raises(SystemExit):
         main_module.app([])
+
+
+_EXPECTED_WORKERS = 3
+
+
+def test_cli_workers_and_prompt_file_reach_run_batch(tmp_path: Path) -> None:
+    """--workers and --prompt-file both flow into the run_batch call."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Describe like a wildlife photographer.\n", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(
+            [
+                "--input",
+                str(image),
+                "--workers",
+                str(_EXPECTED_WORKERS),
+                "--prompt-file",
+                str(prompt),
+            ],
+        )
+
+    assert captured["workers"] == _EXPECTED_WORKERS
+    assert captured["user_prompt"] == "Describe like a wildlife photographer."
+
+
+_EXPECTED_TOTAL_TOKENS = 49
+
+
+def test_cli_summary_file_written_on_completion(tmp_path: Path) -> None:
+    """--summary-file receives a JSON payload with run totals after the batch finishes."""
+    from photo_tagger.pipeline import BatchTotals  # noqa: PLC0415 - test-local import.
+
+    image = _make_jpeg(tmp_path / "img.cr3")
+    summary = tmp_path / "summary.json"
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    fake_totals = BatchTotals(
+        total_files=1,
+        success=1,
+        successful_files=[image.name],
+        input_tokens=42,
+        output_tokens=7,
+        total_tokens=_EXPECTED_TOTAL_TOKENS,
+        inference_calls=1,
+    )
+
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--summary-file", str(summary)])
+        # Simulate run_batch's on_complete callback firing with realistic totals.
+        on_complete = captured["on_complete"]
+        assert on_complete is not None
+        on_complete(fake_totals)
+
+    payload = json.loads(summary.read_text(encoding="utf-8"))
+    assert payload["total_tokens"] == _EXPECTED_TOTAL_TOKENS
+    assert payload["successful_files"] == [image.name]
+    assert payload["model"]  # provider/model fields are populated.
+    assert "started_at" in payload
+    assert "finished_at" in payload
