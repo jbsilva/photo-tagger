@@ -19,9 +19,11 @@ if TYPE_CHECKING:
 class StubAgent:
     """Minimal agent stub that returns a pre-built GeneratedMetadata payload."""
 
-    def __init__(self, payload: str) -> None:
+    def __init__(self, payload: str, *, input_tokens: int = 0, output_tokens: int = 0) -> None:
         """Store the canned JSON payload returned on every call."""
         self._payload = payload
+        self._input_tokens = input_tokens
+        self._output_tokens = output_tokens
         self.calls: list[dict[str, Any]] = []
 
     def run_sync(
@@ -39,7 +41,12 @@ class StubAgent:
             },
         )
         metadata = output_type.model_validate_json(self._payload)
-        return SimpleNamespace(output=metadata)
+        usage = SimpleNamespace(
+            input_tokens=self._input_tokens,
+            output_tokens=self._output_tokens,
+            total_tokens=self._input_tokens + self._output_tokens,
+        )
+        return SimpleNamespace(output=metadata, usage=lambda: usage)
 
 
 def test_analyze_image_with_ai_parses_payload() -> None:
@@ -51,12 +58,12 @@ def test_analyze_image_with_ai_parses_payload() -> None:
             "keywords": ["Animal", "Forest", "Primate"],
         },
     )
-    agent = StubAgent(payload)
+    agent = StubAgent(payload, input_tokens=120, output_tokens=45)
     image_bytes = BinaryContent(data=b"\xff\xd8stubjpeg", media_type="image/jpeg")
     target_temperature = 0.42
     target_max_tokens = 88
 
-    title, description, keywords = analyze_image_with_ai(
+    result = analyze_image_with_ai(
         image_bytes,
         agent,  # type: ignore[arg-type]
         user_prompt="Describe the photograph",
@@ -64,9 +71,14 @@ def test_analyze_image_with_ai_parses_payload() -> None:
         max_tokens=target_max_tokens,
     )
 
-    assert title == "Forest Companions"
-    assert description == "Two marmosets share a quiet branch in the canopy."
-    assert keywords == ["Animal", "Forest", "Primate"]
+    expected_input_tokens = 120
+    expected_output_tokens = 45
+    assert result.title == "Forest Companions"
+    assert result.description == "Two marmosets share a quiet branch in the canopy."
+    assert result.keywords == ["Animal", "Forest", "Primate"]
+    assert result.input_tokens == expected_input_tokens
+    assert result.output_tokens == expected_output_tokens
+    assert result.total_tokens == expected_input_tokens + expected_output_tokens
 
     assert len(agent.calls) == 1
     recorded = agent.calls[0]

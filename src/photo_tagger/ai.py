@@ -2,6 +2,7 @@
 
 import time
 import urllib.parse
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Literal
 
@@ -76,11 +77,7 @@ def _fetch_lmstudio_models(url: str, api_key: str | None) -> list[str]:
     raw_data = listing.get("data", [])
     if not isinstance(raw_data, list):
         return []
-    return [
-        str(entry["id"])
-        for entry in raw_data
-        if isinstance(entry, dict) and "id" in entry
-    ]
+    return [str(entry["id"]) for entry in raw_data if isinstance(entry, dict) and "id" in entry]
 
 
 def _fetch_ollama_models(url: str, api_key: str | None) -> list[str]:
@@ -90,9 +87,7 @@ def _fetch_ollama_models(url: str, api_key: str | None) -> list[str]:
     if not isinstance(raw_models, list):
         return []
     return [
-        str(entry["name"])
-        for entry in raw_models
-        if isinstance(entry, dict) and "name" in entry
+        str(entry["name"]) for entry in raw_models if isinstance(entry, dict) and "name" in entry
     ]
 
 
@@ -162,6 +157,30 @@ def create_agent(
     )
 
 
+@dataclass(slots=True, frozen=True)
+class InferenceResult:
+    """One vision-language model call with token usage and wall time captured."""
+
+    title: str
+    description: str
+    keywords: list[str]
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    seconds: float = 0.0
+
+
+def _extract_usage(usage: object | None) -> tuple[int, int, int]:
+    """Pull (input, output, total) token counts off a pydantic-ai RunUsage if present."""
+    if usage is None:
+        return (0, 0, 0)
+    return (
+        int(getattr(usage, "input_tokens", 0) or 0),
+        int(getattr(usage, "output_tokens", 0) or 0),
+        int(getattr(usage, "total_tokens", 0) or 0),
+    )
+
+
 def analyze_image_with_ai(
     image_bytes: BinaryContent,
     agent: Agent,
@@ -169,12 +188,13 @@ def analyze_image_with_ai(
     user_prompt: str | None = None,
     temperature: float = DEFAULT_TEMPERATURE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
-) -> tuple[str, str, list[str]]:
+) -> InferenceResult:
     """
     Generate a short title, description, and keywords using a vision-language model.
 
     Returns:
-        Tuple of (title, description, keywords).
+        :class:`InferenceResult` carrying the model output plus per-call token usage and
+        wall-clock seconds, so the pipeline can surface aggregate cost in the batch summary.
 
     """
     logger.info("analyzing_image_with_ai")
@@ -189,11 +209,21 @@ def analyze_image_with_ai(
         ),
         output_type=GeneratedMetadata,
     )
+    elapsed = round(time.perf_counter() - started, 3)
+    usage_obj = None
+    try:
+        usage_obj = result.usage()  # pydantic-ai exposes RunUsage from .usage()
+    except Exception as exc:  # noqa: BLE001 - usage retrieval is optional metadata.
+        logger.debug("ai_usage_unavailable", error=str(exc))
+    input_tokens, output_tokens, total_tokens = _extract_usage(usage_obj)
     logger.info(
         "ai_inference_completed",
-        seconds=round(time.perf_counter() - started, 3),
+        seconds=elapsed,
         temperature=temperature,
         max_tokens=max_tokens,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
     )
     logger.debug(
         "ai_generated_metadata",
@@ -201,4 +231,12 @@ def analyze_image_with_ai(
         description=result.output.description,
         keywords=result.output.keywords,
     )
-    return result.output.title, result.output.description, result.output.keywords
+    return InferenceResult(
+        title=result.output.title,
+        description=result.output.description,
+        keywords=list(result.output.keywords),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        seconds=elapsed,
+    )
