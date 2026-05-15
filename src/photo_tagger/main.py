@@ -152,6 +152,16 @@ class OutputConfig:
             help="Write metadata to XMP sidecars (default) instead of embedding in the image",
         ),
     ] = True
+    dry_run: Annotated[
+        bool,
+        Parameter(
+            name=("--dry-run",),
+            help=(
+                "Run the model and log the proposed metadata for each photo, but do not "
+                "write XMP. Useful for previewing prompts before committing to a batch"
+            ),
+        ),
+    ] = False
 
 
 @dataclass
@@ -191,6 +201,7 @@ def _to_processing_options(output: OutputConfig, inference: InferenceConfig) -> 
         write_title=output.write_title,
         backup_xmp=output.backup_xmp,
         use_sidecar=output.use_sidecar,
+        dry_run=output.dry_run,
         temperature=inference.temperature,
         max_tokens=inference.max_tokens,
         jpeg_dimensions=inference.jpeg_dimensions,
@@ -228,6 +239,7 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
         write_title=options.write_title,
         backup_xmp=options.backup_xmp,
         use_sidecar=options.use_sidecar,
+        dry_run=options.dry_run,
         temperature=options.temperature,
         max_tokens=options.max_tokens,
         jpeg_dimensions=options.jpeg_dimensions,
@@ -323,6 +335,10 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         later run with --skip-from FILE resumes where this one stopped.
     - --skip-tagged: skip files that already have keywords, a description, or a title in
         the image or its XMP sidecar.
+
+    Dry runs:
+    - --dry-run: query the model and log the generated title, description, and keywords
+        for each image but do not write any metadata. Useful for prompt iteration.
 
     Exit status: returns 1 if no inputs, no images found, or any file fails.
 

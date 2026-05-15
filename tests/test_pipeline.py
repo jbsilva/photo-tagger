@@ -96,6 +96,19 @@ def test_process_photo_returns_false_when_write_fails(
     assert process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions()) is False
 
 
+def test_process_photo_dry_run_skips_write_metadata(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """dry_run=True logs the preview and reports success without touching the writer."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    options = ProcessingOptions(dry_run=True)
+
+    assert process_photo(image, agent=_FAKE_AGENT, options=options) is True
+    patched_pipeline["write"].assert_not_called()
+
+
 def test_execute_process_returns_false_on_exception(tmp_path: Path) -> None:
     """Unexpected exceptions inside process_photo become a logged False result."""
     image = tmp_path / "img.cr3"
