@@ -124,6 +124,7 @@ addopts = [
     "--verbose",
     "--cov=src/photo_tagger",
     "--cov-report=term-missing",
+    "--cov-report=xml:reports/coverage.xml",
     "-m",
     "not integration",
 ]
