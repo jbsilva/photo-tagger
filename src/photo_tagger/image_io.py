@@ -61,9 +61,7 @@ def _open_image(image_path: Path) -> Image.Image:
 
 def _flatten_alpha(img: Image.Image) -> Image.Image:
     """Composite transparent pixels onto white so JPEG encoding is lossless-looking."""
-    has_alpha = img.mode in ("RGBA", "LA") or (
-        img.mode == "P" and "transparency" in img.info
-    )
+    has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
     if not has_alpha:
         logger.info("converting_image_to_rgb")
         return img.convert("RGB")

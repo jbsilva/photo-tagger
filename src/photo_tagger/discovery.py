@@ -124,13 +124,9 @@ def load_skip_list(skip_file: Path) -> set[str]:
 def _split_skip_keys(skip_entries: set[str]) -> tuple[set[str], set[str]]:
     """Split skip entries into name-only keys and full-path keys (both casefolded)."""
     name_keys = {
-        entry.casefold()
-        for entry in skip_entries
-        if os.sep not in entry and "/" not in entry
+        entry.casefold() for entry in skip_entries if os.sep not in entry and "/" not in entry
     }
-    path_keys = {
-        entry.casefold() for entry in skip_entries if entry.casefold() not in name_keys
-    }
+    path_keys = {entry.casefold() for entry in skip_entries if entry.casefold() not in name_keys}
     return name_keys, path_keys
 
 
