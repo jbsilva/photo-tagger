@@ -32,6 +32,7 @@ from photo_tagger.config import (
     DEFAULT_TEMPERATURE,
     LogLevel,
 )
+from photo_tagger.config import DEFAULT_USER_PROMPT
 from photo_tagger.discovery import (
     apply_skip_file,
     apply_skip_tagged,
@@ -40,6 +41,7 @@ from photo_tagger.discovery import (
 )
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.pipeline import ProcessingOptions, run_batch
+from photo_tagger.progress import batch_progress
 
 
 __version__ = "0.1.0"
@@ -162,6 +164,17 @@ class OutputConfig:
             ),
         ),
     ] = False
+    max_keywords: Annotated[
+        int | None,
+        Parameter(
+            name=("--max-keywords",),
+            help=(
+                "Cap the number of AI-generated keywords kept per photo before merging with "
+                "existing tags. Lightroom users with already-curated catalogs typically want a "
+                "lower cap (e.g. 10) so the merged keyword cloud stays readable"
+            ),
+        ),
+    ] = None
 
 
 @dataclass
@@ -206,7 +219,24 @@ def _to_processing_options(output: OutputConfig, inference: InferenceConfig) -> 
         max_tokens=inference.max_tokens,
         jpeg_dimensions=inference.jpeg_dimensions,
         jpeg_quality=inference.jpeg_quality,
+        max_new_keywords=output.max_keywords,
     )
+
+
+def _read_prompt_file(prompt_file: Path | None) -> str:
+    """Return the contents of *prompt_file* (stripped) or DEFAULT_USER_PROMPT when None."""
+    if prompt_file is None:
+        return DEFAULT_USER_PROMPT
+    try:
+        text = prompt_file.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.error("prompt_file_read_failed", file=str(prompt_file), error=str(exc))
+        raise SystemExit(1) from exc
+    if not text:
+        logger.error("prompt_file_empty", file=str(prompt_file))
+        raise SystemExit(1)
+    logger.info("prompt_file_loaded", file=str(prompt_file), chars=len(text))
+    return text
 
 
 def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
@@ -217,6 +247,8 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
     skip_tagged: bool,
     image_extensions: str,
     recursive: bool,
+    workers: int,
+    prompt_file: Path | None,
     provider: ProviderConfig,
     options: ProcessingOptions,
     log: LogConfig,
@@ -231,6 +263,8 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
         api_base_url=provider.api_base_url,
         api_key_present=bool(provider.api_key),
         recursive=recursive,
+        workers=workers,
+        prompt_file=str(prompt_file) if prompt_file else None,
         skip_from=str(skip_from) if skip_from else None,
         append_to_skip_file=str(append_to_skip_file) if append_to_skip_file else None,
         skip_tagged=skip_tagged,
@@ -240,6 +274,7 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
         backup_xmp=options.backup_xmp,
         use_sidecar=options.use_sidecar,
         dry_run=options.dry_run,
+        max_keywords=options.max_new_keywords,
         temperature=options.temperature,
         max_tokens=options.max_tokens,
         jpeg_dimensions=options.jpeg_dimensions,
@@ -304,6 +339,40 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             ),
         ),
     ] = False,
+    workers: Annotated[
+        int,
+        Parameter(
+            name=("--workers", "-w"),
+            help=(
+                "Number of photos to process concurrently. Defaults to 1 (serial). The model "
+                "server is the bottleneck; raising this past what your provider can serve in "
+                "parallel will not help"
+            ),
+        ),
+    ] = 1,
+    progress_bar: Annotated[
+        bool,
+        Parameter(
+            name=("--progress",),
+            negative="--no-progress",
+            help=(
+                "Show a live rich progress bar (default on interactive terminals). Disabled "
+                "automatically when stderr is not a tty (CI, redirected output)"
+            ),
+        ),
+    ] = True,
+    prompt_file: Annotated[
+        Path | None,
+        Parameter(
+            name=("--prompt-file",),
+            validator=validators.Path(exists=True, file_okay=True, dir_okay=False),
+            help=(
+                "Override the default user prompt with the contents of this file. The "
+                "prompt is used as-is; existing photo metadata (keywords, GPS, location) "
+                "is appended automatically as before"
+            ),
+        ),
+    ] = None,
     provider: Annotated[ProviderConfig, Parameter(name="*")] = _DEFAULT_PROVIDER,
     output: Annotated[OutputConfig, Parameter(name="*")] = _DEFAULT_OUTPUT,
     inference: Annotated[InferenceConfig, Parameter(name="*")] = _DEFAULT_INFERENCE,
@@ -340,6 +409,15 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
     - --dry-run: query the model and log the generated title, description, and keywords
         for each image but do not write any metadata. Useful for prompt iteration.
 
+    Performance:
+    - --workers N: process N photos concurrently using a thread pool. Each worker opens
+        its own ExifToolHelper. The model server is the dominant bottleneck.
+    - --max-keywords N: cap the number of AI-generated keywords kept before merging.
+
+    Customisation:
+    - --prompt-file PATH: replace the default user prompt with the file's contents.
+        Existing photo metadata (keywords, GPS, location) is still appended automatically.
+
     Exit status: returns 1 if no inputs, no images found, or any file fails.
 
     Examples:
@@ -371,6 +449,8 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         skip_tagged=skip_tagged,
         image_extensions=image_extensions,
         recursive=recursive,
+        workers=workers,
+        prompt_file=prompt_file,
         provider=provider,
         options=options,
         log=log,
@@ -385,6 +465,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         logger.info("no_files_to_process_after_skipping")
         return
 
+    user_prompt = _read_prompt_file(prompt_file)
     agent = create_agent(
         provider.provider_name,
         provider.model_name,
@@ -392,7 +473,16 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         api_key=provider.api_key,
         retries=provider.retries,
     )
-    run_batch(image_files, agent, options, on_success=make_skip_list_appender(append_to_skip_file))
+    with batch_progress(len(image_files), enabled=progress_bar) as progress:
+        run_batch(
+            image_files,
+            agent,
+            options,
+            on_success=make_skip_list_appender(append_to_skip_file),
+            user_prompt=user_prompt,
+            workers=max(1, workers),
+            progress=progress,
+        )
 
 
 if __name__ == "__main__":
