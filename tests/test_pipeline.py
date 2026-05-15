@@ -1,5 +1,6 @@
 """Tests for the photo processing pipeline using lightweight stubs."""
 
+import contextlib
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
@@ -15,12 +16,26 @@ from photo_tagger.pipeline import (
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from pydantic_ai import Agent
 
 # Pipeline tests patch every IO call, so the agent value never gets touched.
 _FAKE_AGENT = cast("Agent", object())
+
+
+@contextlib.contextmanager
+def _stub_helper(_et: object | None = None) -> "Iterator[object]":
+    """Stand-in for photo_tagger.metadata._helper that never spawns an exiftool process."""
+    yield object()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_exiftool() -> "Iterator[None]":
+    """Make every test in this file safe to run without an exiftool binary on PATH."""
+    with patch("photo_tagger.pipeline._helper", _stub_helper):
+        yield
 
 
 @pytest.fixture
@@ -233,3 +248,62 @@ def test_run_batch_swallows_on_success_callback_errors(tmp_path: Path) -> None:
             on_success=boom,
         )
     assert totals.success == 1
+
+
+_CONCURRENT_BATCH_SIZE = 4
+
+
+def test_run_batch_concurrent_processes_all_files(tmp_path: Path) -> None:
+    """workers>1 dispatches to a thread pool and reports the same totals as serial."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(_CONCURRENT_BATCH_SIZE)]
+    for f in files:
+        f.write_text("x")
+
+    with patch("photo_tagger.pipeline.process_photo", return_value=True) as proc:
+        totals = run_batch(
+            files,
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            workers=2,
+        )
+
+    assert totals.success == _CONCURRENT_BATCH_SIZE
+    # Each task must have received et=None so it opens its own helper inside process_photo.
+    for call in proc.call_args_list:
+        assert call.kwargs["et"] is None
+
+
+def test_run_batch_concurrent_calls_on_success_per_image(tmp_path: Path) -> None:
+    """on_success fires once per image regardless of completion order."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(_CONCURRENT_BATCH_SIZE)]
+    for f in files:
+        f.write_text("x")
+
+    notified: list[Path] = []
+    with patch("photo_tagger.pipeline.process_photo", return_value=True):
+        run_batch(
+            files,
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            on_success=notified.append,
+            workers=2,
+        )
+
+    assert sorted(p.name for p in notified) == sorted(p.name for p in files)
+
+
+def test_run_batch_progress_callback_fires_per_image(tmp_path: Path) -> None:
+    """progress=callable fires once per image with (path, ok) for both serial and concurrent."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    received: list[tuple[str, bool]] = []
+
+    with patch("photo_tagger.pipeline.process_photo", return_value=True):
+        run_batch(
+            [image],
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            progress=lambda path, ok: received.append((path.name, ok)),
+        )
+
+    assert received == [(image.name, True)]
