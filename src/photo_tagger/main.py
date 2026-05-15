@@ -17,12 +17,12 @@ Requirements:
 # ruff: noqa: PLR0913
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from cyclopts import App, Parameter, validators
 from loguru import logger
 
-from photo_tagger.ai import analyze_image_with_ai, create_agent
+from photo_tagger.ai import create_agent
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
     DEFAULT_JPEG_QUALITY,
@@ -30,186 +30,55 @@ from photo_tagger.config import (
     DEFAULT_MODEL_NAME,
     DEFAULT_RETRIES,
     DEFAULT_TEMPERATURE,
-    DEFAULT_USER_PROMPT,
     LogLevel,
 )
 from photo_tagger.discovery import apply_skip_file, resolve_image_batch
-from photo_tagger.image_io import prepare_image_for_agent
-from photo_tagger.keywords import merge_keywords
 from photo_tagger.logging_setup import setup_logging
-from photo_tagger.metadata import (
-    build_contextual_prompt,
-    read_existing_keywords,
-    read_gps_coordinates,
-    read_location_tags,
-    write_metadata,
-)
+from photo_tagger.pipeline import ProcessingOptions, run_batch
 
 
-if TYPE_CHECKING:
-    from pydantic_ai import Agent
-
-
-# Cyclopts app
 __version__ = "0.1.0"
-app = App(
-    name="photo-tagger",
-    version=__version__,
-)
+
+app = App(name="photo-tagger", version=__version__)
 
 
-def process_photo(
-    image_path: Path,
-    agent: Agent,
+def _log_startup(
     *,
-    preserve_existing_kw: bool = True,
-    write_description: bool = True,
-    write_title: bool = True,
-    backup_xmp: bool = True,
-    use_sidecar: bool = True,
-    temperature: float = DEFAULT_TEMPERATURE,
-    max_tokens: int = DEFAULT_MAX_TOKENS,
-    jpeg_dimensions: int = DEFAULT_DIMENSIONS,
-    jpeg_quality: int = DEFAULT_JPEG_QUALITY,
-) -> bool:
-    """
-    Convert image to JPEG bytes in memory, analyze with AI, then write metadata to XMP or embed it.
-
-    Args:
-        image_path: Path to the image file to process
-        agent: Configured Pydantic AI Agent with Ollama provider
-        preserve_existing_kw: If True, merge with existing keywords rather than overwriting
-        write_description: If True, also generate and write a short description
-        write_title: If True, also generate and write a short title
-        backup_xmp: If True, let ExifTool create _original backups when updating metadata
-        use_sidecar: If True, write to an XMP sidecar; otherwise embed metadata in the image file
-        temperature: Sampling temperature for generation (0.0-1.0)
-        max_tokens: Maximum tokens to generate in the model response
-        jpeg_dimensions: Max dimension in pixels for the resized JPEG sent to the model
-        jpeg_quality: JPEG quality (1-100) for the image sent to the model
-
-    Returns:
-        True if entire workflow succeeded, False if any step failed
-
-    Note:
-        - No temporary files are created; all conversion happens in memory
-        - Supports Lightroom hierarchical keyword format (pipe separators)
-
-    """
-    logger.info("processing_photo")
-
-    # Step 1: Prepare image (convert to JPEG bytes)
-    jpeg_bytes = prepare_image_for_agent(
-        image_path,
-        jpg_quality=jpeg_quality,
-        max_size=jpeg_dimensions,
+    inputs: list[Path] | None,
+    skip_from: Path | None,
+    image_extensions: str,
+    model_name: str,
+    provider_name: str,
+    api_base_url: str | None,
+    api_key: str | None,
+    recursive: bool,
+    options: ProcessingOptions,
+    retries: int,
+    log_folder: Path,
+) -> None:
+    """Single-shot info log so the run's full configuration is captured up-front."""
+    logger.info(
+        "starting_photo_tagger",
+        inputs=[str(p) for p in (inputs or [])],
+        extensions=image_extensions,
+        model=model_name,
+        provider=provider_name,
+        api_base_url=api_base_url,
+        api_key_present=bool(api_key),
+        recursive=recursive,
+        skip_from=str(skip_from) if skip_from else None,
+        preserve_keywords=options.preserve_existing_kw,
+        write_description=options.write_description,
+        write_title=options.write_title,
+        backup_xmp=options.backup_xmp,
+        use_sidecar=options.use_sidecar,
+        temperature=options.temperature,
+        max_tokens=options.max_tokens,
+        jpeg_dimensions=options.jpeg_dimensions,
+        jpeg_quality=options.jpeg_quality,
+        retries=retries,
+        log_folder=str(log_folder),
     )
-
-    # Step 2: Gather existing metadata context
-    existing_keywords_full = read_existing_keywords(image_path)
-    if any(existing_keywords_full.values()):
-        logger.info(
-            "existing_keywords_found",
-            count=len(existing_keywords_full["subject"]),
-        )
-
-    location_tags = read_location_tags(image_path)
-    gps_info = read_gps_coordinates(image_path)
-
-    # Step 3: Generate metadata with a concise contextual prompt
-    unique_flat_keywords = list(dict.fromkeys(existing_keywords_full.get("subject", [])))
-    contextual_prompt = build_contextual_prompt(
-        DEFAULT_USER_PROMPT,
-        unique_flat_keywords,
-        location_tags,
-        gps_info,
-    )
-
-    title, description, keywords = analyze_image_with_ai(
-        image_bytes=jpeg_bytes,
-        agent=agent,
-        user_prompt=contextual_prompt,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-
-    # Step 4: Prepare keywords for merging/writing
-    existing_keywords: dict[str, list[str]]
-    if preserve_existing_kw:
-        existing_keywords = existing_keywords_full
-    else:
-        existing_keywords = {
-            "subject": [],
-            "hierarchical": [],
-            "weighted": [],
-        }
-
-    # Step 5: Merge AI-generated keywords with existing keywords
-    merged_keywords = merge_keywords(existing_keywords, keywords)
-
-    # Step 6: Persist metadata (sidecar or embedded)
-    return write_metadata(
-        image_path,
-        merged_keywords,
-        description=description if write_description else None,
-        title=title if write_title else None,
-        backup=backup_xmp,
-        use_sidecar=use_sidecar,
-    )
-
-
-def _execute_process(
-    image_file: Path,
-    *,
-    agent: Agent,
-    preserve_existing_kw: bool,
-    write_description: bool,
-    write_title: bool,
-    backup_xmp: bool,
-    use_sidecar: bool,
-    temperature: float,
-    max_tokens: int,
-    jpeg_dimensions: int,
-    jpeg_quality: int,
-    index: str,
-    retry: bool = False,
-) -> bool:
-    """Run process_photo once with consistent logging and error handling."""
-    context_kwargs: dict[str, Any] = {"file": image_file.name}
-    if retry:
-        context_kwargs["retry"] = True
-
-    with logger.contextualize(**context_kwargs):
-        try:
-            ok = process_photo(
-                image_file,
-                agent=agent,
-                preserve_existing_kw=preserve_existing_kw,
-                write_description=write_description,
-                write_title=write_title,
-                backup_xmp=backup_xmp,
-                use_sidecar=use_sidecar,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                jpeg_dimensions=jpeg_dimensions,
-                jpeg_quality=jpeg_quality,
-            )
-        except Exception as exc:  # noqa: BLE001
-            event = "processing_retry_exception" if retry else "processing_exception"
-            logger.exception(event, error=str(exc))
-            return False
-
-        if ok:
-            event = "retry_success" if retry else "processing_success"
-            logger.info(event, index=index)
-            return True
-
-        event = "retry_failed" if retry else "processing_failed"
-        if retry:
-            logger.error(event, index=index)
-        else:
-            logger.error(event, index=index, queued_for_retry=True)
-        return False
 
 
 @app.default
@@ -240,17 +109,11 @@ def tag(
     ] = "cr3",
     model_name: Annotated[
         str,
-        Parameter(
-            name=("--model", "-m"),
-            help="Vision-language model name",
-        ),
+        Parameter(name=("--model", "-m"), help="Vision-language model name"),
     ] = DEFAULT_MODEL_NAME,
     provider_name: Annotated[
         Literal["ollama", "lmstudio"],
-        Parameter(
-            name=("--provider",),
-            help="Backend provider: 'ollama' or 'lmstudio'",
-        ),
+        Parameter(name=("--provider",), help="Backend provider: 'ollama' or 'lmstudio'"),
     ] = "lmstudio",
     api_base_url: Annotated[
         str | None,
@@ -309,17 +172,11 @@ def tag(
     ] = True,
     temperature: Annotated[
         float,
-        Parameter(
-            name=("--temperature",),
-            help="Sampling temperature (0.0-1.0)",
-        ),
+        Parameter(name=("--temperature",), help="Sampling temperature (0.0-1.0)"),
     ] = DEFAULT_TEMPERATURE,
     max_tokens: Annotated[
         int,
-        Parameter(
-            name=("--max-tokens",),
-            help="Maximum tokens to generate",
-        ),
+        Parameter(name=("--max-tokens",), help="Maximum tokens to generate"),
     ] = DEFAULT_MAX_TOKENS,
     jpeg_dimensions: Annotated[
         int,
@@ -337,24 +194,15 @@ def tag(
     ] = DEFAULT_JPEG_QUALITY,
     retries: Annotated[
         int,
-        Parameter(
-            name=("--retries",),
-            help="Number of automatic validation retries",
-        ),
+        Parameter(name=("--retries",), help="Number of automatic validation retries"),
     ] = DEFAULT_RETRIES,
     file_log_level: Annotated[
         LogLevel,
-        Parameter(
-            name="--file-log-level",
-            help="Log level for file (use 'OFF' to disable)",
-        ),
+        Parameter(name="--file-log-level", help="Log level for file (use 'OFF' to disable)"),
     ] = "DEBUG",
     log_folder: Annotated[
         Path,
-        Parameter(
-            name=("--log-folder",),
-            help="Folder where log files are stored",
-        ),
+        Parameter(name=("--log-folder",), help="Folder where log files are stored"),
     ] = Path("logs"),
     console_log_level: Annotated[
         LogLevel,
@@ -398,23 +246,14 @@ def tag(
             Pictures/Camera
 
     """
-    # Setup logging
     setup_logging(
         file_log_level=file_log_level,
         console_log_level=console_log_level,
         log_folder=log_folder,
     )
-    logger.info(
-        "starting_photo_tagger",
-        inputs=[str(p) for p in (inputs or [])],
-        extensions=image_extensions,
-        model=model_name,
-        provider=provider_name,
-        api_base_url=api_base_url,
-        api_key_present=bool(api_key),
-        recursive=recursive,
-        skip_from=str(skip_from) if skip_from else None,
-        preserve_keywords=preserve_keywords,
+
+    options = ProcessingOptions(
+        preserve_existing_kw=preserve_keywords,
         write_description=write_description,
         write_title=write_title,
         backup_xmp=backup_xmp,
@@ -423,16 +262,29 @@ def tag(
         max_tokens=max_tokens,
         jpeg_dimensions=jpeg_dimensions,
         jpeg_quality=jpeg_quality,
-        retries=retries,
-        log_folder=str(log_folder),
     )
 
-    image_files = resolve_image_batch(inputs, image_extensions, recursive=recursive)
-    image_files = apply_skip_file(image_files, skip_from)
+    _log_startup(
+        inputs=inputs,
+        skip_from=skip_from,
+        image_extensions=image_extensions,
+        model_name=model_name,
+        provider_name=provider_name,
+        api_base_url=api_base_url,
+        api_key=api_key,
+        recursive=recursive,
+        options=options,
+        retries=retries,
+        log_folder=log_folder,
+    )
+
+    image_files = apply_skip_file(
+        resolve_image_batch(inputs, image_extensions, recursive=recursive),
+        skip_from,
+    )
     if not image_files:
         logger.info("no_files_to_process_after_skipping")
         return
-    file_count = len(image_files)
 
     agent = create_agent(
         provider_name,
@@ -441,74 +293,7 @@ def tag(
         api_key=api_key,
         retries=retries,
     )
-
-    process_kwargs: dict[str, Any] = {
-        "agent": agent,
-        "preserve_existing_kw": preserve_keywords,
-        "write_description": write_description,
-        "write_title": write_title,
-        "backup_xmp": backup_xmp,
-        "use_sidecar": use_sidecar,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "jpeg_dimensions": jpeg_dimensions,
-        "jpeg_quality": jpeg_quality,
-    }
-
-    # Process each file
-    success_count = 0
-    pending_failures: list[Path] = []
-    for idx, image_file in enumerate(image_files, start=1):
-        index = f"{idx}/{file_count}"
-        if _execute_process(
-            image_file,
-            index=index,
-            **process_kwargs,
-        ):
-            success_count += 1
-        else:
-            logger.warning("file_queued_for_retry", file=image_file.name)
-            pending_failures.append(image_file)
-
-    # Retry failed files
-    initial_failures = len(pending_failures)
-    retry_successes = 0
-    if pending_failures:
-        logger.info("retrying_failed_files", count=initial_failures)
-        remaining_failures: list[Path] = []
-        for idx, image_file in enumerate(pending_failures, start=1):
-            index = f"{idx}/{initial_failures}"
-            if _execute_process(
-                image_file,
-                index=index,
-                retry=True,
-                **process_kwargs,
-            ):
-                success_count += 1
-                retry_successes += 1
-            else:
-                logger.error("file_failed_after_retry", file=image_file.name)
-                remaining_failures.append(image_file)
-        pending_failures = remaining_failures
-
-    # Summary
-    failed_count = len(pending_failures)
-    logger.info(
-        "processing_summary",
-        total_files=file_count,
-        successful=success_count,
-        failed=failed_count,
-        initial_failures=initial_failures,
-        retry_successes=retry_successes,
-    )
-    if pending_failures:
-        logger.error(
-            "files_failed_after_retry",
-            files=[str(path) for path in pending_failures],
-        )
-
-    if success_count < file_count:
-        raise SystemExit(1)
+    run_batch(image_files, agent, options)
 
 
 if __name__ == "__main__":
