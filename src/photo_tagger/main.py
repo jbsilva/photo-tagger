@@ -24,7 +24,7 @@ from http import HTTPStatus
 from io import BytesIO
 from itertools import chain
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
 import rawpy
@@ -51,16 +51,12 @@ from photo_tagger.config import (
     DEFAULT_TEMPERATURE,
     DEFAULT_USER_PROMPT,
     LOCATION_TAGS,
-    MIN_HIERARCHICAL_DEPTH,
     PROVIDER_URLS,
     LogLevel,
 )
+from photo_tagger.keywords import merge_keywords
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.models import GeneratedMetadata
-
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 
 # Cyclopts app
@@ -120,52 +116,6 @@ def _validate_lmstudio_model(api_base_url: str, model_name: str, api_key: str | 
         raise SystemExit(1)
 
     logger.debug("lmstudio_model_validated", model=model_name)
-
-
-def parse_hierarchical_keyword(keyword: str) -> tuple[str, list[str]]:
-    """
-    Parse a hierarchical keyword in format 'Child<Parent<Grandparent' to Lightroom format.
-
-    Args:
-        keyword: Keyword string, either flat or hierarchical with '<' separators.
-                 Example: "Duck<Bird<Animal" or just "Landscape"
-
-    Returns:
-        Tuple of (hierarchical_format, flat_list) where:
-        - hierarchical_format: "Grandparent|Parent|Child" (Lightroom format)
-        - flat_list: ["Grandparent", "Parent", "Child"] (all levels as separate keywords)
-
-    Examples:
-        >>> parse_hierarchical_keyword("Duck<Bird<Animal")
-        ("Animal|Bird|Duck", ["Animal", "Bird", "Duck"])
-        >>> parse_hierarchical_keyword("Landscape")
-        ("Landscape", ["Landscape"])
-
-    """
-    keyword = keyword.strip()
-
-    if not keyword:
-        return ("", [""])
-
-    # Remove stray '>' characters that occasionally appear in model output.
-    sanitized = keyword.replace(">", "")
-
-    if "<" not in sanitized:
-        # Flat keyword
-        return (sanitized, [sanitized])
-
-    # Parse hierarchical keyword: "Duck<Bird<Animal" -> ["Duck", "Bird", "Animal"]
-    parts = [p.strip() for p in sanitized.split("<") if p.strip()]
-    if not parts:
-        return ("", [])
-
-    # Reverse to get root-to-leaf order: ["Animal", "Bird", "Duck"]
-    parts_reversed = list(reversed(parts))
-
-    # Create hierarchical format with pipes: "Animal|Bird|Duck"
-    hierarchical = "|".join(parts_reversed)
-
-    return (hierarchical, parts_reversed)
 
 
 def _pil_from_image_path(image_path: Path) -> Image.Image:
@@ -548,213 +498,6 @@ def build_contextual_prompt(
     if metadata_lines:
         sections.append("Existing Metadata:\n" + "\n".join(metadata_lines))
     return "\n\n".join(sections)
-
-
-def _normalize_chain_parts(parts: Iterable[str]) -> list[str]:
-    """
-    Return Title Case chain segments, skipping blanks.
-
-    Examples:
-        >>> _normalize_chain_parts([" duck ", "Bird", ""])
-        ['Duck', 'Bird']
-
-    """
-    return [segment.strip().title() for segment in parts if segment and segment.strip()]
-
-
-def _register_chain(
-    registry: dict[str, list[str]],
-    chain: list[str],
-) -> None:
-    """
-    Keep the longest chain for each leaf.
-
-    Examples:
-        >>> reg: dict[str, list[str]] = {}
-        >>> _register_chain(reg, ["Animal", "Bird"])
-        >>> reg["bird"]
-        ['Animal', 'Bird']
-
-    """
-    if len(chain) < MIN_HIERARCHICAL_DEPTH:
-        return
-    leaf_key = chain[-1].casefold()
-    current = registry.get(leaf_key)
-    if current is None or len(chain) > len(current):
-        registry[leaf_key] = chain
-
-
-def _seed_longest_from_existing(hierarchical_keywords: Iterable[str]) -> dict[str, list[str]]:
-    """
-    Prime the longest-chain registry with existing hierarchical entries.
-
-    Examples:
-        >>> _seed_longest_from_existing(["Animal|Bird", "Plant"])
-        {'bird': ['Animal', 'Bird']}
-
-    """
-    registry: dict[str, list[str]] = {}
-    for entry in hierarchical_keywords:
-        normalized = _normalize_chain_parts(entry.split("|"))
-        _register_chain(registry, normalized)
-    return registry
-
-
-def _process_new_keywords(
-    new_keywords: list[str],
-    subject_seen: set[str],
-    subject_acc: list[str],
-    weighted_acc: list[str],
-    chain_registry: dict[str, list[str]],
-) -> list[str]:
-    """
-    Append new flat keywords and update the longest-chain registry.
-
-    Mutates: subject_seen, subject_acc, weighted_acc, chain_registry.
-
-    Args:
-        new_keywords: Flat subjects (e.g., "bird") or chains (e.g., "Duck<Bird<Animal").
-        subject_seen: Casefolded set for de-duplication.
-        subject_acc: Accumulates unique subjects (root→leaf order).
-        weighted_acc: Parallel accumulator kept in sync with subject_acc.
-        chain_registry: Maps leaf key (casefolded) to longest observed chain (root→leaf list).
-
-    Returns:
-        Subjects appended during this call, in append order.
-
-    Examples:
-        >>> subjects = []; weighted = []; seen = set(); registry = {}
-        >>> _process_new_keywords([
-        ...     "Duck<Bird<Animal",
-        ...     "bird",
-        ... ], seen, subjects, weighted, registry)
-        ['Animal', 'Bird', 'Duck']
-        >>> subjects
-        ['Animal', 'Bird', 'Duck']
-        >>> registry['duck']
-        ['Animal', 'Bird', 'Duck']
-
-    """
-    added_subjects: list[str] = []
-    for keyword in new_keywords:
-        _, parts = parse_hierarchical_keyword(keyword)
-        normalized = _normalize_chain_parts(parts)
-        if not normalized:
-            continue
-        for flat_kw in normalized:
-            key = flat_kw.casefold()
-            if key not in subject_seen:
-                subject_acc.append(flat_kw)
-                weighted_acc.append(flat_kw)
-                added_subjects.append(flat_kw)
-                subject_seen.add(key)
-        _register_chain(chain_registry, normalized)
-    return added_subjects
-
-
-def _collect_cumulative_entries(
-    chain_registry: dict[str, list[str]],
-    hierarchical_seen: set[str],
-) -> list[str]:
-    """
-    Generate Lightroom hierarchy paths from canonical chains.
-
-    Lightroom writes hierarchical keywords as full pipe-separated paths in lr:HierarchicalSubject.
-    You cannot add only "Animal|Bird|Duck", you must also add "Animal|Bird".
-
-    Mutates: hierarchical_seen.
-
-    Args:
-        chain_registry: Maps each leaf keyword to its full root-to-leaf path.
-        hierarchical_seen: Casefolded set for de-duplicating cumulative paths
-
-    Returns:
-        New cumulative paths like "A|B", "A|B|C", starting at MIN_HIERARCHICAL_DEPTH.
-
-    Examples:
-        >>> chains = {'duck': ['Animal', 'Bird', 'Duck']}
-        >>> _collect_cumulative_entries(chains, set())
-        ['Animal|Bird', 'Animal|Bird|Duck']
-
-    """
-    additions: list[str] = []
-    for canonical_chain in chain_registry.values():
-        for depth in range(MIN_HIERARCHICAL_DEPTH, len(canonical_chain) + 1):
-            cumulative = "|".join(canonical_chain[:depth])
-            key = cumulative.casefold()
-            if key not in hierarchical_seen:
-                hierarchical_seen.add(key)
-                additions.append(cumulative)
-    return additions
-
-
-def merge_keywords(
-    existing_kw: dict[str, list[str]],
-    new_keywords: list[str],
-) -> dict[str, list[str]]:
-    """
-    Merge new AI-generated keywords with existing keywords, preserving hierarchy.
-
-    Args:
-        existing_kw: Dictionary of existing keywords from read_existing_keywords()
-        new_keywords: List of new keywords from AI (may include hierarchical format)
-
-    Returns:
-        Dictionary with merged keywords in three formats:
-        - 'subject': All flat keywords (existing + new flattened)
-        - 'hierarchical': Hierarchical keywords (existing + new hierarchical)
-        - 'weighted': Weighted flat keywords (mirrors subject)
-
-    Note:
-        - Duplicate detection is case-insensitive (using casefold)
-        - Hierarchical keywords are flattened for Subject/WeightedFlatSubject
-        - Original hierarchy is preserved in HierarchicalSubject
-
-    Examples:
-        >>> existing = {
-        ...     "subject": ["Beach"],
-        ...     "hierarchical": ["Animal|Bird"],
-        ...     "weighted": ["Beach"],
-        ... }
-        >>> merge_keywords(existing, ["Seagull<Bird<Animal", "bird"])
-        {'subject': ['Beach', 'Animal', 'Bird', 'Seagull'],
-         'hierarchical': ['Animal|Bird', 'Animal|Bird|Seagull'],
-         'weighted': ['Beach', 'Animal', 'Bird', 'Seagull']}
-
-    """
-    # Copy existing lists so we never mutate caller-owned structures.
-    existing_subject = list(existing_kw.get("subject", []))
-    existing_weighted = list(existing_kw.get("weighted", []))
-    existing_hierarchical = [kw for kw in existing_kw.get("hierarchical", []) if "|" in kw]
-
-    subject_seen = {kw.casefold() for kw in existing_subject}
-    hierarchical_seen = {kw.casefold() for kw in existing_hierarchical}
-
-    chain_registry = _seed_longest_from_existing(existing_hierarchical)
-    new_subjects = _process_new_keywords(
-        new_keywords,
-        subject_seen,
-        existing_subject,
-        existing_weighted,
-        chain_registry,
-    )
-    new_hierarchical = _collect_cumulative_entries(chain_registry, hierarchical_seen)
-
-    merged = {
-        "subject": existing_subject,
-        "hierarchical": existing_hierarchical + new_hierarchical,
-        "weighted": existing_weighted,
-    }
-
-    logger.debug(
-        "keywords_merged",
-        new_flat_count=len(new_subjects),
-        new_hierarchical_count=len(new_hierarchical),
-        total_flat=len(merged["subject"]),
-        total_hierarchical=len(merged["hierarchical"]),
-    )
-
-    return merged
 
 
 def write_metadata(

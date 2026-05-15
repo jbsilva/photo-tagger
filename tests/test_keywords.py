@@ -3,29 +3,36 @@
 from pathlib import Path
 
 import photo_tagger.main as m
+from photo_tagger.keywords import (
+    collect_cumulative_entries,
+    merge_keywords,
+    normalize_chain_parts,
+    parse_hierarchical_keyword,
+    process_new_keywords,
+)
 
 
 def test_parse_hierarchical_keyword_handles_flat_and_hierarchical() -> None:
     """Flat keywords stay flat; hierarchical chains flip to Lightroom order."""
-    flat_hierarchical, flat_parts = m.parse_hierarchical_keyword("Landscape")
+    flat_hierarchical, flat_parts = parse_hierarchical_keyword("Landscape")
     assert flat_hierarchical == "Landscape"
     assert flat_parts == ["Landscape"]
 
-    nested_hierarchical, nested_parts = m.parse_hierarchical_keyword("Duck<Bird<Animal")
+    nested_hierarchical, nested_parts = parse_hierarchical_keyword("Duck<Bird<Animal")
     assert nested_hierarchical == "Animal|Bird|Duck"
     assert nested_parts == ["Animal", "Bird", "Duck"]
 
 
 def test_parse_hierarchical_keyword_strips_trailing_gt() -> None:
     """Stray '>' characters in model output are removed before parsing."""
-    hierarchical, parts = m.parse_hierarchical_keyword("Man<Human<Living Being>")
+    hierarchical, parts = parse_hierarchical_keyword("Man<Human<Living Being>")
     assert hierarchical == "Living Being|Human|Man"
     assert parts == ["Living Being", "Human", "Man"]
 
 
 def test_normalize_chain_parts_title_cases_and_omits_blanks() -> None:
     """Whitespace and empty segments are ignored while remaining entries become Title Case."""
-    result = m._normalize_chain_parts([" duck ", "", "sea-lion", "bird"])  # noqa: SLF001
+    result = normalize_chain_parts([" duck ", "", "sea-lion", "bird"])
     assert result == ["Duck", "Sea-Lion", "Bird"]
 
 
@@ -36,7 +43,7 @@ def test_process_new_keywords_updates_subjects_and_registry() -> None:
     seen = {"beach"}
     registry: dict[str, list[str]] = {"eagle": ["Animal", "Bird", "Eagle"]}
 
-    added = m._process_new_keywords(  # noqa: SLF001
+    added = process_new_keywords(
         ["Duck<Bird<Animal", "cloud"],
         seen,
         subjects,
@@ -55,10 +62,10 @@ def test_collect_cumulative_entries_skips_duplicates() -> None:
     chains = {"duck": ["Animal", "Bird", "Duck"]}
     seen: set[str] = set()
 
-    first_pass = m._collect_cumulative_entries(chains, seen)  # noqa: SLF001
+    first_pass = collect_cumulative_entries(chains, seen)
     assert first_pass == ["Animal|Bird", "Animal|Bird|Duck"]
 
-    second_pass = m._collect_cumulative_entries(chains, seen)  # noqa: SLF001
+    second_pass = collect_cumulative_entries(chains, seen)
     assert second_pass == []
 
 
@@ -70,7 +77,7 @@ def test_merge_keywords_preserves_existing_and_adds_hierarchies() -> None:
         "weighted": ["Beach"],
     }
 
-    merged = m.merge_keywords(existing, ["Duck<Bird<Animal", "cloud"])
+    merged = merge_keywords(existing, ["Duck<Bird<Animal", "cloud"])
 
     assert merged["subject"] == ["Beach", "Animal", "Bird", "Duck", "Cloud"]
     assert merged["weighted"] == ["Beach", "Animal", "Bird", "Duck", "Cloud"]
