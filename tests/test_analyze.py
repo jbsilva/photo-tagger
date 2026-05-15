@@ -8,8 +8,8 @@ import pytest
 from pydantic import ValidationError
 from pydantic_ai import BinaryContent, ModelSettings
 
+from photo_tagger.ai import analyze_image_with_ai
 from photo_tagger.config import DEFAULT_USER_PROMPT
-from photo_tagger.main import analyze_image_with_ai
 
 
 if TYPE_CHECKING:

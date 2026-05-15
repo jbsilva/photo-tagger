@@ -4,9 +4,10 @@ import json
 from http import HTTPStatus
 from typing import Any
 
+import httpx
 import pytest
 
-import photo_tagger.main as m
+from photo_tagger import ai as ai_module
 
 
 class _DummyResponse:
@@ -34,7 +35,7 @@ def _patch_httpx_get(
         calls.append({"url": url, "headers": headers, "timeout": timeout})
         return response
 
-    monkeypatch.setattr(m.httpx, "get", fake_get)  # type: ignore[attr-defined]
+    monkeypatch.setattr(httpx, "get", fake_get)
     return calls
 
 
@@ -46,7 +47,7 @@ def test_validate_lmstudio_model_passes_when_list_contains_id(
     response = _DummyResponse(HTTPStatus.OK, payload)
     calls = _patch_httpx_get(monkeypatch, response)
 
-    m._validate_lmstudio_model("http://localhost:1234/v1", "vision-pro", None)  # noqa: SLF001
+    ai_module.validate_lmstudio_model("http://localhost:1234/v1", "vision-pro", None)
 
     assert calls, "Expected httpx.get to be invoked"
     recorded = calls[0]
@@ -62,4 +63,4 @@ def test_validate_lmstudio_model_exits_when_model_missing(monkeypatch: pytest.Mo
     _patch_httpx_get(monkeypatch, response)
 
     with pytest.raises(SystemExit):
-        m._validate_lmstudio_model("http://localhost:1234/v1", "vision-pro", None)  # noqa: SLF001
+        ai_module.validate_lmstudio_model("http://localhost:1234/v1", "vision-pro", None)
