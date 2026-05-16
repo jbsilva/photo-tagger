@@ -7,8 +7,6 @@ short-circuit / skip code paths run end to end without raising. Real work is exe
 elsewhere by the per-module unit tests.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 from typing import TYPE_CHECKING, Any

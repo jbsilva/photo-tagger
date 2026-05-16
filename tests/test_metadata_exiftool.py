@@ -5,8 +5,6 @@ The functions here invoke exiftool through pyexiftool, so they need the binary
 on PATH. They write to real (small) JPEG files in a tmp directory.
 """
 
-from __future__ import annotations
-
 import shutil
 from io import BytesIO
 from typing import TYPE_CHECKING

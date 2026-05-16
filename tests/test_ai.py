@@ -1,7 +1,5 @@
 """Tests for AI module helpers that don't require a live model."""
 
-from __future__ import annotations
-
 from http import HTTPStatus
 from typing import Any
 
