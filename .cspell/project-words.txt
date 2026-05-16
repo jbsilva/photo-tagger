@@ -3,6 +3,7 @@ autouse
 casefolded
 Casefolded
 charliermarsh
+configfile
 conftest
 cyclopts
 Cyclopts
