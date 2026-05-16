@@ -91,24 +91,14 @@ class _UsageAccumulator:
             self.inference_calls += 1
 
 
-_BATCH_USAGE: _UsageAccumulator | None = None
-_BATCH_USAGE_LOCK = threading.Lock()
-
-
-def _set_batch_usage(usage: _UsageAccumulator | None) -> None:
-    """Install the run-wide accumulator so process_photo can tally without a kwarg."""
-    global _BATCH_USAGE  # noqa: PLW0603 - shared by all worker threads in a single batch.
-    with _BATCH_USAGE_LOCK:
-        _BATCH_USAGE = usage
-
-
-def process_photo(
+def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions plus context.
     image_path: Path,
     agent: Agent,
     options: ProcessingOptions,
     *,
     et: ExifToolHelper | None = None,
     user_prompt: str = DEFAULT_USER_PROMPT,
+    usage: _UsageAccumulator | None = None,
 ) -> bool:
     """
     Convert an image to JPEG bytes in memory, query the model, and persist metadata.
@@ -123,6 +113,9 @@ def process_photo(
             -stay_open subprocess uses a single stdin/stdout pipe); pass et=None instead
             and let each task get its own.
         user_prompt: Base prompt; existing photo metadata is appended automatically.
+        usage: Optional thread-safe accumulator. When given, the AI call's token counts
+            and latency are folded into it. ``run_batch`` passes one shared accumulator
+            so the BatchTotals at the end of the run reflect every photo.
 
     Returns:
         True if every step succeeded, False if metadata writing failed.
@@ -158,7 +151,6 @@ def process_photo(
             temperature=options.temperature,
             max_tokens=options.max_tokens,
         )
-        usage = _BATCH_USAGE
         if usage is not None:
             usage.add(inference)
 
@@ -208,6 +200,7 @@ def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_
     retry: bool = False,
     et: ExifToolHelper | None = None,
     user_prompt: str = DEFAULT_USER_PROMPT,
+    usage: _UsageAccumulator | None = None,
 ) -> bool:
     """Run process_photo once with consistent logging and error handling."""
     context_kwargs: dict[str, Any] = {"file": image_file.name}
@@ -216,7 +209,14 @@ def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_
 
     with logger.contextualize(**context_kwargs):
         try:
-            ok = process_photo(image_file, agent, options, et=et, user_prompt=user_prompt)
+            ok = process_photo(
+                image_file,
+                agent,
+                options,
+                et=et,
+                user_prompt=user_prompt,
+                usage=usage,
+            )
         except Exception as exc:  # noqa: BLE001 - process_photo wraps several SDKs
             event = "processing_retry_exception" if retry else "processing_exception"
             logger.exception(event, error=str(exc))
@@ -281,6 +281,7 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
     user_prompt: str,
     on_success: OnSuccess | None,
     progress: ProgressCallback | None,
+    usage: _UsageAccumulator | None,
 ) -> tuple[int, list[Path]]:
     """Run *image_files* one after another in the calling thread."""
     total = len(image_files)
@@ -295,6 +296,7 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
             retry=retry,
             et=et,
             user_prompt=user_prompt,
+            usage=usage,
         )
         if ok:
             successes += 1
@@ -320,6 +322,7 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
     on_success: OnSuccess | None,
     workers: int,
     progress: ProgressCallback | None,
+    usage: _UsageAccumulator | None,
 ) -> tuple[int, list[Path]]:
     """
     Run *image_files* across a thread pool. Each task gets its own ExifToolHelper.
@@ -331,7 +334,6 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
     total = len(image_files)
     successes = 0
     failed: list[Path] = []
-    completed = 0
     indexed = list(enumerate(image_files, start=1))
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -345,12 +347,12 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
                 retry=retry,
                 et=None,
                 user_prompt=user_prompt,
+                usage=usage,
             ): image_file
             for idx, image_file in indexed
         }
         for future in as_completed(future_to_image):
             image_file = future_to_image[future]
-            completed += 1
             try:
                 ok = future.result()
             except Exception as exc:  # noqa: BLE001 - any worker error is a per-file failure.
@@ -386,6 +388,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
     on_success: OnSuccess | None,
     workers: int,
     progress: ProgressCallback | None,
+    usage: _UsageAccumulator | None,
 ) -> tuple[int, list[Path]]:
     """
     Run a single pass (initial or retry) over the batch.
@@ -410,6 +413,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
             user_prompt=user_prompt,
             on_success=on_success,
             progress=progress,
+            usage=usage,
         )
     return _run_pass_concurrent(
         image_files,
@@ -420,6 +424,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
         on_success=on_success,
         workers=workers,
         progress=progress,
+        usage=usage,
     )
 
 
@@ -458,33 +463,31 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
         if on_success is not None:
             on_success(path)
 
-    _set_batch_usage(usage)
-    try:
-        with _helper(None) if workers <= 1 else _no_helper() as et:
-            success, pending = _run_pass(
-                image_files,
-                agent,
-                options,
-                retry=False,
-                et=et,
-                user_prompt=user_prompt,
-                on_success=_record_success,
-                workers=workers,
-                progress=progress,
-            )
-            retry_successes, still_failing = _run_pass(
-                pending,
-                agent,
-                options,
-                retry=True,
-                et=et,
-                user_prompt=user_prompt,
-                on_success=_record_success,
-                workers=workers,
-                progress=progress,
-            )
-    finally:
-        _set_batch_usage(None)
+    with _helper(None) if workers <= 1 else _no_helper() as et:
+        success, pending = _run_pass(
+            image_files,
+            agent,
+            options,
+            retry=False,
+            et=et,
+            user_prompt=user_prompt,
+            on_success=_record_success,
+            workers=workers,
+            progress=progress,
+            usage=usage,
+        )
+        retry_successes, still_failing = _run_pass(
+            pending,
+            agent,
+            options,
+            retry=True,
+            et=et,
+            user_prompt=user_prompt,
+            on_success=_record_success,
+            workers=workers,
+            progress=progress,
+            usage=usage,
+        )
 
     totals = BatchTotals(
         total_files=len(image_files),

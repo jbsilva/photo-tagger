@@ -54,6 +54,7 @@ subfolders
 tamasfe
 testpypi
 testsdeselect
+usefixtures
 venv
 xdist
 xmpmeta

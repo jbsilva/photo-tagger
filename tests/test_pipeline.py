@@ -10,6 +10,7 @@ from pydantic_ai import BinaryContent
 from photo_tagger.ai import InferenceResult
 from photo_tagger.pipeline import (
     ProcessingOptions,
+    _UsageAccumulator,
     execute_process,
     process_photo,
     run_batch,
@@ -118,6 +119,25 @@ def test_process_photo_returns_false_when_write_fails(
     image = tmp_path / "img.cr3"
     image.write_text("x")
     assert process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions()) is False
+
+
+@pytest.mark.usefixtures("patched_pipeline")
+def test_process_photo_folds_token_usage_into_accumulator(tmp_path: Path) -> None:
+    """Passing a shared accumulator records the InferenceResult's tokens and latency."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    usage = _UsageAccumulator()
+
+    process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions(), usage=usage)
+
+    expected_input = 10
+    expected_output = 5
+    expected_total = 15
+    expected_calls = 1
+    assert usage.input_tokens == expected_input
+    assert usage.output_tokens == expected_output
+    assert usage.total_tokens == expected_total
+    assert usage.inference_calls == expected_calls
 
 
 def test_process_photo_dry_run_skips_write_metadata(
@@ -318,12 +338,9 @@ def test_run_batch_progress_callback_fires_per_image(tmp_path: Path) -> None:
     assert received == [(image.name, True)]
 
 
-def test_run_batch_aggregates_token_usage_from_inference(
-    tmp_path: Path,
-    patched_pipeline: dict[str, Any],
-) -> None:
+@pytest.mark.usefixtures("patched_pipeline")
+def test_run_batch_aggregates_token_usage_from_inference(tmp_path: Path) -> None:
     """Per-call token counts add up into the BatchTotals returned to the CLI."""
-    del patched_pipeline  # fixture installs the stubbed analyze_image_with_ai
     files = [tmp_path / f"img{i}.cr3" for i in range(2)]
     for f in files:
         f.write_text("x")
