@@ -54,10 +54,10 @@ def batch_progress(total: int, *, enabled: bool = True) -> Iterator[ProgressCall
     with Progress(*columns, transient=False) as progress:
         task_id = progress.add_task("photos", total=total)
 
-        def advance(path: Path, ok: bool) -> None:  # noqa: FBT001 - matches pipeline contract.
-            # The bar is the dominant feedback while running; keep the per-photo log
-            # in the file sink (DEBUG) and just nudge the bar here.
-            del path, ok
+        # The pipeline contract is (Path, bool), but a progress bar only needs the tick.
+        # Underscore-prefixed names are the standard Python signal for "intentionally
+        # unused", which keeps the linter quiet without a runtime `del` statement.
+        def advance(_path: Path, _ok: bool) -> None:  # noqa: FBT001 - matches pipeline contract.
             progress.advance(task_id)
 
         yield advance
