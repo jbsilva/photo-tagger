@@ -21,3 +21,6 @@ lcov.info
 
 # Generated CI artifacts (coverage.xml, ruff/bandit reports, scan logs)
 reports/
+
+# Machine-local Claude Code settings (hooks, permissions, enabled MCP servers)
+.claude/settings.local.json
