@@ -333,7 +333,7 @@ def _build_write_payload(
     payload: dict[str, str | list[str]] = {}
     if subjects := keywords.get("subject"):
         payload["XMP-dc:Subject"] = subjects
-        # Lightroom prioritises IPTC:Keywords for JPEGs, so mirror the Subject list there.
+        # Lightroom prioritizes IPTC:Keywords for JPEGs, so mirror the Subject list there.
         payload[TAG_IPTC_KEYWORDS] = subjects
     if hierarchical := keywords.get("hierarchical"):
         payload["XMP-lr:HierarchicalSubject"] = hierarchical

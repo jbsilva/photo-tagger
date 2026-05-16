@@ -250,7 +250,7 @@ def _write_summary_file(  # noqa: PLR0913 - distinct optional fields are clearer
     provider_name: str,
     user_prompt_chars: int,
 ) -> None:
-    """Serialise *totals* to *summary_file* as JSON. Errors are logged, never raised."""
+    """Serialize *totals* to *summary_file* as JSON. Errors are logged, never raised."""
     if summary_file is None or totals is None:
         return
     payload: dict[str, object] = {
@@ -455,7 +455,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         its own ExifToolHelper. The model server is the dominant bottleneck.
     - --max-keywords N: cap the number of AI-generated keywords kept before merging.
 
-    Customisation:
+    Customization:
     - --prompt-file PATH: replace the default user prompt with the file's contents.
         Existing photo metadata (keywords, GPS, location) is still appended automatically.
 

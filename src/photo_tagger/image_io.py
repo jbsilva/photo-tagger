@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 # File extensions that PIL handles natively. Anything outside this set is tried
-# with rawpy first, falling back to PIL when rawpy can't recognise the format.
+# with rawpy first, falling back to PIL when rawpy can't recognize the format.
 _NON_RAW_EXTS = frozenset(
     {
         ".jpg",

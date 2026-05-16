@@ -68,7 +68,7 @@ LOCATION_TAGS = (
     "IPTC:City",
 )
 
-# ExifTool tag names referenced from multiple modules. Keeping them centralised avoids the
+# ExifTool tag names referenced from multiple modules. Keeping them centralized avoids the
 # typo class of bugs that hits when a literal is duplicated across read/write call sites.
 TAG_IPTC_KEYWORDS = "IPTC:Keywords"
 TAG_XMP_SUBJECT = "XMP:Subject"
