@@ -8,6 +8,7 @@ cyclopts
 Cyclopts
 debugpy
 delenv
+docstrings
 EDITMSG
 exif
 Exif
@@ -15,6 +16,7 @@ exiftool
 Exiftool
 fromarray
 getpixel
+gpgconf
 httpx
 imread
 iptc
@@ -28,11 +30,14 @@ llava
 lmstudio
 LMSTUDIO
 loguru
+mypy
 NOSONAR
 numprocesses
 ollama
 Ollama
 OLLAMA
+pinentry
+prek
 psutil
 pycache
 pycqa
@@ -48,6 +53,8 @@ qwen
 rawpy
 roundtrips
 scannerwork
+sonarqube
+SonarQube
 stdouts
 stubjpeg
 subfolders
