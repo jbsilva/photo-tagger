@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from exiftool import ExifToolHelper  # type: ignore[attr-defined]
     from pydantic_ai import Agent
 
+    from photo_tagger.models import GeneratedMetadata
+
     OnSuccess = Callable[[Path], None]
     ProgressCallback = Callable[[Path, bool], None]
     OnComplete = Callable[["BatchTotals"], None]
@@ -93,7 +95,7 @@ class _UsageAccumulator:
 
 def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions plus context.
     image_path: Path,
-    agent: Agent,
+    agent: Agent[None, GeneratedMetadata],
     options: ProcessingOptions,
     *,
     et: ExifToolHelper | None = None,
@@ -193,7 +195,7 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
 
 def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_photo.
     image_file: Path,
-    agent: Agent,
+    agent: Agent[None, GeneratedMetadata],
     options: ProcessingOptions,
     *,
     index: str,
@@ -273,7 +275,7 @@ def _notify_success(on_success: OnSuccess | None, image_file: Path) -> None:
 
 def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_process.
     image_files: list[Path],
-    agent: Agent,
+    agent: Agent[None, GeneratedMetadata],
     options: ProcessingOptions,
     *,
     retry: bool,
@@ -314,7 +316,7 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
 
 def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_process.
     image_files: list[Path],
-    agent: Agent,
+    agent: Agent[None, GeneratedMetadata],
     options: ProcessingOptions,
     *,
     retry: bool,
@@ -379,7 +381,7 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
 
 def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
     image_files: list[Path],
-    agent: Agent,
+    agent: Agent[None, GeneratedMetadata],
     options: ProcessingOptions,
     *,
     retry: bool,
@@ -430,7 +432,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
 
 def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
     image_files: list[Path],
-    agent: Agent,
+    agent: Agent[None, GeneratedMetadata],
     options: ProcessingOptions,
     *,
     on_success: OnSuccess | None = None,

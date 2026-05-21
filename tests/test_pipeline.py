@@ -23,8 +23,10 @@ if TYPE_CHECKING:
 
     from pydantic_ai import Agent
 
+    from photo_tagger.models import GeneratedMetadata
+
 # Pipeline tests patch every IO call, so the agent value never gets touched.
-_FAKE_AGENT = cast("Agent", object())
+_FAKE_AGENT = cast("Agent[None, GeneratedMetadata]", object())
 
 
 @contextlib.contextmanager

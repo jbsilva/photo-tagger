@@ -1,4 +1,5 @@
 addopts
+annotationlib
 autouse
 casefolded
 Casefolded
@@ -16,6 +17,7 @@ Exif
 exiftool
 Exiftool
 fromarray
+fstrings
 getpixel
 gpgconf
 httpx
@@ -43,6 +45,7 @@ prek
 psutil
 pycache
 pycqa
+pycroscope
 pydantic
 pyexiftool
 pypa

@@ -127,7 +127,7 @@ def create_agent(
     api_base_url: str | None,
     api_key: str | None,
     retries: int,
-) -> Agent:
+) -> Agent[None, GeneratedMetadata]:
     """Build a configured pydantic-ai Agent backed by Ollama or LM Studio."""
     resolved_url = api_base_url or PROVIDER_URLS.get(provider_name, DEFAULT_OLLAMA_BASE_URL)
     if api_base_url is None:
@@ -149,7 +149,12 @@ def create_agent(
         provider = OpenAIProvider(base_url=resolved_url, api_key=resolved_api_key)
 
     chat_model = OpenAIChatModel(model_name=model_name, provider=provider)
-    return Agent(
+    # pydantic-ai's Agent constructor does not propagate `output_type` into its
+    # generic, so static analyzers see `Agent[None, str]` while the runtime
+    # object actually decodes `GeneratedMetadata`. The two suppressions below
+    # cover zuban's view of the constructor arg and pycroscope's view of the
+    # return type respectively.
+    return Agent(  # static analysis: ignore[incompatible_return_value]
         chat_model,
         output_type=GeneratedMetadata,  # type: ignore[arg-type]
         retries=retries,
@@ -183,7 +188,7 @@ def _extract_usage(usage: object | None) -> tuple[int, int, int]:
 
 def analyze_image_with_ai(
     image_bytes: BinaryContent,
-    agent: Agent,
+    agent: Agent[None, GeneratedMetadata],
     *,
     user_prompt: str | None = None,
     temperature: float = DEFAULT_TEMPERATURE,
