@@ -1,5 +1,25 @@
 {
-  "python.testing.pytestArgs": ["tests"],
+  // =============================
+  // Editor
+  // =============================
+  "editor.rulers": [100],
+
+  // =============================
+  // TOML
+  // =============================
+  "evenBetterToml.formatter.allowedBlankLines": 2,
+  "evenBetterToml.formatter.columnWidth": 100,
+
+  // =============================
+  // Bandit
+  // =============================
+  "bandit.importStrategy": "fromEnvironment",
+  "bandit.args": ["-c", "pyproject.toml"],
+
+  // =============================
+  // Python
+  // =============================
+  "python.testing.pytestArgs": ["tests", "--import-mode=importlib"],
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true
 }
