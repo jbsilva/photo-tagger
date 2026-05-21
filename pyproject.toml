@@ -28,15 +28,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Recognition",
 ]
 dependencies = [
-    "cyclopts>=4.12.0",
+    "cyclopts>=4.14.0",
     "httpx>=0.28.1",
     "rawpy>=0.27.0",
     "pydantic>=2.13.4",
-    "pydantic-ai>=1.97.0",
+    "pydantic-ai>=1.99.0",
     "loguru>=0.7.3",
     "pyexiftool>=0.5.6",
     "pillow>=12.2.0",
-    "rich>=13.0",
+    "rich>=15.0.0",
 ]
 
 [dependency-groups]
