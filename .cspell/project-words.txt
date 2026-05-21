@@ -23,6 +23,7 @@ imread
 iptc
 IPTC
 isort
+jbsilva
 LANCZOS
 libraw
 Lightroom
@@ -54,6 +55,7 @@ qwen
 rawpy
 roundtrips
 scannerwork
+sonarlint
 sonarqube
 SonarQube
 stdouts
