@@ -63,6 +63,9 @@ Issues = "https://github.com/jbsilva/photo-tagger/issues"
 [project.scripts]
 photo-tagger = "photo_tagger.main:app"
 
+[tool.uv]
+exclude-newer = "1 day"
+
 [build-system]
 requires = ["uv_build>=0.11.16,<1.0.0"]
 build-backend = "uv_build"
