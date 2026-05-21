@@ -63,3 +63,13 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
+        always_run: true
+
+      - id: pycroscope
+        name: pycroscope static analysis
+        entry: uv run pycroscope --config-file pyproject.toml
+        language: system
+        types: [python]
+        pass_filenames: false
+        require_serial: true
+        always_run: true

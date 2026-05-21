@@ -42,6 +42,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "bandit>=1.9.4",
+    "pycroscope>=0.4.0",
     "ruff>=0.15.13",
     "zuban>=0.7.2",
 ]
@@ -107,6 +108,37 @@ strict = true
 disallow_untyped_defs = true
 warn_unreachable = true
 python_executable = ".venv/bin/python"
+
+[tool.pycroscope]
+# Directory to analyze (relative to pyproject.toml) and the import root for the src layout
+paths = ["src/photo_tagger"]
+import_paths = ["src"]
+
+# Output one issue per line, easier to scan and grep.
+output_format = "concise"
+
+# Checks
+possibly_undefined_name = true
+unused_variable = true
+value_always_true = true
+use_fstrings = true
+missing_return_annotation = true
+missing_parameter_annotation = true
+suggested_parameter_type = true
+suggested_return_type = true
+incompatible_override = true
+missing_generic_parameters = true
+
+# See https://github.com/JelleZijlstra/pycroscope/issues/499
+internal_error = false
+
+# Tests intentionally use loose typing and assert helpers that pycroscope would flag as suggestions
+[[tool.pycroscope.overrides]]
+module = "tests"
+missing_return_annotation = false
+missing_parameter_annotation = false
+suggested_parameter_type = false
+suggested_return_type = false
 
 [tool.bandit]
 exclude_dirs = [".git", ".venv", "__pycache__", "tests"]

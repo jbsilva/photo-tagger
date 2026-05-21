@@ -22,11 +22,16 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 ## Before committing
 
 ```bash
-uv run ruff check --fix .   # Lint + auto-fix
-uv run ruff format .        # Format
-zuban check                 # Strict type check (mypy-compatible, with django-stubs)
-prek run -a                 # Run all pre-commit hooks (drop-in pre-commit replacement)
+uv run ruff check --fix .                              # Lint + auto-fix
+uv run ruff format .                                   # Format
+zuban check                                            # Strict type check (mypy-compatible)
+uv run pycroscope --config-file pyproject.toml         # Semi-static analyzer (complements zuban)
+prek run -a                                            # Run all pre-commit hooks
 ```
+
+`pycroscope` config lives under `[tool.pycroscope]` in `pyproject.toml`. It does **not**
+auto-discover the config file, so always pass `--config-file pyproject.toml` when invoking it
+directly. The pre-commit hook already does this.
 
 The full local CI + SonarQube refresh pipeline lives in the `/ci` skill
 ([.claude/skills/ci.md](.claude/skills/ci.md)). Claude **may** invoke it, but should do so
