@@ -45,9 +45,9 @@ pycache
 pycqa
 pydantic
 pyexiftool
-pyproject
 pypa
 pypi
+pyproject
 pytest
 pytestmark
 pyupgrade
