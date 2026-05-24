@@ -406,6 +406,34 @@ def read_image_context(
     )
 
 
+def _first_present(values: dict[str, str], *tags: str) -> str | None:
+    """Return the first non-empty value in *values* lookup-ordered by *tags*."""
+    for tag in tags:
+        if (raw := values.get(tag)) and (stripped := raw.strip()):
+            return stripped
+    return None
+
+
+def _format_location(location_tags: dict[str, str]) -> str | None:
+    """
+    Build a "City, Country" hint, falling back to whichever single field is set.
+
+    XMP-photoshop and IPTC each define their own city/country fields, so this
+    helper picks the first present in each category and joins them. Returning
+    both means the model gets the full place name (e.g. "Barcelona, Spain")
+    instead of silently losing the city under the older "first hit wins" logic.
+    """
+    city = _first_present(location_tags, "XMP-photoshop:City", "IPTC:City")
+    country = _first_present(
+        location_tags,
+        "XMP-photoshop:Country",
+        "IPTC:Country-PrimaryLocationName",
+    )
+    if city and country:
+        return f"{city}, {country}"
+    return city or country
+
+
 def _camera_lines(camera_info: dict[str, str]) -> list[str]:
     """Render ``EXIF:Model`` / ``EXIF:LensModel`` / ``EXIF:DateTimeOriginal`` lines."""
     lines: list[str] = []
@@ -444,11 +472,7 @@ def build_contextual_prompt(  # noqa: PLR0913 - each kwarg renders an independen
             line += ", ..."
         metadata_lines.append(line)
 
-    location_value = next(
-        (location_tags.get(tag) for tag in LOCATION_TAGS if location_tags.get(tag)),
-        None,
-    )
-    if location_value:
+    if location_value := _format_location(location_tags):
         metadata_lines.append(f"- Location: {location_value}")
 
     if gps_position := (gps_info or {}).get("position"):

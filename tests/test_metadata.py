@@ -253,6 +253,52 @@ def test_read_image_context_returns_empty_when_no_targets(tmp_path: Path) -> Non
     fake_helper.get_tags.assert_not_called()
 
 
+def test_build_contextual_prompt_joins_city_and_country() -> None:
+    """Both city and country survive together as a single 'City, Country' hint."""
+    prompt = build_contextual_prompt(
+        "Analyze.",
+        [],
+        {
+            "XMP-photoshop:City": "Barcelona",
+            "XMP-photoshop:Country": "Spain",
+        },
+        {},
+    )
+    assert "- Location: Barcelona, Spain" in prompt
+
+
+def test_build_contextual_prompt_uses_iptc_location_fallback() -> None:
+    """IPTC-only photos still surface their place name through the legacy fields."""
+    prompt = build_contextual_prompt(
+        "Analyze.",
+        [],
+        {
+            "IPTC:City": "Lisbon",
+            "IPTC:Country-PrimaryLocationName": "Portugal",
+        },
+        {},
+    )
+    assert "- Location: Lisbon, Portugal" in prompt
+
+
+def test_build_contextual_prompt_falls_back_to_single_field() -> None:
+    """If only one of city/country is set, the line still appears."""
+    only_country = build_contextual_prompt(
+        "Analyze.",
+        [],
+        {"XMP-photoshop:Country": "Norway"},
+        {},
+    )
+    assert "- Location: Norway" in only_country
+    only_city = build_contextual_prompt(
+        "Analyze.",
+        [],
+        {"IPTC:City": "Tokyo"},
+        {},
+    )
+    assert "- Location: Tokyo" in only_city
+
+
 def test_build_contextual_prompt_renders_camera_section() -> None:
     """When camera_info is provided, equipment and capture-date lines appear in the prompt."""
     prompt = build_contextual_prompt(

@@ -104,7 +104,8 @@ def test_build_contextual_prompt_includes_metadata_and_truncates_keywords() -> N
 
     assert prompt.startswith("Analyze the scene.")
     assert "- Existing Keywords: Beach, Sunset, Travel, ..." in prompt
-    assert "- Location: Portugal" in prompt
+    # Both city and country survive; the model gets the full place name.
+    assert "- Location: Lisbon, Portugal" in prompt
     assert "- GPS: 38.7 N, 9.1 W" in prompt
 
 
