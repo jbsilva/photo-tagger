@@ -17,6 +17,8 @@ Requirements:
 
 import json
 import os
+import sys
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,7 +46,7 @@ from photo_tagger.discovery import (
     resolve_image_batch,
 )
 from photo_tagger.logging_setup import setup_logging
-from photo_tagger.pipeline import BatchTotals, ProcessingOptions, run_batch
+from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
 
 
@@ -203,6 +205,34 @@ class LogConfig:
 
 
 @dataclass
+class DisplayConfig:
+    """Stdout/stderr presentation toggles (progress bar, per-image NDJSON)."""
+
+    progress_bar: Annotated[
+        bool,
+        Parameter(
+            name=("--progress",),
+            negative="--no-progress",
+            help=(
+                "Show a live rich progress bar (default on interactive terminals). Disabled "
+                "automatically when stderr is not a tty (CI, redirected output)"
+            ),
+        ),
+    ] = True
+    json_output: Annotated[
+        bool,
+        Parameter(
+            name=("--json",),
+            help=(
+                "Emit one NDJSON line per processed photo to stdout (file, status, title, "
+                "description, keywords, token usage, seconds, cache flag). Useful for "
+                "piping into other tools. Logs and progress stay on stderr"
+            ),
+        ),
+    ] = False
+
+
+@dataclass
 class ArtifactConfig:
     """Optional sidecar files the run reads (prompt) or writes (summary, cache)."""
 
@@ -249,6 +279,7 @@ _DEFAULT_PROVIDER = ProviderConfig()
 _DEFAULT_OUTPUT = OutputConfig()
 _DEFAULT_INFERENCE = InferenceConfig()
 _DEFAULT_LOG = LogConfig()
+_DEFAULT_DISPLAY = DisplayConfig()
 _DEFAULT_ARTIFACTS = ArtifactConfig()
 
 
@@ -283,6 +314,46 @@ def _read_prompt_file(prompt_file: Path | None) -> str:
         raise SystemExit(1)
     logger.info("prompt_file_loaded", file=str(prompt_file), chars=len(text))
     return text
+
+
+class _NDJSONEmitter:
+    """
+    Thread-safe ``on_image_result`` callback that writes NDJSON to a stream.
+
+    Workers call this concurrently. The lock prevents two lines being interleaved
+    in stdout under ``--workers > 1``. Each line is a complete JSON object that
+    downstream consumers can parse with one ``json.loads`` per readline.
+    """
+
+    __slots__ = ("_lock", "_stream")
+
+    _lock: threading.Lock
+    _stream: object
+
+    def __init__(self, stream: object) -> None:
+        """Wrap *stream* (expected to have ``write`` and ``flush`` methods)."""
+        self._stream = stream
+        self._lock = threading.Lock()
+
+    def __call__(self, outcome: ImageOutcome) -> None:
+        """Serialize *outcome* to a single NDJSON line and flush."""
+        payload = {
+            "file": str(outcome.file),
+            "status": "ok" if outcome.success else "failed",
+            "from_cache": outcome.from_cache,
+            "retry": outcome.retry,
+            "title": outcome.title,
+            "description": outcome.description,
+            "keywords": outcome.keywords,
+            "input_tokens": outcome.input_tokens,
+            "output_tokens": outcome.output_tokens,
+            "total_tokens": outcome.total_tokens,
+            "seconds": outcome.seconds,
+        }
+        line = json.dumps(payload, ensure_ascii=False) + "\n"
+        with self._lock:
+            self._stream.write(line)  # type: ignore[attr-defined]
+            self._stream.flush()  # type: ignore[attr-defined]
 
 
 def _atomic_write_text(target: Path, text: str) -> None:
@@ -437,17 +508,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             ),
         ),
     ] = 1,
-    progress_bar: Annotated[
-        bool,
-        Parameter(
-            name=("--progress",),
-            negative="--no-progress",
-            help=(
-                "Show a live rich progress bar (default on interactive terminals). Disabled "
-                "automatically when stderr is not a tty (CI, redirected output)"
-            ),
-        ),
-    ] = True,
+    display: Annotated[DisplayConfig, Parameter(name="*")] = _DEFAULT_DISPLAY,
     artifacts: Annotated[ArtifactConfig, Parameter(name="*")] = _DEFAULT_ARTIFACTS,
     provider: Annotated[ProviderConfig, Parameter(name="*")] = _DEFAULT_PROVIDER,
     output: Annotated[OutputConfig, Parameter(name="*")] = _DEFAULT_OUTPUT,
@@ -568,8 +629,9 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             user_prompt_chars=len(user_prompt),
         )
 
+    ndjson_emitter = _NDJSONEmitter(sys.stdout) if display.json_output else None
     try:
-        with batch_progress(len(image_files), enabled=progress_bar) as progress:
+        with batch_progress(len(image_files), enabled=display.progress_bar) as progress:
             run_batch(
                 image_files,
                 agent,
@@ -580,6 +642,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
                 workers=max(1, workers),
                 progress=progress,
                 cache=cache,
+                on_image_result=ndjson_emitter,
             )
     finally:
         if cache is not None:

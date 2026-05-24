@@ -39,6 +39,31 @@ if TYPE_CHECKING:
     OnSuccess = Callable[[Path], None]
     ProgressCallback = Callable[[Path, bool], None]
     OnComplete = Callable[["BatchTotals"], None]
+    OnImageResult = Callable[["ImageOutcome"], None]
+
+
+@dataclass(slots=True, frozen=True)
+class ImageOutcome:
+    """
+    Per-image result the pipeline streams to consumers via ``on_image_result``.
+
+    Carries the AI fields (or what the cache replayed) plus the success bit and
+    a ``from_cache`` flag. The CLI uses this to emit one NDJSON line per photo
+    when ``--json`` is set, so downstream tools can act on each result as soon
+    as it lands instead of waiting for the BatchTotals summary at the end.
+    """
+
+    file: Path
+    success: bool
+    from_cache: bool
+    retry: bool
+    title: str | None
+    description: str | None
+    keywords: list[str]
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    seconds: float
 
 
 @dataclass(slots=True)
@@ -152,6 +177,7 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
     user_prompt: str = DEFAULT_USER_PROMPT,
     usage: _UsageAccumulator | None = None,
     cache: InferenceCache | None = None,
+    outcome_sink: dict[str, Any] | None = None,
 ) -> bool:
     """
     Convert an image to JPEG bytes in memory, query the model, and persist metadata.
@@ -172,6 +198,9 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
         cache: Optional InferenceCache. When supplied, the photo's content hash is
             looked up first; a hit reuses the cached title/description/keywords and
             skips both image preparation and the model call.
+        outcome_sink: Optional per-call scratch dict. When provided, this function
+            populates ``inference`` (InferenceResult) and ``from_cache`` (bool) so the
+            caller can wrap them into an ImageOutcome without retracing the work.
 
     Returns:
         True if every step succeeded, False if metadata writing failed.
@@ -197,7 +226,7 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
             camera_info=context.camera_info,
         )
 
-        inference, _from_cache = _resolve_inference(
+        inference, from_cache = _resolve_inference(
             image_path,
             agent,
             options,
@@ -205,6 +234,9 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
             cache=cache,
             usage=usage,
         )
+        if outcome_sink is not None:
+            outcome_sink["inference"] = inference
+            outcome_sink["from_cache"] = from_cache
 
         title = inference.title
         description = inference.description
@@ -243,6 +275,37 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
         )
 
 
+def _emit_outcome(
+    on_image_result: OnImageResult | None,
+    image_file: Path,
+    scratch: dict[str, Any],
+    *,
+    success: bool,
+    retry: bool,
+) -> None:
+    """Build an ImageOutcome from *scratch* and *success* and call *on_image_result*."""
+    if on_image_result is None:
+        return
+    inference: InferenceResult | None = scratch.get("inference")
+    outcome = ImageOutcome(
+        file=image_file,
+        success=success,
+        from_cache=bool(scratch.get("from_cache", False)),
+        retry=retry,
+        title=inference.title if inference is not None else None,
+        description=inference.description if inference is not None else None,
+        keywords=list(inference.keywords) if inference is not None else [],
+        input_tokens=inference.input_tokens if inference is not None else 0,
+        output_tokens=inference.output_tokens if inference is not None else 0,
+        total_tokens=inference.total_tokens if inference is not None else 0,
+        seconds=inference.seconds if inference is not None else 0.0,
+    )
+    try:
+        on_image_result(outcome)
+    except Exception as exc:  # noqa: BLE001 - callback errors must not break the batch.
+        logger.exception("on_image_result_callback_failed", file=image_file.name, error=str(exc))
+
+
 def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_photo.
     image_file: Path,
     agent: Agent[None, GeneratedMetadata],
@@ -254,12 +317,14 @@ def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_
     user_prompt: str = DEFAULT_USER_PROMPT,
     usage: _UsageAccumulator | None = None,
     cache: InferenceCache | None = None,
+    on_image_result: OnImageResult | None = None,
 ) -> bool:
     """Run process_photo once with consistent logging and error handling."""
     context_kwargs: dict[str, Any] = {"file": image_file.name}
     if retry:
         context_kwargs["retry"] = True
 
+    scratch: dict[str, Any] = {}
     with logger.contextualize(**context_kwargs):
         try:
             ok = process_photo(
@@ -270,21 +335,25 @@ def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_
                 user_prompt=user_prompt,
                 usage=usage,
                 cache=cache,
+                outcome_sink=scratch,
             )
         except Exception as exc:  # noqa: BLE001 - process_photo wraps several SDKs
             event = "processing_retry_exception" if retry else "processing_exception"
             logger.exception(event, error=str(exc))
+            _emit_outcome(on_image_result, image_file, scratch, success=False, retry=retry)
             return False
 
         if ok:
             event = "retry_success" if retry else "processing_success"
             logger.info(event, index=index)
+            _emit_outcome(on_image_result, image_file, scratch, success=True, retry=retry)
             return True
 
         if retry:
             logger.error("retry_failed", index=index)
         else:
             logger.error("processing_failed", index=index, queued_for_retry=True)
+        _emit_outcome(on_image_result, image_file, scratch, success=False, retry=retry)
         return False
 
 
@@ -338,6 +407,7 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
     progress: ProgressCallback | None,
     usage: _UsageAccumulator | None,
     cache: InferenceCache | None,
+    on_image_result: OnImageResult | None,
 ) -> tuple[int, list[Path], bool]:
     """
     Run *image_files* one after another in the calling thread.
@@ -362,6 +432,7 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
                 user_prompt=user_prompt,
                 usage=usage,
                 cache=cache,
+                on_image_result=on_image_result,
             )
         except KeyboardInterrupt:
             logger.warning("batch_interrupted_by_user", remaining=total - idx + 1)
@@ -393,6 +464,7 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
     progress: ProgressCallback | None,
     usage: _UsageAccumulator | None,
     cache: InferenceCache | None,
+    on_image_result: OnImageResult | None,
 ) -> tuple[int, list[Path], bool]:
     """
     Run *image_files* across a thread pool. Each task gets its own ExifToolHelper.
@@ -426,6 +498,7 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
                 user_prompt=user_prompt,
                 usage=usage,
                 cache=cache,
+                on_image_result=on_image_result,
             ): image_file
             for idx, image_file in indexed
         }
@@ -477,6 +550,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
     progress: ProgressCallback | None,
     usage: _UsageAccumulator | None,
     cache: InferenceCache | None,
+    on_image_result: OnImageResult | None,
 ) -> tuple[int, list[Path], bool]:
     """
     Run a single pass (initial or retry) over the batch.
@@ -505,6 +579,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
             progress=progress,
             usage=usage,
             cache=cache,
+            on_image_result=on_image_result,
         )
     return _run_pass_concurrent(
         image_files,
@@ -517,6 +592,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
         progress=progress,
         usage=usage,
         cache=cache,
+        on_image_result=on_image_result,
     )
 
 
@@ -531,6 +607,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
     progress: ProgressCallback | None = None,
     on_complete: OnComplete | None = None,
     cache: InferenceCache | None = None,
+    on_image_result: OnImageResult | None = None,
 ) -> BatchTotals:
     """
     Run the initial pass plus a single retry pass and return summary totals.
@@ -569,6 +646,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
             progress=progress,
             usage=usage,
             cache=cache,
+            on_image_result=on_image_result,
         )
         if interrupted:
             # Don't retry after the user asked us to stop. Mark everything that
@@ -588,6 +666,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
                 progress=progress,
                 usage=usage,
                 cache=cache,
+                on_image_result=on_image_result,
             )
 
     totals = BatchTotals(

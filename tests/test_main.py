@@ -8,13 +8,16 @@ elsewhere by the per-module unit tests.
 """
 
 import contextlib
+import io
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
 from photo_tagger import main as main_module
+from photo_tagger.pipeline import ImageOutcome
 
 
 if TYPE_CHECKING:
@@ -48,6 +51,8 @@ def _patches(captured: dict[str, Any]) -> Any:  # noqa: ANN401 - context manager
         captured["on_complete"] = kwargs.get("on_complete")
         captured["user_prompt"] = kwargs.get("user_prompt")
         captured["workers"] = kwargs.get("workers")
+        captured["on_image_result"] = kwargs.get("on_image_result")
+        captured["cache"] = kwargs.get("cache")
         return None
 
     return (
@@ -156,6 +161,83 @@ def test_cli_workers_and_prompt_file_reach_run_batch(tmp_path: Path) -> None:
 
     assert captured["workers"] == _EXPECTED_WORKERS
     assert captured["user_prompt"] == "Describe like a wildlife photographer."
+
+
+def _outcome(file: Path, *, success: bool = True, from_cache: bool = False) -> ImageOutcome:
+    """Build a representative ImageOutcome for NDJSON-emitter tests."""
+    return ImageOutcome(
+        file=file,
+        success=success,
+        from_cache=from_cache,
+        retry=False,
+        title="A Title",
+        description="A description.",
+        keywords=["Beach", "Sunset"],
+        input_tokens=42,
+        output_tokens=7,
+        total_tokens=49,
+        seconds=1.5,
+    )
+
+
+def test_ndjson_emitter_writes_one_line_per_outcome(tmp_path: Path) -> None:
+    """Each call to the emitter writes exactly one JSON line that round-trips through json.loads."""
+    buf = io.StringIO()
+    emitter = main_module._NDJSONEmitter(buf)  # noqa: SLF001
+    emitter(_outcome(tmp_path / "a.cr3", success=True, from_cache=False))
+    emitter(_outcome(tmp_path / "b.cr3", success=False, from_cache=True))
+
+    lines = buf.getvalue().splitlines()
+    expected_lines = 2
+    assert len(lines) == expected_lines
+    first = json.loads(lines[0])
+    second = json.loads(lines[1])
+    assert first["status"] == "ok"
+    assert first["from_cache"] is False
+    assert first["title"] == "A Title"
+    assert first["keywords"] == ["Beach", "Sunset"]
+    assert second["status"] == "failed"
+    assert second["from_cache"] is True
+
+
+def test_ndjson_emitter_is_thread_safe(tmp_path: Path) -> None:
+    """Concurrent emitters never interleave a partial line."""
+    buf = io.StringIO()
+    emitter = main_module._NDJSONEmitter(buf)  # noqa: SLF001
+    paths = [tmp_path / f"img{i:03d}.cr3" for i in range(60)]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda p: emitter(_outcome(p)), paths))
+
+    lines = buf.getvalue().splitlines()
+    # Each line parses cleanly: proof that nothing interleaved.
+    decoded = [json.loads(line) for line in lines]
+    assert sorted(d["file"] for d in decoded) == sorted(str(p) for p in paths)
+
+
+def test_cli_json_flag_installs_ndjson_emitter(tmp_path: Path) -> None:
+    """--json wires an _NDJSONEmitter onto run_batch's on_image_result callback."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--json"])
+
+    emitter = captured["on_image_result"]
+    assert isinstance(emitter, main_module._NDJSONEmitter)  # noqa: SLF001
+
+
+def test_cli_default_does_not_install_ndjson_emitter(tmp_path: Path) -> None:
+    """Without --json the on_image_result callback stays None."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image)])
+
+    assert captured["on_image_result"] is None
 
 
 _EXPECTED_TOTAL_TOKENS = 49
