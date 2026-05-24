@@ -493,16 +493,22 @@ def _write_summary_file(  # noqa: PLR0913 - distinct optional fields are clearer
     logger.info("summary_file_written", file=str(summary_file))
 
 
+def _maybe_str(value: Path | None) -> str | None:
+    """Return ``str(value)`` or ``None`` so loguru extras keep a clean type."""
+    return str(value) if value is not None else None
+
+
 def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
     *,
     inputs: list[Path] | None,
     skip_from: Path | None,
     append_to_skip_file: Path | None,
-    skip_tagged: bool,
     image_extensions: str,
     recursive: bool,
     workers: int,
-    prompt_file: Path | None,
+    filter_: FilterConfig,
+    display: DisplayConfig,
+    artifacts: ArtifactConfig,
     provider: ProviderConfig,
     options: ProcessingOptions,
     log: LogConfig,
@@ -518,10 +524,17 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
         api_key_present=bool(provider.api_key),
         recursive=recursive,
         workers=workers,
-        prompt_file=str(prompt_file) if prompt_file else None,
-        skip_from=str(skip_from) if skip_from else None,
-        append_to_skip_file=str(append_to_skip_file) if append_to_skip_file else None,
-        skip_tagged=skip_tagged,
+        prompt_file=_maybe_str(artifacts.prompt_file),
+        summary_file=_maybe_str(artifacts.summary_file),
+        cache_file=_maybe_str(artifacts.cache_file),
+        lock_file=_maybe_str(artifacts.lock_file),
+        json_output=display.json_output,
+        progress_bar=display.progress_bar,
+        skip_from=_maybe_str(skip_from),
+        append_to_skip_file=_maybe_str(append_to_skip_file),
+        skip_tagged=filter_.skip_tagged,
+        newer_than=filter_.newer_than,
+        older_than=filter_.older_than,
         preserve_keywords=options.preserve_existing_kw,
         write_description=options.write_description,
         write_title=options.write_title,
@@ -575,7 +588,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             name=("--ext", "--extensions"),
             help="Comma-separated image file extensions to process (case insensitive)",
         ),
-    ] = "cr3",
+    ] = "cr3,jpg",
     recursive: Annotated[
         bool,
         Parameter(
@@ -727,11 +740,12 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         inputs=inputs,
         skip_from=skip_from,
         append_to_skip_file=append_to_skip_file,
-        skip_tagged=filter_.skip_tagged,
         image_extensions=image_extensions,
         recursive=recursive,
         workers=workers,
-        prompt_file=artifacts.prompt_file,
+        filter_=filter_,
+        display=display,
+        artifacts=artifacts,
         provider=provider,
         options=options,
         log=log,

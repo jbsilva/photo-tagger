@@ -1,5 +1,6 @@
 addopts
 annotationlib
+APFS
 autouse
 casefolded
 Casefolded
@@ -72,6 +73,7 @@ subfolders
 tamasfe
 testpypi
 testsdeselect
+titlecase
 tobytes
 unwritable
 usefixtures

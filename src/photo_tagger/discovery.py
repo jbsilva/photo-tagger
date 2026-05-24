@@ -35,6 +35,24 @@ def parse_extensions(image_extensions: str) -> set[str]:
     }
 
 
+def _iter_directory_matches(
+    directory: Path,
+    casefolded_exts: set[str],
+    *,
+    recursive: bool,
+) -> list[Path]:
+    """
+    Yield every file under *directory* whose suffix (casefolded) is in *casefolded_exts*.
+
+    pathlib.Path.glob is case-sensitive on Linux and APFS-case-sensitive volumes, so
+    matching ``--ext cr3`` against ``IMG_0001.CR3`` used to silently return nothing on
+    those filesystems. Walking the directory once and comparing ``suffix.casefold()``
+    gives us the case-insensitive behavior the ``--ext`` help text has always advertised.
+    """
+    iterator = directory.rglob("*") if recursive else directory.iterdir()
+    return [p for p in iterator if p.is_file() and p.suffix.casefold() in casefolded_exts]
+
+
 def resolve_image_files(
     inputs: list[Path],
     ext_set: set[str],
@@ -46,9 +64,12 @@ def resolve_image_files(
 
     - Directories are expanded by extension (honouring --recursive).
     - Explicit files are accepted as is (the extension filter does not apply).
+    - Extension matching is case-insensitive: ``--ext cr3`` accepts ``.cr3``,
+      ``.CR3``, ``.Cr3`` etc. so a Canon-style naming convention works on
+      Linux and case-sensitive APFS volumes too.
     - Order is preserved and duplicates are removed.
     """
-    pattern = "**/*" if recursive else "*"
+    casefolded_exts = {ext.casefold() for ext in ext_set}
     files_from_dirs: list[Path] = []
     files_explicit: list[Path] = []
 
@@ -57,8 +78,9 @@ def resolve_image_files(
         with contextlib.suppress(Exception):
             path_resolved = path.resolve()
         if path_resolved.is_dir():
-            for ext in ext_set:
-                files_from_dirs.extend(path_resolved.glob(f"{pattern}{ext}"))
+            files_from_dirs.extend(
+                _iter_directory_matches(path_resolved, casefolded_exts, recursive=recursive),
+            )
         elif path_resolved.is_file():
             files_explicit.append(path_resolved)
         else:

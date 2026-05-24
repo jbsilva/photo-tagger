@@ -50,6 +50,33 @@ def test_resolve_image_batch_exits_when_directory_yields_nothing(tmp_path: Path)
         resolve_image_batch([tmp_path], "cr3", recursive=False)
 
 
+def test_resolve_image_batch_matches_extensions_case_insensitively(tmp_path: Path) -> None:
+    """Canon-style .CR3 files are accepted with --ext cr3 (the matching is case-insensitive)."""
+    canon_upper = tmp_path / "IMG_0001.CR3"
+    canon_upper.write_text("x")
+    other = tmp_path / "note.txt"
+    other.write_text("x")
+
+    result = resolve_image_batch([tmp_path], "cr3", recursive=False)
+    assert {p.resolve() for p in result} == {canon_upper.resolve()}
+
+
+def test_resolve_image_batch_mixed_case_extensions_and_files(tmp_path: Path) -> None:
+    """Mixed-case directory entries all match a single lowercase extension spec."""
+    lower = tmp_path / "a.cr3"
+    upper = tmp_path / "b.CR3"
+    titlecase = tmp_path / "c.Cr3"
+    for path in (lower, upper, titlecase):
+        path.write_text("x")
+
+    result = resolve_image_batch([tmp_path], "CR3", recursive=False)
+    assert {p.resolve() for p in result} == {
+        lower.resolve(),
+        upper.resolve(),
+        titlecase.resolve(),
+    }
+
+
 def test_resolve_image_batch_returns_files(tmp_path: Path) -> None:
     """Happy path returns the resolved file list, deduplicated."""
     a = tmp_path / "a.cr3"
