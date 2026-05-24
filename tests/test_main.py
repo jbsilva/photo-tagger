@@ -269,6 +269,37 @@ def test_cli_rejects_malformed_newer_than(tmp_path: Path) -> None:
         main_module.app(["--input", str(image), "--newer-than", "not-a-date"])
 
 
+def test_parse_filter_date_treats_naive_as_local_time() -> None:
+    """A naive ISO date attaches the system local zone, not UTC."""
+    from datetime import datetime  # noqa: PLC0415 - test-local import.
+
+    parsed = main_module._parse_filter_date("2024-01-01T00:00:00", flag="--newer-than")  # noqa: SLF001
+    assert parsed is not None
+    assert parsed.tzinfo is not None
+    # Wall-clock fields are preserved verbatim: the user wrote midnight local.
+    naive_expected = datetime(2024, 1, 1, 0, 0, 0)  # noqa: DTZ001 - naive on purpose.
+    assert parsed.replace(tzinfo=None) == naive_expected
+    # Attached offset matches the system's local offset for *that* wall-clock
+    # time (which may differ from "now" across DST boundaries). Comparing
+    # against datetime.astimezone() of the same naive moment guards against
+    # the parser silently falling back to UTC.
+    assert parsed.utcoffset() == naive_expected.astimezone().utcoffset()
+
+
+def test_parse_filter_date_preserves_explicit_timezone() -> None:
+    """An ISO string that already carries a timezone is passed through unchanged."""
+    parsed = main_module._parse_filter_date("2024-01-01T00:00:00+00:00", flag="--newer-than")  # noqa: SLF001
+    assert parsed is not None
+    offset = parsed.utcoffset()
+    assert offset is not None
+    assert offset.total_seconds() == 0
+
+
+def test_parse_filter_date_returns_none_for_none() -> None:
+    """Passing None short-circuits without raising."""
+    assert main_module._parse_filter_date(None, flag="--newer-than") is None  # noqa: SLF001
+
+
 def test_cli_lock_file_blocks_second_run(tmp_path: Path) -> None:
     """A second --lock-file invocation while another holds the lock exits with code 1."""
     from photo_tagger.locking import FileLock  # noqa: PLC0415 - test-local import.

@@ -409,7 +409,14 @@ class _NDJSONEmitter:
 
 
 def _parse_filter_date(value: str | None, *, flag: str) -> datetime | None:
-    """Parse an ISO 8601 string from *flag* into a timezone-aware datetime, or None."""
+    """
+    Parse an ISO 8601 string from *flag* into a timezone-aware datetime, or None.
+
+    A naive timestamp like ``2024-01-01`` is read as **local** time (matching
+    ``git log --since`` and ``find -newer`` conventions). The system local zone
+    is attached, and the value is returned aware so downstream comparisons with
+    UTC mtimes do the right thing.
+    """
     if value is None:
         return None
     try:
@@ -417,7 +424,13 @@ def _parse_filter_date(value: str | None, *, flag: str) -> datetime | None:
     except ValueError as exc:
         logger.error("date_filter_parse_failed", flag=flag, value=value, error=str(exc))
         raise SystemExit(1) from exc
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    if parsed.tzinfo is not None:
+        return parsed
+    # datetime.astimezone() on a naive value attaches the system local zone
+    # (per the stdlib docs), turning it into a tz-aware value without shifting
+    # the wall-clock fields. That is exactly the "user meant their local time"
+    # semantics we want here.
+    return parsed.astimezone()
 
 
 def _atomic_write_text(target: Path, text: str) -> None:

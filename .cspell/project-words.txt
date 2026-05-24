@@ -37,6 +37,7 @@ llava
 lmstudio
 LMSTUDIO
 loguru
+mtimes
 mypy
 NOSONAR
 numprocesses
