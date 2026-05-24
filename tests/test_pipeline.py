@@ -404,6 +404,75 @@ def test_run_batch_swallows_on_complete_errors(tmp_path: Path) -> None:
     assert totals.success == 1
 
 
+def test_process_photo_skips_ai_call_on_cache_hit(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A cache hit reuses the stored InferenceResult and never calls analyze_image_with_ai."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    cached = InferenceResult(
+        title="Cached Title",
+        description="Cached description.",
+        keywords=["Cached"],
+        input_tokens=100,
+        output_tokens=20,
+        total_tokens=120,
+        seconds=2.5,
+    )
+
+    class _StubCache:
+        def __init__(self) -> None:
+            self.put_calls = 0
+
+        def get(self, _key: str) -> InferenceResult:
+            return cached
+
+        def put(self, *_args: Any, **_kwargs: Any) -> None:  # noqa: ANN401
+            self.put_calls += 1
+
+    cache = _StubCache()
+    options = ProcessingOptions()
+
+    assert process_photo(image, agent=_FAKE_AGENT, options=options, cache=cache) is True  # type: ignore[arg-type]
+
+    # The AI call must have been skipped entirely.
+    patched_pipeline["analyze"].assert_not_called()
+    # And the write call must have used the cached title.
+    write_kwargs = patched_pipeline["write"].call_args.kwargs
+    assert write_kwargs["title"] == "Cached Title"
+    # Cache hits do not re-store the entry.
+    assert cache.put_calls == 0
+
+
+def test_process_photo_writes_to_cache_on_miss(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A cache miss runs the AI call and persists the result via cache.put."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    class _StubCache:
+        def __init__(self) -> None:
+            self.put_calls: list[Any] = []
+
+        def get(self, _key: str) -> None:
+            return None
+
+        def put(self, key: str, result: InferenceResult) -> None:
+            self.put_calls.append((key, result))
+
+    cache = _StubCache()
+    process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions(), cache=cache)  # type: ignore[arg-type]
+
+    patched_pipeline["analyze"].assert_called_once()
+    assert len(cache.put_calls) == 1
+    _, stored = cache.put_calls[0]
+    assert stored.title == "Title"
+
+
 def test_run_batch_serial_handles_keyboard_interrupt(tmp_path: Path) -> None:
     """Ctrl-C in the serial path stops scheduling and lands remaining files in failed."""
     files = [tmp_path / f"img{i}.cr3" for i in range(3)]

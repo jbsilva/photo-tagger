@@ -26,6 +26,7 @@ from cyclopts import App, Parameter, validators
 from loguru import logger
 
 from photo_tagger.ai import create_agent
+from photo_tagger.cache import InferenceCache
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
     DEFAULT_JPEG_QUALITY,
@@ -201,12 +202,54 @@ class LogConfig:
     ] = field(default_factory=lambda: Path("logs"))
 
 
+@dataclass
+class ArtifactConfig:
+    """Optional sidecar files the run reads (prompt) or writes (summary, cache)."""
+
+    prompt_file: Annotated[
+        Path | None,
+        Parameter(
+            name=("--prompt-file",),
+            validator=validators.Path(exists=True, file_okay=True, dir_okay=False),
+            help=(
+                "Override the default user prompt with the contents of this file. The "
+                "prompt is used as-is; existing photo metadata (keywords, GPS, location) "
+                "is appended automatically as before"
+            ),
+        ),
+    ] = None
+    summary_file: Annotated[
+        Path | None,
+        Parameter(
+            name=("--summary-file",),
+            validator=validators.Path(file_okay=True, dir_okay=False),
+            help=(
+                "Write a JSON summary of the run (success counts, failed files, token usage, "
+                "wall time) to this path on completion. Created if missing"
+            ),
+        ),
+    ] = None
+    cache_file: Annotated[
+        Path | None,
+        Parameter(
+            name=("--cache-file",),
+            validator=validators.Path(file_okay=True, dir_okay=False),
+            help=(
+                "SQLite cache of model outputs keyed by image content hash and model name. "
+                "Reruns that point at the same photos with the same model skip the model "
+                "call entirely. Created if missing; safe to delete to clear the cache"
+            ),
+        ),
+    ] = None
+
+
 # Default group instances. Hoisted to module scope so the function-default expressions in
 # `tag` are simple name lookups and ruff's B008 (call-in-default) is satisfied.
 _DEFAULT_PROVIDER = ProviderConfig()
 _DEFAULT_OUTPUT = OutputConfig()
 _DEFAULT_INFERENCE = InferenceConfig()
 _DEFAULT_LOG = LogConfig()
+_DEFAULT_ARTIFACTS = ArtifactConfig()
 
 
 def _to_processing_options(output: OutputConfig, inference: InferenceConfig) -> ProcessingOptions:
@@ -405,29 +448,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             ),
         ),
     ] = True,
-    prompt_file: Annotated[
-        Path | None,
-        Parameter(
-            name=("--prompt-file",),
-            validator=validators.Path(exists=True, file_okay=True, dir_okay=False),
-            help=(
-                "Override the default user prompt with the contents of this file. The "
-                "prompt is used as-is; existing photo metadata (keywords, GPS, location) "
-                "is appended automatically as before"
-            ),
-        ),
-    ] = None,
-    summary_file: Annotated[
-        Path | None,
-        Parameter(
-            name=("--summary-file",),
-            validator=validators.Path(file_okay=True, dir_okay=False),
-            help=(
-                "Write a JSON summary of the run (success counts, failed files, token usage, "
-                "wall time) to this path on completion. Created if missing"
-            ),
-        ),
-    ] = None,
+    artifacts: Annotated[ArtifactConfig, Parameter(name="*")] = _DEFAULT_ARTIFACTS,
     provider: Annotated[ProviderConfig, Parameter(name="*")] = _DEFAULT_PROVIDER,
     output: Annotated[OutputConfig, Parameter(name="*")] = _DEFAULT_OUTPUT,
     inference: Annotated[InferenceConfig, Parameter(name="*")] = _DEFAULT_INFERENCE,
@@ -505,7 +526,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         image_extensions=image_extensions,
         recursive=recursive,
         workers=workers,
-        prompt_file=prompt_file,
+        prompt_file=artifacts.prompt_file,
         provider=provider,
         options=options,
         log=log,
@@ -520,7 +541,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         logger.info("no_files_to_process_after_skipping")
         return
 
-    user_prompt = _read_prompt_file(prompt_file)
+    user_prompt = _read_prompt_file(artifacts.prompt_file)
     agent = create_agent(
         provider.provider_name,
         provider.model_name,
@@ -528,13 +549,18 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         api_key=provider.api_key,
         retries=provider.retries,
     )
+    cache = (
+        InferenceCache(artifacts.cache_file, model_name=provider.model_name)
+        if artifacts.cache_file is not None
+        else None
+    )
     started_at = datetime.now(tz=UTC)
 
     def _on_complete(totals: BatchTotals) -> None:
         # Runs once before run_batch raises SystemExit, so the JSON file is written
         # whether the batch succeeded fully or only partially.
         _write_summary_file(
-            summary_file,
+            artifacts.summary_file,
             totals,
             started_at=started_at,
             model_name=provider.model_name,
@@ -542,17 +568,22 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             user_prompt_chars=len(user_prompt),
         )
 
-    with batch_progress(len(image_files), enabled=progress_bar) as progress:
-        run_batch(
-            image_files,
-            agent,
-            options,
-            on_success=make_skip_list_appender(append_to_skip_file),
-            on_complete=_on_complete,
-            user_prompt=user_prompt,
-            workers=max(1, workers),
-            progress=progress,
-        )
+    try:
+        with batch_progress(len(image_files), enabled=progress_bar) as progress:
+            run_batch(
+                image_files,
+                agent,
+                options,
+                on_success=make_skip_list_appender(append_to_skip_file),
+                on_complete=_on_complete,
+                user_prompt=user_prompt,
+                workers=max(1, workers),
+                progress=progress,
+                cache=cache,
+            )
+    finally:
+        if cache is not None:
+            cache.close()
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from photo_tagger.ai import InferenceResult, analyze_image_with_ai
+from photo_tagger.cache import InferenceCache, hash_image_file
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
     DEFAULT_JPEG_QUALITY,
@@ -79,6 +80,7 @@ class _UsageAccumulator:
     total_tokens: int = 0
     inference_seconds: float = 0.0
     inference_calls: int = 0
+    cache_hits: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def add(self, result: InferenceResult) -> None:
@@ -90,6 +92,56 @@ class _UsageAccumulator:
             self.inference_seconds += result.seconds
             self.inference_calls += 1
 
+    def add_cache_hit(self) -> None:
+        """Count one photo that skipped the model call thanks to a cache hit."""
+        with self._lock:
+            self.cache_hits += 1
+
+
+def _resolve_inference(  # noqa: PLR0913 - cache lookup needs every model knob to call.
+    image_path: Path,
+    agent: Agent[None, GeneratedMetadata],
+    options: ProcessingOptions,
+    *,
+    contextual_prompt: str,
+    cache: InferenceCache | None,
+    usage: _UsageAccumulator | None,
+) -> tuple[InferenceResult, bool]:
+    """
+    Return ``(inference, from_cache)`` for *image_path*.
+
+    Hits the on-disk cache when one is provided and the photo's content hash
+    matches a prior entry recorded under the same model name. On miss, prepares
+    the JPEG bytes, calls the model, and writes the result back to the cache.
+    """
+    cache_key: str | None = None
+    if cache is not None:
+        cache_key = hash_image_file(image_path)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            logger.info("cache_hit", file=image_path.name)
+            if usage is not None:
+                usage.add_cache_hit()
+            return cached, True
+
+    jpeg_bytes = prepare_image_for_agent(
+        image_path,
+        jpg_quality=options.jpeg_quality,
+        max_size=options.jpeg_dimensions,
+    )
+    inference = analyze_image_with_ai(
+        image_bytes=jpeg_bytes,
+        agent=agent,
+        user_prompt=contextual_prompt,
+        temperature=options.temperature,
+        max_tokens=options.max_tokens,
+    )
+    if usage is not None:
+        usage.add(inference)
+    if cache is not None and cache_key is not None:
+        cache.put(cache_key, inference)
+    return inference, False
+
 
 def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions plus context.
     image_path: Path,
@@ -99,6 +151,7 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
     et: ExifToolHelper | None = None,
     user_prompt: str = DEFAULT_USER_PROMPT,
     usage: _UsageAccumulator | None = None,
+    cache: InferenceCache | None = None,
 ) -> bool:
     """
     Convert an image to JPEG bytes in memory, query the model, and persist metadata.
@@ -116,18 +169,15 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
         usage: Optional thread-safe accumulator. When given, the AI call's token counts
             and latency are folded into it. ``run_batch`` passes one shared accumulator
             so the BatchTotals at the end of the run reflect every photo.
+        cache: Optional InferenceCache. When supplied, the photo's content hash is
+            looked up first; a hit reuses the cached title/description/keywords and
+            skips both image preparation and the model call.
 
     Returns:
         True if every step succeeded, False if metadata writing failed.
 
     """
     logger.info("processing_photo")
-
-    jpeg_bytes = prepare_image_for_agent(
-        image_path,
-        jpg_quality=options.jpeg_quality,
-        max_size=options.jpeg_dimensions,
-    )
 
     with _helper(et) as helper:
         context = read_image_context(image_path, et=helper)
@@ -147,15 +197,14 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
             camera_info=context.camera_info,
         )
 
-        inference = analyze_image_with_ai(
-            image_bytes=jpeg_bytes,
-            agent=agent,
-            user_prompt=contextual_prompt,
-            temperature=options.temperature,
-            max_tokens=options.max_tokens,
+        inference, _from_cache = _resolve_inference(
+            image_path,
+            agent,
+            options,
+            contextual_prompt=contextual_prompt,
+            cache=cache,
+            usage=usage,
         )
-        if usage is not None:
-            usage.add(inference)
 
         title = inference.title
         description = inference.description
@@ -204,6 +253,7 @@ def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_
     et: ExifToolHelper | None = None,
     user_prompt: str = DEFAULT_USER_PROMPT,
     usage: _UsageAccumulator | None = None,
+    cache: InferenceCache | None = None,
 ) -> bool:
     """Run process_photo once with consistent logging and error handling."""
     context_kwargs: dict[str, Any] = {"file": image_file.name}
@@ -219,6 +269,7 @@ def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_
                 et=et,
                 user_prompt=user_prompt,
                 usage=usage,
+                cache=cache,
             )
         except Exception as exc:  # noqa: BLE001 - process_photo wraps several SDKs
             event = "processing_retry_exception" if retry else "processing_exception"
@@ -256,6 +307,7 @@ class BatchTotals:
     total_tokens: int = 0
     inference_seconds: float = 0.0
     inference_calls: int = 0
+    cache_hits: int = 0
     workers: int = 1
     dry_run: bool = False
 
@@ -285,6 +337,7 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
     on_success: OnSuccess | None,
     progress: ProgressCallback | None,
     usage: _UsageAccumulator | None,
+    cache: InferenceCache | None,
 ) -> tuple[int, list[Path], bool]:
     """
     Run *image_files* one after another in the calling thread.
@@ -308,6 +361,7 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
                 et=et,
                 user_prompt=user_prompt,
                 usage=usage,
+                cache=cache,
             )
         except KeyboardInterrupt:
             logger.warning("batch_interrupted_by_user", remaining=total - idx + 1)
@@ -338,6 +392,7 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
     workers: int,
     progress: ProgressCallback | None,
     usage: _UsageAccumulator | None,
+    cache: InferenceCache | None,
 ) -> tuple[int, list[Path], bool]:
     """
     Run *image_files* across a thread pool. Each task gets its own ExifToolHelper.
@@ -370,6 +425,7 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
                 et=None,
                 user_prompt=user_prompt,
                 usage=usage,
+                cache=cache,
             ): image_file
             for idx, image_file in indexed
         }
@@ -420,6 +476,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
     workers: int,
     progress: ProgressCallback | None,
     usage: _UsageAccumulator | None,
+    cache: InferenceCache | None,
 ) -> tuple[int, list[Path], bool]:
     """
     Run a single pass (initial or retry) over the batch.
@@ -447,6 +504,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
             on_success=on_success,
             progress=progress,
             usage=usage,
+            cache=cache,
         )
     return _run_pass_concurrent(
         image_files,
@@ -458,6 +516,7 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
         workers=workers,
         progress=progress,
         usage=usage,
+        cache=cache,
     )
 
 
@@ -471,6 +530,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
     workers: int = 1,
     progress: ProgressCallback | None = None,
     on_complete: OnComplete | None = None,
+    cache: InferenceCache | None = None,
 ) -> BatchTotals:
     """
     Run the initial pass plus a single retry pass and return summary totals.
@@ -508,6 +568,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
             workers=workers,
             progress=progress,
             usage=usage,
+            cache=cache,
         )
         if interrupted:
             # Don't retry after the user asked us to stop. Mark everything that
@@ -526,6 +587,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
                 workers=workers,
                 progress=progress,
                 usage=usage,
+                cache=cache,
             )
 
     totals = BatchTotals(
@@ -540,6 +602,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
         total_tokens=usage.total_tokens,
         inference_seconds=round(usage.inference_seconds, 3),
         inference_calls=usage.inference_calls,
+        cache_hits=usage.cache_hits,
         workers=workers,
         dry_run=options.dry_run,
     )
@@ -556,6 +619,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
         total_tokens=totals.total_tokens,
         inference_calls=totals.inference_calls,
         inference_seconds=totals.inference_seconds,
+        cache_hits=totals.cache_hits,
         dry_run=options.dry_run,
         workers=workers,
     )
