@@ -385,3 +385,24 @@ def test_cli_summary_file_written_on_completion(tmp_path: Path) -> None:
     assert payload["model"]  # provider/model fields are populated.
     assert "started_at" in payload
     assert "finished_at" in payload
+
+
+def test_cli_summary_file_creates_missing_parent_dir(tmp_path: Path) -> None:
+    """--summary-file pointing into a not-yet-existing folder is created transparently."""
+    from photo_tagger.pipeline import BatchTotals  # noqa: PLC0415 - test-local import.
+
+    image = _make_jpeg(tmp_path / "img.cr3")
+    nested = tmp_path / "reports" / "today" / "summary.json"
+    assert not nested.parent.exists()
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    fake_totals = BatchTotals(total_files=1, success=1, successful_files=[image.name])
+
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--summary-file", str(nested)])
+        captured["on_complete"](fake_totals)
+
+    assert nested.exists()
+    payload = json.loads(nested.read_text(encoding="utf-8"))
+    assert payload["total_files"] == 1

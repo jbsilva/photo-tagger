@@ -471,7 +471,11 @@ def _atomic_write_text(target: Path, text: str) -> None:
     Avoids leaving a half-written file on disk if the process is killed or the
     filesystem fills mid-write. The tmp file lives in the same directory so
     the rename is a same-filesystem op, which POSIX guarantees is atomic.
+
+    Creates the parent directory as needed so callers can point at a fresh
+    location like ``reports/run.json`` without pre-mkdir.
     """
+    target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(target)
