@@ -1,12 +1,15 @@
 """Tests for input discovery and skip-list handling."""
 
+import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from photo_tagger.discovery import (
+    apply_date_filter,
     apply_skip_file,
     apply_skip_tagged,
     filter_skipped_files,
@@ -200,6 +203,71 @@ def test_make_skip_list_appender_does_not_repeat_within_a_run(tmp_path: Path) ->
     appender(target)
     appender(target)
     assert skip_file.read_text(encoding="utf-8").splitlines() == ["IMG_0001.CR3"]
+
+
+def _set_mtime(path: Path, when: datetime) -> None:
+    """Stamp *path*'s mtime to *when* (UTC) so date-filter tests are deterministic."""
+    ts = when.timestamp()
+    os.utime(path, (ts, ts))
+
+
+def test_apply_date_filter_returns_input_when_no_bounds(tmp_path: Path) -> None:
+    """Neither bound set means no filtering happens at all."""
+    a = tmp_path / "a.cr3"
+    a.write_text("x")
+    assert apply_date_filter([a]) == [a]
+
+
+def test_apply_date_filter_drops_files_older_than_newer_than_bound(tmp_path: Path) -> None:
+    """--newer-than rejects files whose mtime is on or before the bound."""
+    old = tmp_path / "old.cr3"
+    new = tmp_path / "new.cr3"
+    old.write_text("x")
+    new.write_text("x")
+    boundary = datetime(2024, 1, 1, tzinfo=UTC)
+    _set_mtime(old, boundary - timedelta(days=1))
+    _set_mtime(new, boundary + timedelta(days=1))
+
+    kept = apply_date_filter([old, new], newer_than=boundary)
+    assert kept == [new]
+
+
+def test_apply_date_filter_drops_files_newer_than_older_than_bound(tmp_path: Path) -> None:
+    """--older-than rejects files whose mtime is on or after the bound."""
+    old = tmp_path / "old.cr3"
+    new = tmp_path / "new.cr3"
+    old.write_text("x")
+    new.write_text("x")
+    boundary = datetime(2024, 6, 1, tzinfo=UTC)
+    _set_mtime(old, boundary - timedelta(days=30))
+    _set_mtime(new, boundary + timedelta(days=30))
+
+    kept = apply_date_filter([old, new], older_than=boundary)
+    assert kept == [old]
+
+
+def test_apply_date_filter_supports_window(tmp_path: Path) -> None:
+    """Combining --newer-than and --older-than selects an open interval."""
+    before = tmp_path / "before.cr3"
+    inside = tmp_path / "inside.cr3"
+    after = tmp_path / "after.cr3"
+    for path in (before, inside, after):
+        path.write_text("x")
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    end = datetime(2024, 12, 31, tzinfo=UTC)
+    _set_mtime(before, start - timedelta(days=1))
+    _set_mtime(inside, datetime(2024, 6, 15, tzinfo=UTC))
+    _set_mtime(after, end + timedelta(days=1))
+
+    kept = apply_date_filter([before, inside, after], newer_than=start, older_than=end)
+    assert kept == [inside]
+
+
+def test_apply_date_filter_logs_warning_for_unreadable_stat(tmp_path: Path) -> None:
+    """A path that fails stat() is logged and skipped, not raised."""
+    ghost = tmp_path / "ghost.cr3"  # never created
+    kept = apply_date_filter([ghost], newer_than=datetime(2020, 1, 1, tzinfo=UTC))
+    assert kept == []
 
 
 def test_make_skip_list_appender_is_thread_safe(tmp_path: Path) -> None:

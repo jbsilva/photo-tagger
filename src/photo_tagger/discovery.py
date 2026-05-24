@@ -3,6 +3,7 @@
 import contextlib
 import os
 import threading
+from datetime import UTC, datetime
 from itertools import chain
 from typing import TYPE_CHECKING
 
@@ -173,6 +174,70 @@ def apply_skip_file(image_files: list[Path], skip_file: Path | None) -> list[Pat
     elif skip_entries:
         logger.warning("skip_list_matched_no_files", file=str(skip_file))
     return filtered
+
+
+def _file_mtime_utc(path: Path) -> datetime:
+    """Return the file's mtime as a UTC datetime."""
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+
+
+def _mtime_within_window(
+    mtime: datetime,
+    *,
+    newer_than: datetime | None,
+    older_than: datetime | None,
+) -> bool:
+    """Return True when *mtime* sits strictly inside the (newer_than, older_than) bounds."""
+    if newer_than is not None and mtime <= newer_than:
+        return False
+    return not (older_than is not None and mtime >= older_than)
+
+
+def apply_date_filter(
+    image_files: list[Path],
+    *,
+    newer_than: datetime | None = None,
+    older_than: datetime | None = None,
+) -> list[Path]:
+    """
+    Keep only files whose mtime falls within the (newer_than, older_than) window.
+
+    Both bounds are optional; either, both, or neither may be set. The comparison
+    uses file mtime (which most cameras preserve through copy) because reading
+    EXIF DateTimeOriginal off every image would mean another exiftool pass.
+
+    Args:
+        image_files: Files resolved by ``resolve_image_files``.
+        newer_than: Drop files whose mtime is on or before this instant.
+        older_than: Drop files whose mtime is on or after this instant.
+
+    Returns:
+        Filtered list preserving input order.
+
+    """
+    if newer_than is None and older_than is None:
+        return image_files
+
+    kept: list[Path] = []
+    for path in image_files:
+        try:
+            mtime = _file_mtime_utc(path)
+        except OSError as exc:
+            logger.warning("date_filter_stat_failed", file=str(path), error=str(exc))
+            continue
+        if _mtime_within_window(mtime, newer_than=newer_than, older_than=older_than):
+            kept.append(path)
+
+    skipped = len(image_files) - len(kept)
+    if skipped:
+        logger.info(
+            "date_filter_applied",
+            skipped=skipped,
+            remaining=len(kept),
+            newer_than=newer_than.isoformat() if newer_than else None,
+            older_than=older_than.isoformat() if older_than else None,
+        )
+    return kept
 
 
 def apply_skip_tagged(

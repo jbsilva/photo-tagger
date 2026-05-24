@@ -240,6 +240,35 @@ def test_cli_default_does_not_install_ndjson_emitter(tmp_path: Path) -> None:
     assert captured["on_image_result"] is None
 
 
+def test_cli_newer_than_filters_input_batch(tmp_path: Path) -> None:
+    """--newer-than parses the timestamp and drops files older than the bound."""
+    import os  # noqa: PLC0415 - test-local import.
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415 - test-local import.
+
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+    boundary = datetime(2024, 1, 1, tzinfo=UTC)
+    old_ts = (boundary - timedelta(days=10)).timestamp()
+    os.utime(image, (old_ts, old_ts))
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--newer-than", "2024-01-01"])
+
+    # The lone file is older than the bound so run_batch should never be invoked.
+    assert "image_files" not in captured
+
+
+def test_cli_rejects_malformed_newer_than(tmp_path: Path) -> None:
+    """--newer-than with a non-ISO string exits before scheduling work."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch, pytest.raises(SystemExit):
+        main_module.app(["--input", str(image), "--newer-than", "not-a-date"])
+
+
 _EXPECTED_TOTAL_TOKENS = 49
 
 

@@ -40,6 +40,7 @@ from photo_tagger.config import (
     LogLevel,
 )
 from photo_tagger.discovery import (
+    apply_date_filter,
     apply_skip_file,
     apply_skip_tagged,
     make_skip_list_appender,
@@ -205,6 +206,42 @@ class LogConfig:
 
 
 @dataclass
+class FilterConfig:
+    """Filters applied to the resolved file list before the pipeline runs."""
+
+    skip_tagged: Annotated[
+        bool,
+        Parameter(
+            name=("--skip-tagged",),
+            help=(
+                "Skip files whose image or XMP sidecar already has keywords, a description, "
+                "or a title (set by an earlier run, Lightroom, or another tool)"
+            ),
+        ),
+    ] = False
+    newer_than: Annotated[
+        str | None,
+        Parameter(
+            name=("--newer-than",),
+            help=(
+                "Drop files whose mtime is on or before this ISO 8601 timestamp "
+                "(e.g. 2024-01-01 or 2024-01-01T14:30). Naive timestamps are treated as UTC"
+            ),
+        ),
+    ] = None
+    older_than: Annotated[
+        str | None,
+        Parameter(
+            name=("--older-than",),
+            help=(
+                "Drop files whose mtime is on or after this ISO 8601 timestamp. "
+                "Combine with --newer-than to select a window"
+            ),
+        ),
+    ] = None
+
+
+@dataclass
 class DisplayConfig:
     """Stdout/stderr presentation toggles (progress bar, per-image NDJSON)."""
 
@@ -281,6 +318,7 @@ _DEFAULT_INFERENCE = InferenceConfig()
 _DEFAULT_LOG = LogConfig()
 _DEFAULT_DISPLAY = DisplayConfig()
 _DEFAULT_ARTIFACTS = ArtifactConfig()
+_DEFAULT_FILTER = FilterConfig()
 
 
 def _to_processing_options(output: OutputConfig, inference: InferenceConfig) -> ProcessingOptions:
@@ -354,6 +392,18 @@ class _NDJSONEmitter:
         with self._lock:
             self._stream.write(line)  # type: ignore[attr-defined]
             self._stream.flush()  # type: ignore[attr-defined]
+
+
+def _parse_filter_date(value: str | None, *, flag: str) -> datetime | None:
+    """Parse an ISO 8601 string from *flag* into a timezone-aware datetime, or None."""
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        logger.error("date_filter_parse_failed", flag=flag, value=value, error=str(exc))
+        raise SystemExit(1) from exc
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _atomic_write_text(target: Path, text: str) -> None:
@@ -487,16 +537,6 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             help="Process files in subdirectories recursively",
         ),
     ] = False,
-    skip_tagged: Annotated[
-        bool,
-        Parameter(
-            name=("--skip-tagged",),
-            help=(
-                "Skip files whose image or XMP sidecar already has keywords, a description, "
-                "or a title (set by an earlier run, Lightroom, or another tool)"
-            ),
-        ),
-    ] = False,
     workers: Annotated[
         int,
         Parameter(
@@ -508,6 +548,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             ),
         ),
     ] = 1,
+    filter_: Annotated[FilterConfig, Parameter(name="*")] = _DEFAULT_FILTER,
     display: Annotated[DisplayConfig, Parameter(name="*")] = _DEFAULT_DISPLAY,
     artifacts: Annotated[ArtifactConfig, Parameter(name="*")] = _DEFAULT_ARTIFACTS,
     provider: Annotated[ProviderConfig, Parameter(name="*")] = _DEFAULT_PROVIDER,
@@ -579,11 +620,13 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
     )
 
     options = _to_processing_options(output, inference)
+    newer_than = _parse_filter_date(filter_.newer_than, flag="--newer-than")
+    older_than = _parse_filter_date(filter_.older_than, flag="--older-than")
     _log_startup(
         inputs=inputs,
         skip_from=skip_from,
         append_to_skip_file=append_to_skip_file,
-        skip_tagged=skip_tagged,
+        skip_tagged=filter_.skip_tagged,
         image_extensions=image_extensions,
         recursive=recursive,
         workers=workers,
@@ -597,7 +640,12 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         resolve_image_batch(inputs, image_extensions, recursive=recursive),
         skip_from,
     )
-    image_files = apply_skip_tagged(image_files, skip_tagged=skip_tagged)
+    image_files = apply_date_filter(
+        image_files,
+        newer_than=newer_than,
+        older_than=older_than,
+    )
+    image_files = apply_skip_tagged(image_files, skip_tagged=filter_.skip_tagged)
     if not image_files:
         logger.info("no_files_to_process_after_skipping")
         return
