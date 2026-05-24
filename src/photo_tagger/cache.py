@@ -1,9 +1,11 @@
 """
 SQLite-backed cache for vision-language inference results.
 
-Keyed by (image content hash, model name) so reruns of the same folder skip the
-model call when both the bytes and the model are unchanged. Switching models
-naturally invalidates entries because the model name is part of the key.
+Keyed by (image content hash, namespace), where the namespace combines model
+name with a digest of every other input that influences output: base user
+prompt, sampling settings, JPEG quality/dimensions. Reruns with identical
+inputs skip the model call; reruns with any of those changed automatically
+land in a fresh namespace instead of replaying stale results.
 
 Persistence is a single SQLite file. SQLite handles atomicity and crash safety
 for us, so the only synchronization concern is the in-process lock that guards
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
 
 _HASH_DIGEST_BYTES = 16  # 128-bit BLAKE2b; collisions are not a realistic concern here.
 _HASH_READ_CHUNK = 64 * 1024
+_CONFIG_DIGEST_BYTES = 8  # short fingerprint, plenty for distinguishing configs.
 
 
 def hash_image_file(path: Path) -> str:
@@ -38,6 +41,34 @@ def hash_image_file(path: Path) -> str:
         for chunk in iter(lambda: fh.read(_HASH_READ_CHUNK), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def build_cache_namespace(  # noqa: PLR0913 - each kwarg is a distinct input to the digest.
+    model_name: str,
+    *,
+    user_prompt: str,
+    temperature: float,
+    max_tokens: int,
+    jpeg_dimensions: int,
+    jpeg_quality: int,
+) -> str:
+    """
+    Combine *model_name* with a digest of every other inference input.
+
+    The returned string is suitable as ``model_name`` for :class:`InferenceCache`.
+    Two runs that match on all six arguments share cache entries; if any of them
+    differs the digest changes and the cache treats them as separate namespaces.
+
+    The system prompt is intentionally NOT folded in: it ships with the code, so
+    a different system prompt means a new release, which is the right moment for
+    a stale cache to be re-validated by the user anyway.
+    """
+    h = hashlib.blake2b(digest_size=_CONFIG_DIGEST_BYTES)
+    payload = (
+        f"{user_prompt}\0t={temperature}\0n={max_tokens}\0d={jpeg_dimensions}\0q={jpeg_quality}"
+    )
+    h.update(payload.encode("utf-8"))
+    return f"{model_name}#{h.hexdigest()}"
 
 
 _SCHEMA = """

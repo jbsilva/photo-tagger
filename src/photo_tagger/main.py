@@ -29,7 +29,7 @@ from cyclopts import App, Parameter, validators
 from loguru import logger
 
 from photo_tagger.ai import create_agent
-from photo_tagger.cache import InferenceCache
+from photo_tagger.cache import InferenceCache, build_cache_namespace
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
     DEFAULT_JPEG_QUALITY,
@@ -718,8 +718,19 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         api_key=provider.api_key,
         retries=provider.retries,
     )
+    # Fold the prompt + sampling/JPEG settings into the cache namespace so a
+    # different configuration writes to a fresh slice instead of replaying
+    # stale entries generated under earlier settings.
+    cache_namespace = build_cache_namespace(
+        provider.model_name,
+        user_prompt=user_prompt,
+        temperature=inference.temperature,
+        max_tokens=inference.max_tokens,
+        jpeg_dimensions=inference.jpeg_dimensions,
+        jpeg_quality=inference.jpeg_quality,
+    )
     cache = (
-        InferenceCache(artifacts.cache_file, model_name=provider.model_name)
+        InferenceCache(artifacts.cache_file, model_name=cache_namespace)
         if artifacts.cache_file is not None
         else None
     )

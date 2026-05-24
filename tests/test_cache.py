@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from photo_tagger.ai import InferenceResult
-from photo_tagger.cache import InferenceCache, hash_image_file
+from photo_tagger.cache import InferenceCache, build_cache_namespace, hash_image_file
 
 
 if TYPE_CHECKING:
@@ -86,6 +86,70 @@ def test_inference_cache_replaces_existing_entry(tmp_path: Path) -> None:
         assert got.title == "New"
     finally:
         cache.close()
+
+
+def _baseline_namespace_kwargs() -> dict[str, object]:
+    """Shared keyword arguments for build_cache_namespace baseline assertions."""
+    return {
+        "user_prompt": "Describe the scene.",
+        "temperature": 0.2,
+        "max_tokens": 1200,
+        "jpeg_dimensions": 1280,
+        "jpeg_quality": 80,
+    }
+
+
+def test_build_cache_namespace_is_stable_for_same_inputs() -> None:
+    """Two calls with identical arguments return the same namespace string."""
+    kwargs = _baseline_namespace_kwargs()
+    a = build_cache_namespace("qwen/qwen3-vl-30b", **kwargs)  # type: ignore[arg-type]
+    b = build_cache_namespace("qwen/qwen3-vl-30b", **kwargs)  # type: ignore[arg-type]
+    assert a == b
+    assert a.startswith("qwen/qwen3-vl-30b#")
+
+
+def test_build_cache_namespace_changes_with_each_input() -> None:
+    """Changing any single argument produces a distinct namespace."""
+    baseline = build_cache_namespace(
+        "qwen/qwen3-vl-30b",
+        **_baseline_namespace_kwargs(),  # type: ignore[arg-type]
+    )
+
+    variants = [
+        {"user_prompt": "Different prompt."},
+        {"temperature": 0.9},
+        {"max_tokens": 800},
+        {"jpeg_dimensions": 2048},
+        {"jpeg_quality": 95},
+    ]
+    seen = {baseline}
+    for override in variants:
+        kwargs = _baseline_namespace_kwargs() | override
+        ns = build_cache_namespace("qwen/qwen3-vl-30b", **kwargs)  # type: ignore[arg-type]
+        assert ns not in seen, f"namespace collision on override {override}: {ns}"
+        seen.add(ns)
+
+
+def test_inference_cache_namespace_isolates_configs(tmp_path: Path) -> None:
+    """A hash stored under one namespace is invisible under a different one."""
+    db = tmp_path / "cache.sqlite3"
+    ns_a = build_cache_namespace("m", **_baseline_namespace_kwargs())  # type: ignore[arg-type]
+    ns_b = build_cache_namespace(
+        "m",
+        **(_baseline_namespace_kwargs() | {"temperature": 0.9}),  # type: ignore[arg-type]
+    )
+    c_a = InferenceCache(db, model_name=ns_a)
+    try:
+        c_a.put("hash-1", _sample_result(title="under-a"))
+    finally:
+        c_a.close()
+
+    c_b = InferenceCache(db, model_name=ns_b)
+    try:
+        # The same hash under a config with a different temperature must miss.
+        assert c_b.get("hash-1") is None
+    finally:
+        c_b.close()
 
 
 def test_inference_cache_is_thread_safe(tmp_path: Path) -> None:
