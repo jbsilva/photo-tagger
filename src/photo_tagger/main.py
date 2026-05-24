@@ -24,7 +24,7 @@ import threading
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Protocol
 
 from cyclopts import App, Parameter, validators
 from loguru import logger
@@ -369,6 +369,18 @@ def _read_prompt_file(prompt_file: Path | None) -> str:
     return text
 
 
+class _TextSink(Protocol):
+    """
+    Minimal text-output interface the NDJSON emitter relies on.
+
+    ``sys.stdout`` and ``io.StringIO`` both satisfy this without any extra glue,
+    so tests can pass a buffer and the production path uses the real stream.
+    """
+
+    def write(self, s: str, /) -> int: ...
+    def flush(self) -> None: ...
+
+
 class _NDJSONEmitter:
     """
     Thread-safe ``on_image_result`` callback that writes NDJSON to a stream.
@@ -381,10 +393,10 @@ class _NDJSONEmitter:
     __slots__ = ("_lock", "_stream")
 
     _lock: threading.Lock
-    _stream: object
+    _stream: _TextSink
 
-    def __init__(self, stream: object) -> None:
-        """Wrap *stream* (expected to have ``write`` and ``flush`` methods)."""
+    def __init__(self, stream: _TextSink) -> None:
+        """Wrap *stream* (any object exposing ``write`` and ``flush``)."""
         self._stream = stream
         self._lock = threading.Lock()
 
@@ -405,8 +417,8 @@ class _NDJSONEmitter:
         }
         line = json.dumps(payload, ensure_ascii=False) + "\n"
         with self._lock:
-            self._stream.write(line)  # type: ignore[attr-defined]
-            self._stream.flush()  # type: ignore[attr-defined]
+            self._stream.write(line)
+            self._stream.flush()
 
 
 def _open_cache(path: Path | None, *, namespace: str) -> InferenceCache | None:

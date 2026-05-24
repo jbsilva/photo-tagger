@@ -78,6 +78,16 @@ Key options:
 - `--prompt-file PATH` – override the default user prompt with the contents of `PATH`
 - `--summary-file PATH` – write a JSON run summary (token usage, success/failure counts) to
   `PATH` on completion
+- `--cache-file PATH` – persistent SQLite cache of model outputs keyed by image content hash
+  and model+prompt+settings. Reruns skip the model call when nothing relevant has changed
+- `--lock-file PATH` – acquire an exclusive POSIX flock on `PATH` before running and refuse
+  to start if another `photo-tagger` already holds it (prevents two runs racing on the same
+  folder)
+- `--json` – emit one NDJSON line per processed photo to stdout (file, status, title,
+  description, keywords, token usage, cache flag); logs and progress stay on stderr so you
+  can pipe straight into `jq` or your own tools
+- `--newer-than DATE` / `--older-than DATE` – filter the input batch by file mtime. Accepts
+  ISO 8601 like `2024-01-01` or `2024-01-01T14:30`; naive timestamps use local time
 - `--jpeg-dimensions`, `--jpeg-quality`, `--temperature`, `--max-tokens`, `--retries` – control
   inference behavior
 
@@ -157,6 +167,26 @@ Use a custom prompt tuned for wildlife photography:
 
 ```bash
 photo-tagger -i ./shoot --prompt-file prompts/wildlife.txt --max-keywords 12
+```
+
+Cache model outputs so reruns on the same folder skip the inference cost:
+
+```bash
+photo-tagger -i ~/Pictures/Shoot -r --cache-file ~/.cache/photo-tagger.db
+```
+
+Tag only photos from a specific trip and stream NDJSON for downstream tools:
+
+```bash
+photo-tagger -i ~/Pictures/Camera -r \
+  --newer-than 2026-04-01 --older-than 2026-05-01 \
+  --json --no-progress | jq -c 'select(.status == "ok") | {file, title}'
+```
+
+Refuse to start if another run is already in flight on this folder:
+
+```bash
+photo-tagger -i ~/Pictures/Camera --lock-file /tmp/photo-tagger.lock
 ```
 
 ## Logging
