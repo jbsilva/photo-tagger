@@ -402,3 +402,38 @@ def test_run_batch_swallows_on_complete_errors(tmp_path: Path) -> None:
             on_complete=boom,
         )
     assert totals.success == 1
+
+
+def test_run_batch_serial_handles_keyboard_interrupt(tmp_path: Path) -> None:
+    """Ctrl-C in the serial path stops scheduling and lands remaining files in failed."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(3)]
+    for f in files:
+        f.write_text("x")
+
+    call_count = {"n": 0}
+    interrupt_after = 1
+
+    def fake_process_photo(*_args: Any, **_kwargs: Any) -> bool:  # noqa: ANN401
+        call_count["n"] += 1
+        if call_count["n"] > interrupt_after:
+            raise KeyboardInterrupt
+        return True
+
+    received_totals: list[Any] = []
+    with (
+        patch("photo_tagger.pipeline.process_photo", side_effect=fake_process_photo),
+        pytest.raises(SystemExit),
+    ):
+        run_batch(
+            files,
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            on_complete=received_totals.append,
+        )
+
+    totals = received_totals[0]
+    assert totals.success == interrupt_after
+    # The two photos after the first should appear as failed so a future
+    # --skip-from rerun can pick them up. on_complete still fires so a
+    # --summary-file is written even when the run was aborted.
+    assert len(totals.failed_files) >= 1

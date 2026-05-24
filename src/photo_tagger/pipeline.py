@@ -285,22 +285,34 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
     on_success: OnSuccess | None,
     progress: ProgressCallback | None,
     usage: _UsageAccumulator | None,
-) -> tuple[int, list[Path]]:
-    """Run *image_files* one after another in the calling thread."""
+) -> tuple[int, list[Path], bool]:
+    """
+    Run *image_files* one after another in the calling thread.
+
+    A ``KeyboardInterrupt`` raised between photos stops the pass and returns
+    ``(successes, still-pending, interrupted=True)`` so the caller can still
+    emit a BatchTotals + summary file. Photos that were not yet attempted land
+    in the failed list so they show up in the summary too.
+    """
     total = len(image_files)
     successes = 0
     failed: list[Path] = []
     for idx, image_file in enumerate(image_files, start=1):
-        ok = execute_process(
-            image_file,
-            agent,
-            options,
-            index=f"{idx}/{total}",
-            retry=retry,
-            et=et,
-            user_prompt=user_prompt,
-            usage=usage,
-        )
+        try:
+            ok = execute_process(
+                image_file,
+                agent,
+                options,
+                index=f"{idx}/{total}",
+                retry=retry,
+                et=et,
+                user_prompt=user_prompt,
+                usage=usage,
+            )
+        except KeyboardInterrupt:
+            logger.warning("batch_interrupted_by_user", remaining=total - idx + 1)
+            failed.extend(image_files[idx - 1 :])
+            return successes, failed, True
         if ok:
             successes += 1
             _notify_success(on_success, image_file)
@@ -312,7 +324,7 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
             failed.append(image_file)
         if progress is not None:
             progress(image_file, ok)
-    return successes, failed
+    return successes, failed, False
 
 
 def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_process.
@@ -326,20 +338,27 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
     workers: int,
     progress: ProgressCallback | None,
     usage: _UsageAccumulator | None,
-) -> tuple[int, list[Path]]:
+) -> tuple[int, list[Path], bool]:
     """
     Run *image_files* across a thread pool. Each task gets its own ExifToolHelper.
 
     pyexiftool's -stay_open subprocess uses one stdin/stdout pipe per helper, so a
     helper cannot be shared across threads safely. Each task receives et=None and
     process_photo opens a short-lived helper for the duration of one photo.
+
+    A ``KeyboardInterrupt`` during the as_completed loop cancels pending futures
+    and returns ``(successes, still-pending, interrupted=True)``. Already in-flight
+    workers cannot be interrupted from the outside, so this is a best-effort
+    quick stop rather than an instant abort.
     """
     total = len(image_files)
     successes = 0
     failed: list[Path] = []
+    interrupted = False
     indexed = list(enumerate(image_files, start=1))
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
         future_to_image = {
             pool.submit(
                 execute_process,
@@ -354,30 +373,39 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
             ): image_file
             for idx, image_file in indexed
         }
-        for future in as_completed(future_to_image):
-            image_file = future_to_image[future]
-            try:
-                ok = future.result()
-            except Exception as exc:  # noqa: BLE001 - any worker error is a per-file failure.
-                logger.exception(
-                    "concurrent_worker_exception",
-                    file=image_file.name,
-                    error=str(exc),
-                )
-                ok = False
+        try:
+            for future in as_completed(future_to_image):
+                image_file = future_to_image[future]
+                try:
+                    ok = future.result()
+                except Exception as exc:  # noqa: BLE001 - per-file failure stays per-file.
+                    logger.exception(
+                        "concurrent_worker_exception",
+                        file=image_file.name,
+                        error=str(exc),
+                    )
+                    ok = False
 
-            if ok:
-                successes += 1
-                _notify_success(on_success, image_file)
-            elif retry:
-                logger.error("file_failed_after_retry", file=image_file.name)
-                failed.append(image_file)
-            else:
-                logger.warning("file_queued_for_retry", file=image_file.name)
-                failed.append(image_file)
-            if progress is not None:
-                progress(image_file, ok)
-    return successes, failed
+                if ok:
+                    successes += 1
+                    _notify_success(on_success, image_file)
+                elif retry:
+                    logger.error("file_failed_after_retry", file=image_file.name)
+                    failed.append(image_file)
+                else:
+                    logger.warning("file_queued_for_retry", file=image_file.name)
+                    failed.append(image_file)
+                if progress is not None:
+                    progress(image_file, ok)
+        except KeyboardInterrupt:
+            interrupted = True
+            pending = [img for fut, img in future_to_image.items() if not fut.done()]
+            logger.warning("batch_interrupted_by_user", pending=len(pending))
+            failed.extend(pending)
+            pool.shutdown(wait=False, cancel_futures=True)
+    finally:
+        pool.shutdown(wait=True)
+    return successes, failed, interrupted
 
 
 def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
@@ -392,16 +420,18 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
     workers: int,
     progress: ProgressCallback | None,
     usage: _UsageAccumulator | None,
-) -> tuple[int, list[Path]]:
+) -> tuple[int, list[Path], bool]:
     """
     Run a single pass (initial or retry) over the batch.
 
-    Returns (success_count, still_failing). The first pass logs failures with
-    ``file_queued_for_retry``; the retry pass logs them with ``file_failed_after_retry``.
-    Dispatches to the serial or concurrent worker depending on *workers*.
+    Returns ``(success_count, still_failing, interrupted)``. The first pass logs
+    failures with ``file_queued_for_retry``; the retry pass logs them with
+    ``file_failed_after_retry``. The interrupted flag is True if a Ctrl-C caused
+    the pass to abort early; the caller uses it to skip the retry pass and to
+    mark the run as a partial completion.
     """
     if not image_files:
-        return 0, []
+        return 0, [], False
 
     if retry:
         logger.info("retrying_failed_files", count=len(image_files))
@@ -467,7 +497,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
             on_success(path)
 
     with _helper(None) if workers <= 1 else _no_helper() as et:
-        success, pending = _run_pass(
+        success, pending, interrupted = _run_pass(
             image_files,
             agent,
             options,
@@ -479,18 +509,24 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
             progress=progress,
             usage=usage,
         )
-        retry_successes, still_failing = _run_pass(
-            pending,
-            agent,
-            options,
-            retry=True,
-            et=et,
-            user_prompt=user_prompt,
-            on_success=_record_success,
-            workers=workers,
-            progress=progress,
-            usage=usage,
-        )
+        if interrupted:
+            # Don't retry after the user asked us to stop. Mark everything that
+            # was still pending as failed so the summary file reflects reality.
+            retry_successes = 0
+            still_failing = pending
+        else:
+            retry_successes, still_failing, _ = _run_pass(
+                pending,
+                agent,
+                options,
+                retry=True,
+                et=et,
+                user_prompt=user_prompt,
+                on_success=_record_success,
+                workers=workers,
+                progress=progress,
+                usage=usage,
+            )
 
     totals = BatchTotals(
         total_files=len(image_files),
