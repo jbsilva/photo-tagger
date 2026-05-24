@@ -7,6 +7,7 @@ from photo_tagger.metadata import (
     _block_has_indicator,
     _build_write_payload,
     _coerce_to_list,
+    _dedup_preserving_first_case,
     _value_is_present,
     build_contextual_prompt,
     find_tagged_images,
@@ -42,6 +43,22 @@ def test_coerce_to_list_handles_scalar_and_iterable() -> None:
     assert _coerce_to_list("") == []
     assert _coerce_to_list(["a", "", " "]) == ["a"]
     assert _coerce_to_list(("a", "b")) == ["a", "b"]
+
+
+def test_dedup_preserving_first_case_collapses_case_duplicates() -> None:
+    """Duplicates that differ only by case are folded into the first-seen casing."""
+    out = _dedup_preserving_first_case(["Bird", "bird", "BIRD", "Beach"])
+    assert out == ["Bird", "Beach"]
+
+
+def test_dedup_preserving_first_case_preserves_order() -> None:
+    """Unique entries appear in their original order."""
+    assert _dedup_preserving_first_case(["b", "a", "c"]) == ["b", "a", "c"]
+
+
+def test_dedup_preserving_first_case_handles_empty() -> None:
+    """An empty input returns an empty list, not None."""
+    assert _dedup_preserving_first_case([]) == []
 
 
 def test_build_contextual_prompt_with_no_metadata_returns_base() -> None:
@@ -189,6 +206,31 @@ def test_read_image_context_batches_keywords_location_camera_and_gps(tmp_path: P
     assert context.gps_position == "38.7 N, 9.1 W"
     # The whole point of batching is one IPC call - assert exactly one.
     assert fake_helper.get_tags.call_count == 1
+
+
+def test_read_image_context_collapses_case_duplicates_across_blocks(tmp_path: Path) -> None:
+    """A keyword present in both XMP and IPTC with different casing collapses to one."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+
+    fake_helper = MagicMock()
+    fake_helper.__enter__.return_value = fake_helper
+    fake_helper.__exit__.return_value = False
+    # First block stands in for the image, second for an XMP sidecar that
+    # disagrees on case. Both should not survive the dedup at read time.
+    fake_helper.get_tags.return_value = [
+        {"XMP:Subject": ["Bird"], "IPTC:Keywords": ["bird"]},
+        {"XMP:Subject": ["BIRD", "Beach"]},
+    ]
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        context = read_image_context(img)
+
+    # First-seen casing wins; "Beach" survives once.
+    assert context.existing_keywords["subject"] == ["Bird", "Beach"]
 
 
 def test_read_image_context_returns_empty_when_no_targets(tmp_path: Path) -> None:

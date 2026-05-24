@@ -106,6 +106,26 @@ def _empty_keyword_buckets() -> dict[str, list[str]]:
     return {"subject": [], "hierarchical": [], "weighted": []}
 
 
+def _dedup_preserving_first_case(values: list[str]) -> list[str]:
+    """
+    Return *values* with case-insensitive duplicates collapsed, first-seen casing kept.
+
+    Photos often carry the same keyword in both XMP-dc:Subject and IPTC:Keywords with
+    different casing (``Bird`` vs ``bird``). Exact-match dedup leaves both, and the
+    writer faithfully replays the duplicate back to disk. Compare on casefold instead
+    so the output keyword list reflects what Lightroom would consider distinct.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+    return out
+
+
 def _accumulate_keyword_blocks(
     blocks: list[dict[str, Any]],
     result: dict[str, list[str]],
@@ -164,7 +184,7 @@ def read_existing_keywords(
 
     for key, values in result.items():
         if values:
-            result[key] = list(dict.fromkeys(values))
+            result[key] = _dedup_preserving_first_case(values)
 
     logger.debug(
         "existing_keywords_read",
@@ -364,7 +384,7 @@ def read_image_context(
     _accumulate_keyword_blocks(blocks, existing_keywords)
     for key, values in existing_keywords.items():
         if values:
-            existing_keywords[key] = list(dict.fromkeys(values))
+            existing_keywords[key] = _dedup_preserving_first_case(values)
 
     location_tags = _extract_named_tags(blocks, LOCATION_TAGS)
     camera_info = _extract_named_tags(blocks, CAMERA_TAGS)

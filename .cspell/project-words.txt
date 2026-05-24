@@ -11,6 +11,7 @@ CREAT
 cyclopts
 Cyclopts
 debugpy
+dedup
 delenv
 docstrings
 EDITMSG
