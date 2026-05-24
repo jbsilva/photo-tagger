@@ -473,6 +473,56 @@ def test_process_photo_writes_to_cache_on_miss(
     assert stored.title == "Title"
 
 
+def test_process_photo_survives_cache_get_raising(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A broken cache.get is treated as a miss; the photo still gets written."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    class _ExplodingCache:
+        def __init__(self) -> None:
+            self.put_calls = 0
+
+        def get(self, _key: str) -> None:
+            msg = "database is locked"
+            raise RuntimeError(msg)
+
+        def put(self, *_args: Any, **_kwargs: Any) -> None:  # noqa: ANN401
+            self.put_calls += 1
+
+    cache = _ExplodingCache()
+    ok = process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions(), cache=cache)  # type: ignore[arg-type]
+
+    assert ok is True
+    patched_pipeline["analyze"].assert_called_once()
+    # The hash succeeded, get raised, put is still attempted with the fresh result.
+    assert cache.put_calls == 1
+
+
+def test_process_photo_survives_cache_put_raising(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A broken cache.put is logged and swallowed; the photo still succeeds."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    class _PutExploder:
+        def get(self, _key: str) -> None:
+            return None
+
+        def put(self, *_args: Any, **_kwargs: Any) -> None:  # noqa: ANN401
+            msg = "disk full"
+            raise OSError(msg)
+
+    ok = process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions(), cache=_PutExploder())  # type: ignore[arg-type]
+
+    assert ok is True
+    patched_pipeline["write"].assert_called_once()
+
+
 def test_run_batch_serial_handles_keyboard_interrupt(tmp_path: Path) -> None:
     """Ctrl-C in the serial path stops scheduling and lands remaining files in failed."""
     files = [tmp_path / f"img{i}.cr3" for i in range(3)]

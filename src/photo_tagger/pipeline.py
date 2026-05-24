@@ -123,6 +123,44 @@ class _UsageAccumulator:
             self.cache_hits += 1
 
 
+def _cache_lookup(
+    cache: InferenceCache,
+    image_path: Path,
+) -> tuple[str | None, InferenceResult | None]:
+    """
+    Look up *image_path* in *cache*; return ``(cache_key, hit_or_none)``.
+
+    A failure to hash the source file or read from the cache is logged and
+    treated as a miss, never raised. ``cache_key`` is ``None`` when hashing
+    failed, signaling the caller to skip ``put`` as well.
+    """
+    try:
+        cache_key = hash_image_file(image_path)
+    except OSError as exc:
+        logger.warning("inference_cache_hash_failed", file=image_path.name, error=str(exc))
+        return None, None
+    try:
+        cached = cache.get(cache_key)
+    except Exception as exc:  # noqa: BLE001 - sqlite errors must not abort the photo.
+        logger.warning("inference_cache_get_failed", file=image_path.name, error=str(exc))
+        return cache_key, None
+    return cache_key, cached
+
+
+def _cache_store(
+    cache: InferenceCache,
+    cache_key: str,
+    inference: InferenceResult,
+    *,
+    file_name: str,
+) -> None:
+    """Store *inference* under *cache_key*, logging and swallowing any storage error."""
+    try:
+        cache.put(cache_key, inference)
+    except Exception as exc:  # noqa: BLE001 - sqlite errors must not abort the photo.
+        logger.warning("inference_cache_put_failed", file=file_name, error=str(exc))
+
+
 def _resolve_inference(  # noqa: PLR0913 - cache lookup needs every model knob to call.
     image_path: Path,
     agent: Agent[None, GeneratedMetadata],
@@ -136,13 +174,16 @@ def _resolve_inference(  # noqa: PLR0913 - cache lookup needs every model knob t
     Return ``(inference, from_cache)`` for *image_path*.
 
     Hits the on-disk cache when one is provided and the photo's content hash
-    matches a prior entry recorded under the same model name. On miss, prepares
+    matches a prior entry recorded under the same namespace. On miss, prepares
     the JPEG bytes, calls the model, and writes the result back to the cache.
+
+    Cache I/O failures are logged at warning level but never raised: a broken
+    SQLite file or full disk degrades the run to "no cache" without aborting
+    photos that the model would otherwise process successfully.
     """
     cache_key: str | None = None
     if cache is not None:
-        cache_key = hash_image_file(image_path)
-        cached = cache.get(cache_key)
+        cache_key, cached = _cache_lookup(cache, image_path)
         if cached is not None:
             logger.info("cache_hit", file=image_path.name)
             if usage is not None:
@@ -164,7 +205,7 @@ def _resolve_inference(  # noqa: PLR0913 - cache lookup needs every model knob t
     if usage is not None:
         usage.add(inference)
     if cache is not None and cache_key is not None:
-        cache.put(cache_key, inference)
+        _cache_store(cache, cache_key, inference, file_name=image_path.name)
     return inference, False
 
 
