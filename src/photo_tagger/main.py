@@ -15,6 +15,7 @@ Requirements:
 
 """
 
+import contextlib
 import json
 import os
 import sys
@@ -46,6 +47,7 @@ from photo_tagger.discovery import (
     make_skip_list_appender,
     resolve_image_batch,
 )
+from photo_tagger.locking import FileLock, LockHeldError
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
@@ -305,6 +307,18 @@ class ArtifactConfig:
                 "SQLite cache of model outputs keyed by image content hash and model name. "
                 "Reruns that point at the same photos with the same model skip the model "
                 "call entirely. Created if missing; safe to delete to clear the cache"
+            ),
+        ),
+    ] = None
+    lock_file: Annotated[
+        Path | None,
+        Parameter(
+            name=("--lock-file",),
+            validator=validators.Path(file_okay=True, dir_okay=False),
+            help=(
+                "Acquire an exclusive POSIX flock on this path before running. Refuses "
+                "to start if another photo-tagger process holds the same lock, preventing "
+                "two runs from racing on the same folder. POSIX-only"
             ),
         ),
     ] = None
@@ -619,6 +633,52 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         log_folder=log.log_folder,
     )
 
+    with contextlib.ExitStack() as stack:
+        if artifacts.lock_file is not None:
+            try:
+                stack.enter_context(FileLock(artifacts.lock_file))
+            except LockHeldError as exc:
+                logger.error(
+                    "lock_held_by_other_process",
+                    file=str(artifacts.lock_file),
+                    error=str(exc),
+                )
+                raise SystemExit(1) from exc
+
+        _tag_inside_lock(
+            inputs=inputs,
+            skip_from=skip_from,
+            append_to_skip_file=append_to_skip_file,
+            image_extensions=image_extensions,
+            recursive=recursive,
+            workers=workers,
+            filter_=filter_,
+            display=display,
+            artifacts=artifacts,
+            provider=provider,
+            output=output,
+            inference=inference,
+            log=log,
+        )
+
+
+def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one.
+    *,
+    inputs: list[Path] | None,
+    skip_from: Path | None,
+    append_to_skip_file: Path | None,
+    image_extensions: str,
+    recursive: bool,
+    workers: int,
+    filter_: FilterConfig,
+    display: DisplayConfig,
+    artifacts: ArtifactConfig,
+    provider: ProviderConfig,
+    output: OutputConfig,
+    inference: InferenceConfig,
+    log: LogConfig,
+) -> None:
+    """Body of ``tag`` that runs once the optional file lock has been acquired."""
     options = _to_processing_options(output, inference)
     newer_than = _parse_filter_date(filter_.newer_than, flag="--newer-than")
     older_than = _parse_filter_date(filter_.older_than, flag="--older-than")

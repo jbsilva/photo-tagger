@@ -269,6 +269,23 @@ def test_cli_rejects_malformed_newer_than(tmp_path: Path) -> None:
         main_module.app(["--input", str(image), "--newer-than", "not-a-date"])
 
 
+def test_cli_lock_file_blocks_second_run(tmp_path: Path) -> None:
+    """A second --lock-file invocation while another holds the lock exits with code 1."""
+    from photo_tagger.locking import FileLock  # noqa: PLC0415 - test-local import.
+
+    image = _make_jpeg(tmp_path / "img.cr3")
+    lock_path = tmp_path / "run.lock"
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    # Hold the lock in this thread, then invoke the CLI which should fail to acquire.
+    with FileLock(lock_path), setup, create_agent, run_batch, pytest.raises(SystemExit):
+        main_module.app(["--input", str(image), "--lock-file", str(lock_path)])
+
+    # run_batch never ran because the CLI bailed out at lock acquisition.
+    assert "image_files" not in captured
+
+
 _EXPECTED_TOTAL_TOKENS = 49
 
 
