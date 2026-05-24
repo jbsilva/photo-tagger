@@ -32,6 +32,18 @@ if TYPE_CHECKING:
 
 ProviderName = Literal["ollama", "lmstudio"]
 
+# Cap on the response body included in failure logs. A misconfigured provider
+# can return an entire HTML page (or paste back the request including an
+# Authorization header), and we do not want a multi-MB string in the log file.
+_MAX_LOGGED_BODY_CHARS = 500
+
+
+def _truncate_for_log(text: str, *, limit: int = _MAX_LOGGED_BODY_CHARS) -> str:
+    """Return *text* trimmed to *limit* chars with a tail marker on overflow."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"... [{len(text) - limit} more chars]"
+
 
 def _validate_listing_url(url: str, *, event_prefix: str) -> None:
     """Reject malformed URLs before we hit the network."""
@@ -60,7 +72,7 @@ def _fetch_listing(url: str, api_key: str | None, *, event_prefix: str) -> dict[
             f"{event_prefix}_failed",
             status=response.status_code,
             url=url,
-            body=response.text,
+            body=_truncate_for_log(response.text),
         )
         raise SystemExit(1)
 

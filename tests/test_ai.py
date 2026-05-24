@@ -63,6 +63,21 @@ def test_fetch_lmstudio_models_handles_non_ok_response(monkeypatch: pytest.Monke
         ai_module._fetch_lmstudio_models("http://localhost:1234/v1/models", None)  # noqa: SLF001
 
 
+def test_truncate_for_log_caps_long_bodies() -> None:
+    """A response body well past the cap is shortened with an overflow marker."""
+    body = "x" * 5_000
+    out = ai_module._truncate_for_log(body)  # noqa: SLF001
+    assert len(out) < len(body)
+    assert out.startswith("x" * 100)
+    assert "more chars" in out
+
+
+def test_truncate_for_log_passes_short_bodies_through() -> None:
+    """Short bodies are returned unchanged so the log stays useful for tiny errors."""
+    body = "model not found"
+    assert ai_module._truncate_for_log(body) == body  # noqa: SLF001
+
+
 def test_fetch_lmstudio_models_handles_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 200 response with malformed JSON is also fatal."""
 

@@ -16,6 +16,7 @@ Requirements:
 """
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -241,6 +242,19 @@ def _read_prompt_file(prompt_file: Path | None) -> str:
     return text
 
 
+def _atomic_write_text(target: Path, text: str) -> None:
+    """
+    Write *text* to *target* via a sibling tmp file + Path.replace.
+
+    Avoids leaving a half-written file on disk if the process is killed or the
+    filesystem fills mid-write. The tmp file lives in the same directory so
+    the rename is a same-filesystem op, which POSIX guarantees is atomic.
+    """
+    tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(target)
+
+
 def _write_summary_file(  # noqa: PLR0913 - distinct optional fields are clearer as kwargs.
     summary_file: Path | None,
     totals: BatchTotals | None,
@@ -262,7 +276,7 @@ def _write_summary_file(  # noqa: PLR0913 - distinct optional fields are clearer
         **asdict(totals),
     }
     try:
-        summary_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_text(summary_file, json.dumps(payload, indent=2) + "\n")
     except OSError as exc:
         logger.error("summary_file_write_failed", file=str(summary_file), error=str(exc))
         return

@@ -18,6 +18,7 @@ exiftool
 Exiftool
 fromarray
 fstrings
+getpid
 getpixel
 gpgconf
 httpx
