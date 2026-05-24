@@ -2,6 +2,7 @@
 
 import contextlib
 import os
+import threading
 from itertools import chain
 from typing import TYPE_CHECKING
 
@@ -212,6 +213,10 @@ def make_skip_list_appender(skip_file: Path | None) -> Callable[[Path], None] | 
     Existing entries are preserved; duplicates are not appended a second time. The file is
     created if it does not exist yet, so the same path can also be passed to
     ``--skip-from`` on later runs to short-circuit work that already completed.
+
+    The returned callback is safe to invoke from worker threads: a per-callback lock
+    serializes the membership check, the file write, and the seen-set update so we
+    never get interleaved writes or duplicate lines under ``--workers > 1``.
     """
     if skip_file is None:
         return None
@@ -238,22 +243,25 @@ def make_skip_list_appender(skip_file: Path | None) -> Callable[[Path], None] | 
         # Touch the parent directory check; let open() handle creation lazily on first write.
         logger.info("append_skip_file_will_be_created", file=str(skip_file))
 
+    lock = threading.Lock()
+
     def append(image_path: Path) -> None:
         name = image_path.name
-        if name in seen:
-            return
-        try:
-            with skip_file.open("a", encoding="utf-8") as handle:
-                handle.write(name + "\n")
-        except OSError as exc:
-            logger.warning(
-                "append_skip_file_write_failed",
-                file=str(skip_file),
-                entry=name,
-                error=str(exc),
-            )
-            return
-        seen.add(name)
+        with lock:
+            if name in seen:
+                return
+            try:
+                with skip_file.open("a", encoding="utf-8") as handle:
+                    handle.write(name + "\n")
+            except OSError as exc:
+                logger.warning(
+                    "append_skip_file_write_failed",
+                    file=str(skip_file),
+                    entry=name,
+                    error=str(exc),
+                )
+                return
+            seen.add(name)
         logger.debug("appended_to_skip_file", file=str(skip_file), entry=name)
 
     return append

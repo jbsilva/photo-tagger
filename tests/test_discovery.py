@@ -1,5 +1,6 @@
 """Tests for input discovery and skip-list handling."""
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -199,3 +200,23 @@ def test_make_skip_list_appender_does_not_repeat_within_a_run(tmp_path: Path) ->
     appender(target)
     appender(target)
     assert skip_file.read_text(encoding="utf-8").splitlines() == ["IMG_0001.CR3"]
+
+
+def test_make_skip_list_appender_is_thread_safe(tmp_path: Path) -> None:
+    """Under concurrent writes the file contains exactly one entry per unique name."""
+    skip_file = tmp_path / "processed.txt"
+    appender = make_skip_list_appender(skip_file)
+    assert appender is not None
+
+    image_count = 50
+    duplicates_per_image = 4
+    paths = [tmp_path / f"IMG_{i:04d}.CR3" for i in range(image_count)]
+    schedule = paths * duplicates_per_image
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(appender, schedule))
+
+    lines = skip_file.read_text(encoding="utf-8").splitlines()
+    # No interleaved/partial lines, no duplicate names, no missing names.
+    assert sorted(lines) == sorted(p.name for p in paths)
+    assert len(set(lines)) == image_count
