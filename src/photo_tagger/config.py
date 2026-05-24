@@ -75,8 +75,10 @@ TAG_XMP_SUBJECT = "XMP:Subject"
 TAG_XMP_HIERARCHICAL_SUBJECT = "XMP:HierarchicalSubject"
 TAG_XMP_WEIGHTED_FLAT_SUBJECT = "XMP:WeightedFlatSubject"
 
+# Plain text only. The OpenAI-compatible chat completion endpoint wraps this in the
+# model's chat template (e.g. <|im_start|>system ... <|im_end|> for Qwen), so embedding
+# template tokens here would cause them to be applied twice and corrupt the prompt.
 DEFAULT_SYSTEM_PROMPT = (
-    "<|im_start|>system\n"
     "**Persona**: You are a specialist AI photo archivist named 'Metis'. "
     "Your expertise is in analyzing visual information and creating rich, structured metadata.\n"
     "\n"
@@ -100,7 +102,6 @@ DEFAULT_SYSTEM_PROMPT = (
     "Do not exceed 5 levels.\n"
     "5.  **Final Output**: Assemble the title, description, and keywords into a single, structured "
     "response. Ensure all constraints are met before finalizing.\n"
-    "<|im_end|>"
 )
 
 DEFAULT_USER_PROMPT = (
