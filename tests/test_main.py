@@ -300,6 +300,39 @@ def test_parse_filter_date_returns_none_for_none() -> None:
     assert main_module._parse_filter_date(None, flag="--newer-than") is None  # noqa: SLF001
 
 
+def test_open_cache_returns_none_when_path_is_none() -> None:
+    """No --cache-file means no cache, never an exception."""
+    assert main_module._open_cache(None, namespace="m#x") is None  # noqa: SLF001
+
+
+def test_open_cache_degrades_on_open_failure(tmp_path: Path) -> None:
+    """A failing cache open is logged and downgraded to no-cache, not raised."""
+    bad_path = tmp_path / "cache.sqlite3"
+    with patch.object(main_module, "InferenceCache", side_effect=OSError("denied")):
+        result = main_module._open_cache(bad_path, namespace="m#x")  # noqa: SLF001
+    assert result is None
+
+
+def test_cli_skips_cache_when_open_fails(tmp_path: Path) -> None:
+    """--cache-file with an unusable target still lets the batch run (no cache)."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    cache_path = tmp_path / "cache.sqlite3"
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with (
+        setup,
+        create_agent,
+        run_batch,
+        patch.object(main_module, "InferenceCache", side_effect=OSError("denied")),
+    ):
+        _run_app(["--input", str(image), "--cache-file", str(cache_path)])
+
+    # run_batch was invoked, and the cache kwarg fell through as None.
+    assert captured.get("image_files") == [image.resolve()]
+    assert captured.get("cache") is None
+
+
 def test_cli_lock_file_blocks_second_run(tmp_path: Path) -> None:
     """A second --lock-file invocation while another holds the lock exits with code 1."""
     from photo_tagger.locking import FileLock  # noqa: PLC0415 - test-local import.

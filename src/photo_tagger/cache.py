@@ -161,6 +161,14 @@ class InferenceCache:
             self._conn.commit()
 
     def close(self) -> None:
-        """Close the underlying connection. Safe to call multiple times."""
+        """
+        Close the underlying connection. Safe to call multiple times.
+
+        Storage errors during close are logged and swallowed so that the close
+        path can never mask the run's actual exit reason.
+        """
         with self._lock:
-            self._conn.close()
+            try:
+                self._conn.close()
+            except sqlite3.Error as exc:
+                logger.warning("inference_cache_close_failed", error=str(exc))

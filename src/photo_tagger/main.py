@@ -18,6 +18,7 @@ Requirements:
 import contextlib
 import json
 import os
+import sqlite3
 import sys
 import threading
 from dataclasses import asdict, dataclass, field
@@ -408,6 +409,24 @@ class _NDJSONEmitter:
             self._stream.flush()  # type: ignore[attr-defined]
 
 
+def _open_cache(path: Path | None, *, namespace: str) -> InferenceCache | None:
+    """
+    Open the SQLite cache at *path*, or warn and degrade to no-cache on failure.
+
+    Returns ``None`` when *path* is ``None`` or the cache cannot be opened.
+    Cache-open failures (permission denied, corrupt DB, parent dir unwritable)
+    log a warning and let the rest of the run proceed without caching, since
+    losing the cache should never block tagging photos.
+    """
+    if path is None:
+        return None
+    try:
+        return InferenceCache(path, model_name=namespace)
+    except (OSError, sqlite3.Error) as exc:
+        logger.warning("inference_cache_open_failed", file=str(path), error=str(exc))
+        return None
+
+
 def _parse_filter_date(value: str | None, *, flag: str) -> datetime | None:
     """
     Parse an ISO 8601 string from *flag* into a timezone-aware datetime, or None.
@@ -657,6 +676,15 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
                     error=str(exc),
                 )
                 raise SystemExit(1) from exc
+            except OSError as exc:
+                # Parent dir not writable, filesystem full, etc. Surface a clean
+                # message instead of letting the traceback land in the user's tty.
+                logger.error(
+                    "lock_file_open_failed",
+                    file=str(artifacts.lock_file),
+                    error=str(exc),
+                )
+                raise SystemExit(1) from exc
 
         _tag_inside_lock(
             inputs=inputs,
@@ -742,11 +770,7 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         jpeg_dimensions=inference.jpeg_dimensions,
         jpeg_quality=inference.jpeg_quality,
     )
-    cache = (
-        InferenceCache(artifacts.cache_file, model_name=cache_namespace)
-        if artifacts.cache_file is not None
-        else None
-    )
+    cache = _open_cache(artifacts.cache_file, namespace=cache_namespace)
     started_at = datetime.now(tz=UTC)
 
     def _on_complete(totals: BatchTotals) -> None:

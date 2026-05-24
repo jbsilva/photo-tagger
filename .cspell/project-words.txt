@@ -73,6 +73,7 @@ tamasfe
 testpypi
 testsdeselect
 tobytes
+unwritable
 usefixtures
 venv
 xdist
