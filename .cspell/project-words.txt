@@ -67,6 +67,7 @@ subfolders
 tamasfe
 testpypi
 testsdeselect
+tobytes
 usefixtures
 venv
 xdist

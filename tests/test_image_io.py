@@ -4,11 +4,12 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pytest
-from PIL import Image
+from PIL import ExifTags, Image
 from pydantic_ai import BinaryContent
 
 from photo_tagger.image_io import (
     _flatten_alpha,
+    _open_image,
     prepare_image_for_agent,
 )
 
@@ -63,3 +64,27 @@ def test_prepare_image_for_agent_raises_on_missing_file(tmp_path: Path) -> None:
     """Missing files surface as exceptions, not silent empty buffers."""
     with pytest.raises(Exception):  # noqa: B017, PT011 - any IO error is acceptable here
         prepare_image_for_agent(tmp_path / "nope.png")
+
+
+def _save_jpeg_with_orientation(path: Path, orientation: int) -> Path:
+    """Write a 4x16 JPEG with the EXIF orientation tag set to *orientation*."""
+    img = Image.new("RGB", (4, 16), color="red")
+    exif = Image.Exif()
+    exif[ExifTags.Base.Orientation] = orientation
+    img.save(path, format="JPEG", exif=exif.tobytes())
+    return path
+
+
+def test_open_image_honors_exif_orientation_rotate_90(tmp_path: Path) -> None:
+    """A JPEG flagged orientation=6 (rotate 90 CW) comes back transposed."""
+    src = _save_jpeg_with_orientation(tmp_path / "rotated.jpg", orientation=6)
+    img = _open_image(src)
+    # Source is 4x16; after rotating 90 CW the dimensions swap to 16x4.
+    assert img.size == (16, 4)
+
+
+def test_open_image_passes_through_when_orientation_is_normal(tmp_path: Path) -> None:
+    """An image flagged orientation=1 (normal) keeps its original dimensions."""
+    src = _save_jpeg_with_orientation(tmp_path / "upright.jpg", orientation=1)
+    img = _open_image(src)
+    assert img.size == (4, 16)

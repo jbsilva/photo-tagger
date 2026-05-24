@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import rawpy
 from loguru import logger
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic_ai import BinaryContent
 
 from photo_tagger.config import DEFAULT_DIMENSIONS, DEFAULT_JPEG_QUALITY
@@ -42,7 +42,13 @@ _NON_RAW_EXTS = frozenset(
 
 
 def _open_image(image_path: Path) -> Image.Image:
-    """Open an image with PIL, using rawpy unless the suffix is known non-RAW."""
+    """
+    Open an image with PIL, using rawpy unless the suffix is known non-RAW.
+
+    Returns a fully-loaded, EXIF-rotated, RGB-friendly image. The underlying file
+    handle is closed before this function returns, so the caller can operate on
+    the result without holding the source file open.
+    """
     suffix = image_path.suffix.lower()
     if suffix in _NON_RAW_EXTS:
         logger.info("skipping_rawpy_for_known_format", extension=suffix)
@@ -51,12 +57,19 @@ def _open_image(image_path: Path) -> Image.Image:
             with rawpy.imread(str(image_path)) as raw:  # type: ignore[no-untyped-call]
                 rgb = raw.postprocess()
             logger.info("image_opened_with_rawpy")
+            # rawpy.postprocess() already applies camera orientation; return as-is.
             return Image.fromarray(rgb)
         except Exception as exc:  # noqa: BLE001 - rawpy raises bare Exception subclasses
             logger.warning("rawpy_failed_falling_back_to_pil", error=str(exc))
 
     logger.info("opening_image_with_pil", extension=suffix or "")
-    return Image.open(image_path)
+    # Use Image.open in a with-block so PIL closes the file handle eagerly even
+    # when the worker is part of a thread pool. exif_transpose returns a copy
+    # with rotation/mirror EXIF applied, so the model sees the image upright.
+    with Image.open(image_path) as img:
+        img.load()
+        rotated = ImageOps.exif_transpose(img)
+    return rotated if rotated is not None else img
 
 
 def _flatten_alpha(img: Image.Image) -> Image.Image:
