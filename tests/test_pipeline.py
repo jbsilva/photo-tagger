@@ -8,6 +8,7 @@ import pytest
 from pydantic_ai import BinaryContent
 
 from photo_tagger.ai import InferenceResult
+from photo_tagger.metadata import ImageContext
 from photo_tagger.pipeline import (
     ProcessingOptions,
     _UsageAccumulator,
@@ -54,11 +55,9 @@ def patched_pipeline(stub_image_bytes: BinaryContent) -> Any:  # noqa: ANN401
     with (
         patch("photo_tagger.pipeline.prepare_image_for_agent", return_value=stub_image_bytes),
         patch(
-            "photo_tagger.pipeline.read_existing_keywords",
-            return_value={"subject": [], "hierarchical": [], "weighted": []},
+            "photo_tagger.pipeline.read_image_context",
+            return_value=ImageContext(),
         ),
-        patch("photo_tagger.pipeline.read_location_tags", return_value={}),
-        patch("photo_tagger.pipeline.read_gps_coordinates", return_value={}),
         patch(
             "photo_tagger.pipeline.analyze_image_with_ai",
             return_value=InferenceResult(

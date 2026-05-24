@@ -68,6 +68,15 @@ LOCATION_TAGS = (
     "IPTC:City",
 )
 
+# Camera/capture tags surfaced to the model so it can take cues from the
+# equipment (e.g. macro lens => close-up subjects) and the capture date
+# (e.g. December in the northern hemisphere => winter scene).
+CAMERA_TAGS = (
+    "EXIF:Model",
+    "EXIF:LensModel",
+    "EXIF:DateTimeOriginal",
+)
+
 # ExifTool tag names referenced from multiple modules. Keeping them centralized avoids the
 # typo class of bugs that hits when a literal is duplicated across read/write call sites.
 TAG_IPTC_KEYWORDS = "IPTC:Keywords"

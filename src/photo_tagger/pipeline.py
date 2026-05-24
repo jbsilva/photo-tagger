@@ -21,9 +21,7 @@ from photo_tagger.keywords import merge_keywords
 from photo_tagger.metadata import (
     _helper,
     build_contextual_prompt,
-    read_existing_keywords,
-    read_gps_coordinates,
-    read_location_tags,
+    read_image_context,
     write_metadata,
 )
 
@@ -132,18 +130,21 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
     )
 
     with _helper(et) as helper:
-        existing_keywords_full = read_existing_keywords(image_path, et=helper)
+        context = read_image_context(image_path, et=helper)
+        existing_keywords_full = context.existing_keywords
         if any(existing_keywords_full.values()):
             logger.info(
                 "existing_keywords_found",
                 count=len(existing_keywords_full["subject"]),
             )
 
+        gps_info = {"position": context.gps_position} if context.gps_position else {}
         contextual_prompt = build_contextual_prompt(
             user_prompt,
             list(dict.fromkeys(existing_keywords_full.get("subject", []))),
-            read_location_tags(image_path, et=helper),
-            read_gps_coordinates(image_path, et=helper),
+            context.location_tags,
+            gps_info,
+            camera_info=context.camera_info,
         )
 
         inference = analyze_image_with_ai(

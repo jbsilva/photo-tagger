@@ -1,6 +1,7 @@
 """Read and write XMP/IPTC metadata via pyexiftool."""
 
 import contextlib
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from exiftool import ExifToolHelper  # type: ignore[attr-defined]
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from photo_tagger.config import (
+    CAMERA_TAGS,
     LOCATION_TAGS,
     TAG_IPTC_KEYWORDS,
     TAG_XMP_HIERARCHICAL_SUBJECT,
@@ -291,14 +293,128 @@ def read_gps_coordinates(
     return {}
 
 
-def build_contextual_prompt(
+@dataclass(slots=True, frozen=True)
+class ImageContext:
+    """
+    Bundle of metadata read off a photo before the AI call.
+
+    Replaces the older sequence of separate ``read_existing_keywords`` /
+    ``read_location_tags`` / ``read_gps_coordinates`` calls that the pipeline
+    used to issue, which cost three exiftool IPC round-trips per image. The
+    batched read fetches everything we need in one call.
+    """
+
+    existing_keywords: dict[str, list[str]] = field(default_factory=_empty_keyword_buckets)
+    location_tags: dict[str, str] = field(default_factory=dict)
+    gps_position: str | None = None
+    camera_info: dict[str, str] = field(default_factory=dict)
+
+
+def _extract_gps(blocks: list[dict[str, Any]]) -> str | None:
+    """Return the first non-empty GPS position string from *blocks*, else None."""
+    for block in blocks:
+        value = block.get(_GPS_TAG)
+        if value not in (None, ""):
+            return format_metadata_value(value)
+    return None
+
+
+def _extract_named_tags(
+    blocks: list[dict[str, Any]],
+    tags: tuple[str, ...],
+) -> dict[str, str]:
+    """Collect non-blank string values for *tags* across all *blocks*."""
+    collected: dict[str, str] = {}
+    for block in blocks:
+        for tag in tags:
+            value = block.get(tag)
+            if value not in (None, "") and tag not in collected:
+                collected[tag] = format_metadata_value(value)
+    return collected
+
+
+def read_image_context(
+    image_path: Path,
+    *,
+    et: ExifToolHelper | None = None,
+) -> ImageContext:
+    """
+    Fetch every read-only tag the pipeline needs in a single exiftool call.
+
+    This is the production path used by ``process_photo``. The older single-purpose
+    helpers (``read_existing_keywords``, ``read_location_tags``, ``read_gps_coordinates``)
+    remain available for callers that need only one slice (Tests, for example).
+    """
+    targets = metadata_targets(image_path)
+    if not targets:
+        logger.info("no_metadata_targets_found")
+        return ImageContext()
+
+    keyword_tags = [tag for tag, _ in _KEYWORD_TAG_TO_BUCKET]
+    all_tags = list(dict.fromkeys([*keyword_tags, *LOCATION_TAGS, *CAMERA_TAGS, _GPS_TAG]))
+
+    try:
+        with _helper(et) as helper:
+            blocks = helper.get_tags(files=targets, tags=all_tags)
+    except (ValueError, TypeError, ExifToolExecuteError) as exc:
+        logger.exception("failed_to_read_image_context", error=str(exc))
+        return ImageContext()
+
+    existing_keywords = _empty_keyword_buckets()
+    _accumulate_keyword_blocks(blocks, existing_keywords)
+    for key, values in existing_keywords.items():
+        if values:
+            existing_keywords[key] = list(dict.fromkeys(values))
+
+    location_tags = _extract_named_tags(blocks, LOCATION_TAGS)
+    camera_info = _extract_named_tags(blocks, CAMERA_TAGS)
+    gps_position = _extract_gps(blocks)
+
+    logger.debug(
+        "image_context_read",
+        subject_count=len(existing_keywords["subject"]),
+        hierarchical_count=len(existing_keywords["hierarchical"]),
+        location_tag_count=len(location_tags),
+        camera_tag_count=len(camera_info),
+        gps_present=gps_position is not None,
+    )
+    return ImageContext(
+        existing_keywords=existing_keywords,
+        location_tags=location_tags,
+        gps_position=gps_position,
+        camera_info=camera_info,
+    )
+
+
+def _camera_lines(camera_info: dict[str, str]) -> list[str]:
+    """Render ``EXIF:Model`` / ``EXIF:LensModel`` / ``EXIF:DateTimeOriginal`` lines."""
+    lines: list[str] = []
+    if model := camera_info.get("EXIF:Model"):
+        lines.append(f"- Camera: {model}")
+    if lens := camera_info.get("EXIF:LensModel"):
+        lines.append(f"- Lens: {lens}")
+    if captured := camera_info.get("EXIF:DateTimeOriginal"):
+        lines.append(f"- Captured: {captured}")
+    return lines
+
+
+def build_contextual_prompt(  # noqa: PLR0913 - each kwarg renders an independent section.
     base_prompt: str,
     flat_keywords: list[str],
     location_tags: dict[str, str],
     gps_info: dict[str, str],
     max_prompt_flat_keywords: int = 4,
+    *,
+    camera_info: dict[str, str] | None = None,
 ) -> str:
-    """Create a concise user prompt that surfaces existing photo metadata."""
+    """
+    Create a concise user prompt that surfaces existing photo metadata.
+
+    *camera_info* is a mapping of ExifTool tag names (``EXIF:Model`` etc.) to their
+    string values. When present, equipment and capture-date hints are appended so
+    the model can take cues from the gear used (macro lens, telephoto, wide angle)
+    and the time of year.
+    """
     metadata_lines: list[str] = []
 
     if unique_keywords := list(dict.fromkeys(flat_keywords)):
@@ -317,6 +433,8 @@ def build_contextual_prompt(
 
     if gps_position := (gps_info or {}).get("position"):
         metadata_lines.append(f"- GPS: {gps_position}")
+
+    metadata_lines.extend(_camera_lines(camera_info or {}))
 
     sections = [base_prompt.strip()]
     if metadata_lines:

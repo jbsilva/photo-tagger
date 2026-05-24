@@ -11,6 +11,7 @@ from photo_tagger.metadata import (
     build_contextual_prompt,
     find_tagged_images,
     format_metadata_value,
+    read_image_context,
 )
 
 
@@ -153,3 +154,77 @@ def test_find_tagged_images_skips_paths_with_no_targets(tmp_path: Path) -> None:
     ):
         assert find_tagged_images([ghost]) == set()
     fake_helper.get_tags.assert_not_called()
+
+
+def test_read_image_context_batches_keywords_location_camera_and_gps(tmp_path: Path) -> None:
+    """A single exiftool call populates every section of the returned ImageContext."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+
+    fake_helper = MagicMock()
+    fake_helper.__enter__.return_value = fake_helper
+    fake_helper.__exit__.return_value = False
+    fake_helper.get_tags.return_value = [
+        {
+            "XMP:Subject": ["Beach", "Sunset"],
+            "XMP:HierarchicalSubject": ["Animal|Bird"],
+            "XMP-photoshop:Country": "Portugal",
+            "EXIF:Model": "Canon EOS R5",
+            "EXIF:LensModel": "RF24-105mm F4 L IS USM",
+            "EXIF:DateTimeOriginal": "2024:01:15 14:32:01",
+            "Composite:GPSPosition": "38.7 N, 9.1 W",
+        },
+    ]
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        context = read_image_context(img)
+
+    assert context.existing_keywords["subject"] == ["Beach", "Sunset"]
+    assert context.existing_keywords["hierarchical"] == ["Animal|Bird"]
+    assert context.location_tags == {"XMP-photoshop:Country": "Portugal"}
+    assert context.camera_info["EXIF:Model"] == "Canon EOS R5"
+    assert context.gps_position == "38.7 N, 9.1 W"
+    # The whole point of batching is one IPC call - assert exactly one.
+    assert fake_helper.get_tags.call_count == 1
+
+
+def test_read_image_context_returns_empty_when_no_targets(tmp_path: Path) -> None:
+    """A missing file returns an empty ImageContext without invoking exiftool."""
+    ghost = tmp_path / "ghost.cr3"
+
+    fake_helper = MagicMock()
+    fake_helper.__enter__.return_value = fake_helper
+    fake_helper.__exit__.return_value = False
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        context = read_image_context(ghost)
+
+    assert context.existing_keywords == {"subject": [], "hierarchical": [], "weighted": []}
+    assert context.gps_position is None
+    assert context.camera_info == {}
+    fake_helper.get_tags.assert_not_called()
+
+
+def test_build_contextual_prompt_renders_camera_section() -> None:
+    """When camera_info is provided, equipment and capture-date lines appear in the prompt."""
+    prompt = build_contextual_prompt(
+        "Analyze the scene.",
+        [],
+        {},
+        {},
+        camera_info={
+            "EXIF:Model": "Canon EOS R5",
+            "EXIF:LensModel": "RF100mm F2.8 L Macro IS USM",
+            "EXIF:DateTimeOriginal": "2024:01:15 14:32:01",
+        },
+    )
+
+    assert "- Camera: Canon EOS R5" in prompt
+    assert "- Lens: RF100mm F2.8 L Macro IS USM" in prompt
+    assert "- Captured: 2024:01:15 14:32:01" in prompt
