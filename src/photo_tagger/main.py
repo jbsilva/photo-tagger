@@ -201,7 +201,7 @@ class LogConfig:
             name="--console-log-level",
             help="Log level for console (use 'OFF' to disable)",
         ),
-    ] = "DEBUG"
+    ] = "INFO"
     log_folder: Annotated[
         Path,
         Parameter(name=("--log-folder",), help="Folder where log files are stored"),
