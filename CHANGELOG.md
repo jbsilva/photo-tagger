@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-05-27
+
+### Fixed
+
+- `AttributeError: 'str' object has no attribute 'parent'` when writing the summary file after a
+  successful run if `summary_file` (or any other `Path` field) was set via the TOML config rather
+  than the CLI. `apply_overrides` now coerces string TOML values to `Path` for fields annotated as
+  `Path` or `Path | None`.
+
 ## [0.2.0] - 2026-05-26
 
 ### Added
@@ -91,5 +100,6 @@ Initial release.
 - In-memory JPEG conversion to keep token usage low.
 - Structured log files for debugging and auditing.
 
+[0.2.1]: https://github.com/jbsilva/photo-tagger/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jbsilva/photo-tagger/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jbsilva/photo-tagger/releases/tag/v0.1.0
