@@ -2,6 +2,7 @@
 
 from io import BytesIO
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 from PIL import ExifTags, Image
@@ -88,3 +89,73 @@ def test_open_image_passes_through_when_orientation_is_normal(tmp_path: Path) ->
     src = _save_jpeg_with_orientation(tmp_path / "upright.jpg", orientation=1)
     img = _open_image(src)
     assert img.size == (4, 16)
+
+
+# ---------------------------------------------------------------------------
+# rawpy paths
+# ---------------------------------------------------------------------------
+
+
+def test_open_image_uses_rawpy_for_raw_extension(tmp_path: Path) -> None:
+    """A .cr3 suffix is handled by rawpy when rawpy.imread succeeds."""
+    import numpy as np  # noqa: PLC0415
+
+    fake_rgb = np.zeros((4, 8, 3), dtype=np.uint8)
+    raw_ctx = MagicMock()
+    raw_ctx.__enter__ = MagicMock(return_value=raw_ctx)
+    raw_ctx.__exit__ = MagicMock(return_value=False)
+    raw_ctx.postprocess.return_value = fake_rgb
+
+    src = tmp_path / "photo.cr3"
+    src.write_bytes(b"raw-data")
+    with patch("photo_tagger.image_io.rawpy") as mock_rawpy:
+        mock_rawpy.imread.return_value = raw_ctx
+        img = _open_image(src)
+
+    assert img.size == (8, 4)  # numpy shape (h, w, c) -> PIL (w, h)
+    mock_rawpy.imread.assert_called_once()
+
+
+def test_open_image_falls_back_to_pil_when_rawpy_fails(tmp_path: Path) -> None:
+    """If rawpy fails on a non-known extension, PIL is used as fallback."""
+    src = tmp_path / "photo.dng"
+    # Write a real small PNG so PIL can open it (extension doesn't matter for PIL).
+    _save_png(src)
+    with patch("photo_tagger.image_io.rawpy") as mock_rawpy:
+        mock_rawpy.imread.side_effect = Exception("unsupported format")
+        img = _open_image(src)
+    assert img.mode in {"RGB", "RGBA"}
+
+
+# ---------------------------------------------------------------------------
+# Alpha compositing edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_flatten_alpha_composites_la_mode_onto_white() -> None:
+    """An LA (luminance + alpha) image gets flattened to RGB with white background."""
+    img = Image.new("LA", (2, 2), (0, 0))
+    flat = _flatten_alpha(img)
+    assert flat.mode == "RGB"
+    assert flat.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_flatten_alpha_handles_palette_with_transparency() -> None:
+    """A P-mode image with transparency info gets composited."""
+    img = Image.new("P", (2, 2))
+    img.info["transparency"] = 0
+    flat = _flatten_alpha(img)
+    assert flat.mode == "RGB"
+
+
+# ---------------------------------------------------------------------------
+# prepare_image_for_agent sizing
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_image_for_agent_preserves_small_images(tmp_path: Path) -> None:
+    """An image already smaller than max_size is not enlarged."""
+    src = _save_png(tmp_path / "small.png", size=(4, 4))
+    out = prepare_image_for_agent(src, max_size=100)
+    decoded = Image.open(BytesIO(out.data))
+    assert decoded.size == (4, 4)

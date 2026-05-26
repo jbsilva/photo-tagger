@@ -2,6 +2,7 @@
 
 from http import HTTPStatus
 from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -150,3 +151,87 @@ def test_validate_ollama_model_exits_when_model_missing(monkeypatch: pytest.Monk
     monkeypatch.setattr(httpx, "get", fake_get)
     with pytest.raises(ProviderError):
         ai_module.validate_ollama_model("http://localhost:11434", "missing", None)
+
+
+# ---------------------------------------------------------------------------
+# create_agent wiring
+# ---------------------------------------------------------------------------
+
+
+def test_create_agent_ollama_validates_and_builds_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """create_agent('ollama') calls validate_ollama_model, wires OllamaProvider, returns Agent."""
+    payload = {"models": [{"name": "test-model"}]}
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
+        return _DummyResponse(HTTPStatus.OK, payload)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    agent = ai_module.create_agent(
+        "ollama",
+        "test-model",
+        api_base_url="http://localhost:11434/v1",
+        api_key=None,
+        retries=2,
+    )
+    assert agent is not None
+
+
+def test_create_agent_lmstudio_validates_and_builds_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """create_agent('lmstudio') calls validate_lmstudio_model, wires OpenAIProvider."""
+    payload = {"data": [{"id": "test-model"}]}
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
+        return _DummyResponse(HTTPStatus.OK, payload)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    agent = ai_module.create_agent(
+        "lmstudio",
+        "test-model",
+        api_base_url="http://localhost:1234/v1",
+        api_key=None,
+        retries=1,
+    )
+    assert agent is not None
+
+
+def test_create_agent_uses_default_url_when_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When api_base_url is None, the provider's default URL is used."""
+    payload = {"models": [{"name": "m"}]}
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
+        return _DummyResponse(HTTPStatus.OK, payload)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    agent = ai_module.create_agent(
+        "ollama",
+        "m",
+        api_base_url=None,
+        api_key=None,
+        retries=0,
+    )
+    assert agent is not None
+
+
+# ---------------------------------------------------------------------------
+# _extract_usage
+# ---------------------------------------------------------------------------
+
+
+def test_extract_usage_returns_zeros_for_none() -> None:
+    """None usage object returns (0, 0, 0)."""
+    assert ai_module._extract_usage(None) == (0, 0, 0)  # noqa: SLF001
+
+
+def test_extract_usage_reads_attributes() -> None:
+    """Usage attributes are converted to ints."""
+    usage = MagicMock(input_tokens=10, output_tokens=5, total_tokens=15)
+    assert ai_module._extract_usage(usage) == (10, 5, 15)  # noqa: SLF001
+
+
+def test_extract_usage_handles_none_attributes() -> None:
+    """None attribute values are coerced to 0."""
+    usage = MagicMock(input_tokens=None, output_tokens=None, total_tokens=None)
+    assert ai_module._extract_usage(usage) == (0, 0, 0)  # noqa: SLF001

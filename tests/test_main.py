@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from photo_tagger import main as main_module
-from photo_tagger.pipeline import ImageOutcome
+from photo_tagger.pipeline import BatchTotals, ImageOutcome
 
 
 if TYPE_CHECKING:
@@ -406,3 +406,86 @@ def test_cli_summary_file_creates_missing_parent_dir(tmp_path: Path) -> None:
     assert nested.exists()
     payload = json.loads(nested.read_text(encoding="utf-8"))
     assert payload["total_files"] == 1
+
+
+# ---------------------------------------------------------------------------
+# _read_prompt_file edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_read_prompt_file_exits_on_empty_file(tmp_path: Path) -> None:
+    """A prompt file that contains only whitespace is rejected with SystemExit."""
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("   \n  ", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        main_module._read_prompt_file(prompt)  # noqa: SLF001
+
+
+def test_read_prompt_file_exits_on_read_error(tmp_path: Path) -> None:
+    """An unreadable prompt file triggers SystemExit."""
+    prompt = tmp_path / "missing.txt"
+    with pytest.raises(SystemExit):
+        main_module._read_prompt_file(prompt)  # noqa: SLF001
+
+
+def test_read_prompt_file_returns_default_when_none() -> None:
+    """Passing None returns the built-in default prompt."""
+    from photo_tagger.config import DEFAULT_USER_PROMPT  # noqa: PLC0415
+
+    assert main_module._read_prompt_file(None) == DEFAULT_USER_PROMPT  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# _write_summary_file edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_write_summary_file_noop_when_path_is_none(tmp_path: Path) -> None:
+    """summary_file=None is the normal no-write path."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    # Should not raise or create any file.
+    main_module._write_summary_file(  # noqa: SLF001
+        None,
+        BatchTotals(),
+        started_at=datetime.now(tz=UTC),
+        model_name="m",
+        provider_name="p",
+        user_prompt_chars=0,
+    )
+
+
+def test_write_summary_file_noop_when_totals_is_none(tmp_path: Path) -> None:
+    """totals=None is the early-exit path when the batch never ran."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    dest = tmp_path / "out.json"
+    main_module._write_summary_file(  # noqa: SLF001
+        dest,
+        None,
+        started_at=datetime.now(tz=UTC),
+        model_name="m",
+        provider_name="p",
+        user_prompt_chars=0,
+    )
+    assert not dest.exists()
+
+
+def test_write_summary_file_swallows_write_error(tmp_path: Path) -> None:
+    """An OSError during write is logged, not raised."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    # Point at a directory path so write fails.
+    dest = tmp_path / "dir_not_file"
+    dest.mkdir()
+    dest = dest / "nested" / "summary.json"
+    with patch.object(main_module, "_atomic_write_text", side_effect=OSError("boom")):
+        # Must not raise.
+        main_module._write_summary_file(  # noqa: SLF001
+            dest,
+            BatchTotals(),
+            started_at=datetime.now(tz=UTC),
+            model_name="m",
+            provider_name="p",
+            user_prompt_chars=0,
+        )

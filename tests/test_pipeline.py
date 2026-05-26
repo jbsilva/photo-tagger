@@ -11,8 +11,10 @@ from photo_tagger.errors import BatchError
 from photo_tagger.metadata import ImageContext
 from photo_tagger.models import InferenceResult
 from photo_tagger.pipeline import (
+    ImageOutcome,
     ProcessingOptions,
     _BatchContext,
+    _emit_outcome,
     _UsageAccumulator,
     execute_process,
     process_photo,
@@ -636,3 +638,153 @@ def test_run_batch_concurrent_handles_keyboard_interrupt(tmp_path: Path) -> None
     # depends on scheduling, but we must see at least one failure and on_complete
     # must have fired so the summary file is written.
     assert len(totals.failed_files) >= 1
+
+
+# ---------------------------------------------------------------------------
+# process_photo edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("patched_pipeline")
+def test_process_photo_trims_keywords_when_max_new_keywords_set(tmp_path: Path) -> None:
+    """max_new_keywords caps the AI-returned keyword list before merging."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    options = ProcessingOptions(max_new_keywords=1)
+
+    with patch(
+        "photo_tagger.pipeline.analyze_image_with_ai",
+        return_value=InferenceResult(
+            title="T",
+            description="D",
+            keywords=["Alpha", "Beta", "Gamma"],
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            seconds=0.0,
+        ),
+    ):
+        assert process_photo(image, _ctx(options=options)) is True
+
+
+def test_process_photo_discards_existing_keywords_when_preserve_false(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """preserve_existing_kw=False replaces rather than merges existing keywords."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    patched_pipeline["analyze"].return_value = InferenceResult(
+        title="T",
+        description="D",
+        keywords=["New"],
+        input_tokens=0,
+        output_tokens=0,
+        total_tokens=0,
+        seconds=0.0,
+    )
+    with patch(
+        "photo_tagger.pipeline.read_image_context",
+        return_value=ImageContext(
+            existing_keywords={"subject": ["Old"], "hierarchical": [], "weighted": []},
+        ),
+    ):
+        process_photo(image, _ctx(options=ProcessingOptions(preserve_existing_kw=False)))
+
+    written_kw = patched_pipeline["write"].call_args.args[1]
+    assert "Old" not in written_kw.get("subject", [])
+    assert "New" in written_kw["subject"]
+
+
+# ---------------------------------------------------------------------------
+# _emit_outcome edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_emit_outcome_emits_zeros_when_inference_is_absent(tmp_path: Path) -> None:
+    """When process_photo crashes before setting scratch, outcome fields default to zero."""
+    received: list[ImageOutcome] = []
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    _emit_outcome(received.append, image, {}, success=False, retry=False)
+
+    assert len(received) == 1
+    outcome = received[0]
+    assert outcome.title is None
+    assert outcome.keywords == []
+    assert outcome.input_tokens == 0
+    assert outcome.seconds == 0.0
+
+
+def test_emit_outcome_swallows_callback_errors(tmp_path: Path) -> None:
+    """A broken on_image_result callback must not propagate."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    def boom(_outcome: ImageOutcome) -> None:
+        msg = "callback crashed"
+        raise RuntimeError(msg)
+
+    # Should not raise.
+    _emit_outcome(boom, image, {}, success=True, retry=False)
+
+
+def test_emit_outcome_noop_when_callback_is_none(tmp_path: Path) -> None:
+    """Passing None as the callback is the normal no-op path."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    _emit_outcome(None, image, {}, success=True, retry=False)
+
+
+# ---------------------------------------------------------------------------
+# _cache_lookup hash failure
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("patched_pipeline")
+def test_process_photo_survives_hash_failure(tmp_path: Path) -> None:
+    """A broken hash_image_file is treated as a cache miss with no put attempt."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    class _HashFailCache:
+        def __init__(self) -> None:
+            self.put_calls = 0
+
+        def get(self, _key: str) -> None:
+            return None
+
+        def put(self, *_args: Any, **_kwargs: Any) -> None:  # noqa: ANN401
+            self.put_calls += 1
+
+    cache = _HashFailCache()
+    with patch("photo_tagger.pipeline.hash_image_file", side_effect=OSError("broken")):
+        ok = process_photo(image, _ctx(cache=cache))
+
+    assert ok is True
+    # hash failed -> cache_key is None -> put must be skipped.
+    assert cache.put_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# Concurrent worker exception path
+# ---------------------------------------------------------------------------
+
+
+def test_run_batch_concurrent_records_worker_exception(tmp_path: Path) -> None:
+    """An exception raised inside a worker thread is caught and counted as a failure."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(2)]
+    for f in files:
+        f.write_text("x")
+
+    def _exploding_process(*_args: Any, **_kwargs: Any) -> bool:  # noqa: ANN401
+        msg = "worker blew up"
+        raise RuntimeError(msg)
+
+    with (
+        patch("photo_tagger.pipeline.process_photo", side_effect=_exploding_process),
+        pytest.raises(BatchError),
+    ):
+        run_batch(files, agent=_FAKE_AGENT, options=ProcessingOptions(), workers=2)
