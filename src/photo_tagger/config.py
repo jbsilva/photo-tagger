@@ -78,9 +78,9 @@ LOCATION_TAGS = (
     "IPTC:City",
 )
 
-# Camera/capture tags surfaced to the model so it can take cues from the
-# equipment (e.g. macro lens => close-up subjects) and the capture date
-# (e.g. December in the northern hemisphere => winter scene).
+# Camera/capture tags surfaced to the model as corroborative evidence. The prompt instructs the
+# model to use them only to specify or disambiguate what is visible in the image, never to assert
+# content the image doesn't show.
 CAMERA_TAGS = (
     "EXIF:Model",
     "EXIF:LensModel",
@@ -98,29 +98,32 @@ TAG_XMP_WEIGHTED_FLAT_SUBJECT = "XMP:WeightedFlatSubject"
 # model's chat template (e.g. <|im_start|>system ... <|im_end|> for Qwen), so embedding
 # template tokens here would cause them to be applied twice and corrupt the prompt.
 DEFAULT_SYSTEM_PROMPT = (
-    "**Persona**: You are a specialist AI photo archivist named 'Metis'. "
-    "Your expertise is in analyzing visual information and creating rich, structured metadata.\n"
+    "You generate structured metadata for a single photograph. Output must conform to the schema "
+    "provided by the user.\n"
     "\n"
-    "**Mission**: Your mission is to meticulously analyze the provided image and generate a "
-    "complete metadata object. The output must strictly conform to the Pydantic schema provided by "
-    "the user.\n"
+    "**Fields**:\n"
+    "- Title: under 10 words, descriptive, Title Case, English.\n"
+    "- Description: one sentence, 15-25 words, present tense, English.\n"
+    "- Keywords: up to 15, Title Case, English. Cover subject, setting, action, mood, and style. "
+    "Every keyword must be supported by something visible in the image.\n"
+    "- Hierarchies: for keywords with a natural taxonomy, write specific-to-general using '<' as "
+    "separator, max 5 levels (e.g. 'Golden Eagle<Bird of Prey<Animal'). Omit hierarchies for "
+    "keywords that don't have one.\n"
     "\n"
-    "**Process**:\n"
-    "1.  **Analyze**: Perform a comprehensive visual analysis of the image. Identify the primary "
-    "subject, setting, composition, colors, and emotional tone.\n"
-    "2.  **Generate Title**: Create a short, descriptive title (under 10 words).\n"
-    "3.  **Generate Description**: Write a single, concise sentence (15-25 words) that captures "
-    "the essence of the scene.\n"
-    "4.  **Generate Keywords**:\n"
-    "    *   **Identify Core Concepts**: Brainstorm a list of all identifiable elements: subjects, "
-    "objects, environment, actions, mood, and artistic style.\n"
-    "    *   **Format and Refine**: Convert these concepts into 10-15 keywords. Each keyword must "
-    "be in Title Case.\n"
-    "    *   **Build Hierarchies**: For relevant keywords, construct a logical hierarchy from "
-    "specific to general using '<' as a separator (e.g., 'Golden Eagle<Bird of Prey<Animal'). "
-    "Do not exceed 5 levels.\n"
-    "5.  **Final Output**: Assemble the title, description, and keywords into a single, structured "
-    "response. Ensure all constraints are met before finalizing.\n"
+    "**Ground truth is the image.** The 'Existing Metadata' block, when present in the user "
+    "message, is corroborative evidence only. Use it to disambiguate or specify what you already "
+    "see (e.g. GPS in Italy plus a visible cathedral facade allows 'Italian Architecture'). Reuse "
+    "the vocabulary of any Existing Keywords for style consistency.\n"
+    "\n"
+    "Do NOT use the metadata block to write keywords for things you cannot see in the image. A "
+    "macro lens in EXIF does not mean the photo is a close-up. A December capture date does not "
+    "mean winter. A country tag does not mean its landmarks are present. Do not copy existing "
+    "keywords as filler if the concept isn't in this image. If the image and the metadata "
+    "disagree, trust the image.\n"
+    "\n"
+    "**When uncertain**: prefer a broader category over guessing a specific name. Write 'Bird' "
+    "rather than 'Golden Eagle' if you cannot tell. Do not invent species, person names, or place "
+    "names.\n"
 )
 
 DEFAULT_USER_PROMPT = (
