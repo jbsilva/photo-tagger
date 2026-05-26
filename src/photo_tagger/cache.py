@@ -104,6 +104,9 @@ class InferenceCache:
         # in the per-cache lock below; we deliberately serialize all DB access.
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        # WAL mode allows concurrent readers and avoids blocking on writes, which
+        # matters when multiple worker threads hit the cache in parallel.
+        self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(_SCHEMA)
         self._conn.commit()
         self._lock = threading.Lock()
