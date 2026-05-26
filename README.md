@@ -50,7 +50,43 @@ Environment variables provide defaults so you can keep the CLI concise:
 - `JPEG_DIMENSIONS`, `JPEG_QUALITY`, `TEMPERATURE`, `MAX_TOKENS`, `RETRIES` – fine-tune runtime
 
 Any CLI flag takes precedence over the environment.
+### Config file
 
+You can persist CLI defaults in a TOML file so they apply automatically. Search order:
+
+1. `$PHOTO_TAGGER_CONFIG` environment variable (explicit path)
+2. `.photo-tagger.toml` in the current working directory (project-local)
+3. `~/.config/photo-tagger/config.toml` (user-wide)
+
+CLI flags override config file values, and the config file overrides built-in defaults.
+
+Example `.photo-tagger.toml`:
+
+```toml
+extensions = "cr3,jpg,dng"
+recursive = true
+workers = 2
+
+[provider]
+model_name = "qwen/qwen3-vl-30b"
+provider_name = "lmstudio"
+api_base_url = "http://localhost:1234/v1"
+
+[inference]
+temperature = 0.2
+max_tokens = 32768
+
+[output]
+preserve_keywords = true
+max_keywords = 15
+
+[artifacts]
+cache_file = ".photo-tagger-cache.db"
+```
+
+The section names match the internal option groups: `provider`, `inference`, `output`, `log`,
+`display`, `filter`, and `artifacts`. Top-level keys cover `extensions`, `recursive`, and
+`workers`. Unknown keys are silently ignored, so the file stays forward-compatible.
 ## Usage
 
 The CLI is exposed as `photo-tagger` once installed, or you can invoke it directly:
@@ -80,9 +116,9 @@ Key options:
   `PATH` on completion
 - `--cache-file PATH` – persistent SQLite cache of model outputs keyed by image content hash
   and model+prompt+settings. Reruns skip the model call when nothing relevant has changed
-- `--lock-file PATH` – acquire an exclusive POSIX flock on `PATH` before running and refuse
+- `--lock-file PATH` – acquire an exclusive file lock on `PATH` before running and refuse
   to start if another `photo-tagger` already holds it (prevents two runs racing on the same
-  folder)
+  folder). Works on Linux, macOS, and Windows
 - `--json` – emit one NDJSON line per processed photo to stdout (file, status, title,
   description, keywords, token usage, cache flag); logs and progress stay on stderr so you
   can pipe straight into `jq` or your own tools

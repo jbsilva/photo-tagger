@@ -41,6 +41,7 @@ from photo_tagger.config import (
     DEFAULT_USER_PROMPT,
     LogLevel,
 )
+from photo_tagger.config_file import apply_overrides, load_config
 from photo_tagger.discovery import (
     apply_date_filter,
     apply_skip_file,
@@ -317,9 +318,9 @@ class ArtifactConfig:
             name=("--lock-file",),
             validator=validators.Path(file_okay=True, dir_okay=False),
             help=(
-                "Acquire an exclusive POSIX flock on this path before running. Refuses "
+                "Acquire an exclusive file lock on this path before running. Refuses "
                 "to start if another photo-tagger process holds the same lock, preventing "
-                "two runs from racing on the same folder. POSIX-only"
+                "two runs from racing on the same folder"
             ),
         ),
     ] = None
@@ -327,13 +328,21 @@ class ArtifactConfig:
 
 # Default group instances. Hoisted to module scope so the function-default expressions in
 # `tag` are simple name lookups and ruff's B008 (call-in-default) is satisfied.
-_DEFAULT_PROVIDER = ProviderConfig()
-_DEFAULT_OUTPUT = OutputConfig()
-_DEFAULT_INFERENCE = InferenceConfig()
-_DEFAULT_LOG = LogConfig()
-_DEFAULT_DISPLAY = DisplayConfig()
-_DEFAULT_ARTIFACTS = ArtifactConfig()
-_DEFAULT_FILTER = FilterConfig()
+# A TOML config file (if found) overrides the built-in defaults so CLI flags
+# that the user does not pass pick up persisted values instead.
+_FILE_CONFIG = load_config()
+_DEFAULT_PROVIDER = apply_overrides(ProviderConfig(), _FILE_CONFIG.get("provider", {}))
+_DEFAULT_OUTPUT = apply_overrides(OutputConfig(), _FILE_CONFIG.get("output", {}))
+_DEFAULT_INFERENCE = apply_overrides(InferenceConfig(), _FILE_CONFIG.get("inference", {}))
+_DEFAULT_LOG = apply_overrides(LogConfig(), _FILE_CONFIG.get("log", {}))
+_DEFAULT_DISPLAY = apply_overrides(DisplayConfig(), _FILE_CONFIG.get("display", {}))
+_DEFAULT_ARTIFACTS = apply_overrides(ArtifactConfig(), _FILE_CONFIG.get("artifacts", {}))
+_DEFAULT_FILTER = apply_overrides(FilterConfig(), _FILE_CONFIG.get("filter", {}))
+
+# Top-level keys that apply to non-grouped CLI flags.
+_DEFAULT_EXTENSIONS: str = _FILE_CONFIG.get("extensions", "cr3,jpg")
+_DEFAULT_WORKERS: int = _FILE_CONFIG.get("workers", 1)
+_DEFAULT_RECURSIVE: bool = _FILE_CONFIG.get("recursive", False)
 
 
 def _to_processing_options(output: OutputConfig, inference: InferenceConfig) -> ProcessingOptions:
@@ -604,14 +613,14 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             name=("--ext", "--extensions"),
             help="Comma-separated image file extensions to process (case insensitive)",
         ),
-    ] = "cr3,jpg",
+    ] = _DEFAULT_EXTENSIONS,
     recursive: Annotated[
         bool,
         Parameter(
             name=("--recursive", "-r"),
             help="Process files in subdirectories recursively",
         ),
-    ] = False,
+    ] = _DEFAULT_RECURSIVE,
     workers: Annotated[
         int,
         Parameter(
@@ -622,7 +631,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
                 "parallel will not help"
             ),
         ),
-    ] = 1,
+    ] = _DEFAULT_WORKERS,
     filter_: Annotated[FilterConfig, Parameter(name="*")] = _DEFAULT_FILTER,
     display: Annotated[DisplayConfig, Parameter(name="*")] = _DEFAULT_DISPLAY,
     artifacts: Annotated[ArtifactConfig, Parameter(name="*")] = _DEFAULT_ARTIFACTS,
