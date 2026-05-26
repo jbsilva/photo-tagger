@@ -28,6 +28,17 @@ def test_parse_hierarchical_keyword_handles_flat_and_hierarchical() -> None:
     assert nested_parts == ["Animal", "Bird", "Duck"]
 
 
+def test_parse_hierarchical_keyword_returns_empty_list_for_blank_input() -> None:
+    """Empty or whitespace-only input returns an empty format string and no parts."""
+    fmt, parts = parse_hierarchical_keyword("")
+    assert fmt == ""
+    assert parts == []
+
+    fmt_ws, parts_ws = parse_hierarchical_keyword("   ")
+    assert fmt_ws == ""
+    assert parts_ws == []
+
+
 def test_parse_hierarchical_keyword_strips_trailing_gt() -> None:
     """Stray '>' characters in model output are removed before parsing."""
     hierarchical, parts = parse_hierarchical_keyword("Man<Human<Living Being>")

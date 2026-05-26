@@ -40,7 +40,7 @@ def parse_hierarchical_keyword(keyword: str) -> tuple[str, list[str]]:
     """
     keyword = keyword.strip()
     if not keyword:
-        return ("", [""])
+        return ("", [])
 
     # The model occasionally emits stray '>' characters; drop them before parsing.
     sanitized = keyword.replace(">", "")
