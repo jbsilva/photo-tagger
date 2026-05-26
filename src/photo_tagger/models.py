@@ -1,5 +1,6 @@
 """Pydantic schemas shared by the AI layer and the rest of the pipeline."""
 
+from dataclasses import dataclass
 from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
@@ -35,3 +36,16 @@ class GeneratedMetadata(BaseModel):
         all fail.
         """
         return v[:_MAX_KEYWORDS]
+
+
+@dataclass(slots=True, frozen=True)
+class InferenceResult:
+    """One vision-language model call with token usage and wall time captured."""
+
+    title: str
+    description: str
+    keywords: list[str]
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    seconds: float = 0.0

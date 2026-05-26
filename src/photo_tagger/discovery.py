@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from photo_tagger.errors import DiscoveryError
 from photo_tagger.metadata import find_tagged_images
 
 
@@ -105,26 +106,29 @@ def resolve_image_batch(
     """Resolve and validate a batch of images, exiting if the inputs are unusable."""
     ext_set = parse_extensions(image_extensions)
     if not ext_set:
+        msg = f"No valid extensions in {image_extensions!r}"
         logger.error("no_valid_extensions_provided", raw_input=image_extensions)
-        raise SystemExit(1)
+        raise DiscoveryError(msg)
     logger.debug("parsed_extensions", extensions=sorted(ext_set))
 
     if not inputs:
+        msg = "No inputs provided. Pass one or more --input/-i paths (files or directories)"
         logger.error(
             "no_inputs_provided",
             hint="Pass one or more --input/-i paths (files or directories)",
         )
-        raise SystemExit(1)
+        raise DiscoveryError(msg)
 
     image_files = resolve_image_files(inputs, ext_set, recursive=recursive)
     if not image_files:
+        msg = f"No image files found in {[str(p) for p in inputs]}"
         logger.error(
             "no_image_files_found",
             inputs=[str(p) for p in inputs],
             recursive=recursive,
             extensions=sorted(ext_set),
         )
-        raise SystemExit(1)
+        raise DiscoveryError(msg)
 
     logger.info("image_files_discovered", count=len(image_files))
     return image_files
@@ -136,7 +140,7 @@ def load_skip_list(skip_file: Path) -> set[str]:
         content = skip_file.read_text(encoding="utf-8")
     except OSError as exc:
         logger.error("skip_file_read_failed", file=str(skip_file), error=str(exc))
-        raise SystemExit(1) from exc
+        raise DiscoveryError(str(exc)) from exc
 
     entries = {
         stripped

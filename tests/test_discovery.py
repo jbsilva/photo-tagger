@@ -18,6 +18,7 @@ from photo_tagger.discovery import (
     parse_extensions,
     resolve_image_batch,
 )
+from photo_tagger.errors import DiscoveryError
 
 
 if TYPE_CHECKING:
@@ -33,20 +34,20 @@ def test_parse_extensions_drops_blanks_and_dots() -> None:
 
 def test_resolve_image_batch_exits_on_unknown_extension() -> None:
     """Empty / dotted-only extension strings exit before touching the filesystem."""
-    with pytest.raises(SystemExit):
+    with pytest.raises(DiscoveryError):
         resolve_image_batch([], "", recursive=False)
 
 
 def test_resolve_image_batch_exits_when_inputs_missing() -> None:
     """No --input paths is a hard error so we never silently skip the run."""
-    with pytest.raises(SystemExit):
+    with pytest.raises(DiscoveryError):
         resolve_image_batch(None, "cr3", recursive=False)
 
 
 def test_resolve_image_batch_exits_when_directory_yields_nothing(tmp_path: Path) -> None:
     """A non-empty directory with no matching extensions also exits."""
     (tmp_path / "note.txt").write_text("hello")
-    with pytest.raises(SystemExit):
+    with pytest.raises(DiscoveryError):
         resolve_image_batch([tmp_path], "cr3", recursive=False)
 
 
@@ -105,7 +106,7 @@ def test_load_skip_list_warns_when_empty(tmp_path: Path) -> None:
 def test_load_skip_list_exits_on_io_error(tmp_path: Path) -> None:
     """A missing skip file is a hard error (we do not silently skip filtering)."""
     missing = tmp_path / "does-not-exist.txt"
-    with pytest.raises(SystemExit):
+    with pytest.raises(DiscoveryError):
         load_skip_list(missing)
 
 

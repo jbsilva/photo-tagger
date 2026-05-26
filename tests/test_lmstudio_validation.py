@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from photo_tagger import ai as ai_module
+from photo_tagger.errors import ProviderError
 
 
 class _DummyResponse:
@@ -57,10 +58,10 @@ def test_validate_lmstudio_model_passes_when_list_contains_id(
 
 
 def test_validate_lmstudio_model_exits_when_model_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """SystemExit is raised when the requested model identifier is absent."""
+    """ProviderError is raised when the requested model identifier is absent."""
     payload = {"data": [{"id": "other-model"}]}
     response = _DummyResponse(HTTPStatus.OK, payload)
     _patch_httpx_get(monkeypatch, response)
 
-    with pytest.raises(SystemExit):
+    with pytest.raises(ProviderError):
         ai_module.validate_lmstudio_model("http://localhost:1234/v1", "vision-pro", None)

@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from photo_tagger import ai as ai_module
+from photo_tagger.errors import ProviderError
 
 
 class _DummyResponse:
@@ -24,7 +25,7 @@ class _DummyResponse:
 
 def test_validate_listing_url_rejects_missing_scheme() -> None:
     """A relative URL is caught up-front before httpx is invoked."""
-    with pytest.raises(SystemExit):
+    with pytest.raises(ProviderError):
         ai_module._validate_listing_url(  # noqa: SLF001
             "ftp:///models",
             event_prefix="lmstudio_model_listing",
@@ -33,7 +34,7 @@ def test_validate_listing_url_rejects_missing_scheme() -> None:
 
 def test_validate_listing_url_rejects_missing_host() -> None:
     """A URL with no netloc never reaches the network."""
-    with pytest.raises(SystemExit):
+    with pytest.raises(ProviderError):
         ai_module._validate_listing_url(  # noqa: SLF001
             "http:///models",
             event_prefix="lmstudio_model_listing",
@@ -48,7 +49,7 @@ def test_fetch_lmstudio_models_handles_http_error(monkeypatch: pytest.MonkeyPatc
         raise httpx.ConnectError(msg)
 
     monkeypatch.setattr(httpx, "get", boom)
-    with pytest.raises(SystemExit):
+    with pytest.raises(ProviderError):
         ai_module._fetch_lmstudio_models("http://localhost:1234/v1/models", None)  # noqa: SLF001
 
 
@@ -59,7 +60,7 @@ def test_fetch_lmstudio_models_handles_non_ok_response(monkeypatch: pytest.Monke
         return _DummyResponse(HTTPStatus.SERVICE_UNAVAILABLE, {})
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    with pytest.raises(SystemExit):
+    with pytest.raises(ProviderError):
         ai_module._fetch_lmstudio_models("http://localhost:1234/v1/models", None)  # noqa: SLF001
 
 
@@ -90,7 +91,7 @@ def test_fetch_lmstudio_models_handles_invalid_json(monkeypatch: pytest.MonkeyPa
         return Broken(HTTPStatus.OK, "not json")
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    with pytest.raises(SystemExit):
+    with pytest.raises(ProviderError):
         ai_module._fetch_lmstudio_models("http://localhost:1234/v1/models", None)  # noqa: SLF001
 
 
@@ -140,12 +141,12 @@ def test_validate_ollama_model_strips_v1_suffix_and_validates(
 
 
 def test_validate_ollama_model_exits_when_model_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """SystemExit is raised when the requested model id is not in the local listing."""
+    """ProviderError is raised when the requested model id is not in the local listing."""
     payload = {"models": [{"name": "other-model"}]}
 
     def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
         return _DummyResponse(HTTPStatus.OK, payload)
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    with pytest.raises(SystemExit):
+    with pytest.raises(ProviderError):
         ai_module.validate_ollama_model("http://localhost:11434", "missing", None)

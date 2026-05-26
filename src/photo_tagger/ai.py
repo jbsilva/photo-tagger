@@ -2,7 +2,6 @@
 
 import time
 import urllib.parse
-from dataclasses import dataclass
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Literal
 
@@ -23,7 +22,8 @@ from photo_tagger.config import (
     DEFAULT_USER_PROMPT,
     PROVIDER_URLS,
 )
-from photo_tagger.models import GeneratedMetadata
+from photo_tagger.errors import ProviderError
+from photo_tagger.models import GeneratedMetadata, InferenceResult
 
 
 if TYPE_CHECKING:
@@ -49,11 +49,13 @@ def _validate_listing_url(url: str, *, event_prefix: str) -> None:
     """Reject malformed URLs before we hit the network."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"}:
+        msg = f"Invalid URL scheme {parsed.scheme!r} for {url}"
         logger.error(f"{event_prefix}_invalid_scheme", url=url, scheme=parsed.scheme)
-        raise SystemExit(1)
+        raise ProviderError(msg)
     if not parsed.netloc:
+        msg = f"Missing host in URL {url}"
         logger.error(f"{event_prefix}_missing_host", url=url)
-        raise SystemExit(1)
+        raise ProviderError(msg)
 
 
 def _fetch_listing(url: str, api_key: str | None, *, event_prefix: str) -> dict[str, object]:
@@ -65,22 +67,24 @@ def _fetch_listing(url: str, api_key: str | None, *, event_prefix: str) -> dict[
         response = httpx.get(url, headers=headers, timeout=5.0)
     except httpx.HTTPError as exc:
         logger.error(f"{event_prefix}_error", error=str(exc), url=url)
-        raise SystemExit(1) from exc
+        raise ProviderError(str(exc)) from exc
 
     if response.status_code != HTTPStatus.OK:
+        body = _truncate_for_log(response.text)
         logger.error(
             f"{event_prefix}_failed",
             status=response.status_code,
             url=url,
-            body=_truncate_for_log(response.text),
+            body=body,
         )
-        raise SystemExit(1)
+        msg = f"HTTP {response.status_code} from {url}: {body}"
+        raise ProviderError(msg)
 
     try:
         return response.json()  # type: ignore[no-any-return]
     except ValueError as exc:
         logger.error(f"{event_prefix}_invalid_json", error=str(exc), url=url)
-        raise SystemExit(1) from exc
+        raise ProviderError(str(exc)) from exc
 
 
 def _fetch_lmstudio_models(url: str, api_key: str | None) -> list[str]:
@@ -109,8 +113,9 @@ def validate_lmstudio_model(api_base_url: str, model_name: str, api_key: str | N
     _validate_listing_url(url, event_prefix="lmstudio_model_listing")
     models = _fetch_lmstudio_models(url, api_key)
     if model_name not in models:
+        msg = f"Model {model_name!r} not available in LM Studio (available: {models})"
         logger.error("lmstudio_model_not_available", requested=model_name, available=models)
-        raise SystemExit(1)
+        raise ProviderError(msg)
     logger.debug("lmstudio_model_validated", model=model_name)
 
 
@@ -127,8 +132,9 @@ def validate_ollama_model(api_base_url: str, model_name: str, api_key: str | Non
     _validate_listing_url(url, event_prefix="ollama_model_listing")
     models = _fetch_ollama_models(url, api_key)
     if model_name not in models:
+        msg = f"Model {model_name!r} not available in Ollama (available: {models})"
         logger.error("ollama_model_not_available", requested=model_name, available=models)
-        raise SystemExit(1)
+        raise ProviderError(msg)
     logger.debug("ollama_model_validated", model=model_name)
 
 
@@ -172,19 +178,6 @@ def create_agent(
         retries=retries,
         system_prompt=DEFAULT_SYSTEM_PROMPT,
     )
-
-
-@dataclass(slots=True, frozen=True)
-class InferenceResult:
-    """One vision-language model call with token usage and wall time captured."""
-
-    title: str
-    description: str
-    keywords: list[str]
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    seconds: float = 0.0
 
 
 def _extract_usage(usage: object | None) -> tuple[int, int, int]:

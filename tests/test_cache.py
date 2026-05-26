@@ -3,8 +3,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
-from photo_tagger.ai import InferenceResult
 from photo_tagger.cache import InferenceCache, build_cache_namespace, hash_image_file
+from photo_tagger.models import InferenceResult
 
 
 if TYPE_CHECKING:

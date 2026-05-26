@@ -7,8 +7,9 @@ from unittest.mock import patch
 import pytest
 from pydantic_ai import BinaryContent
 
-from photo_tagger.ai import InferenceResult
+from photo_tagger.errors import BatchError
 from photo_tagger.metadata import ImageContext
+from photo_tagger.models import InferenceResult
 from photo_tagger.pipeline import (
     ProcessingOptions,
     _UsageAccumulator,
@@ -195,13 +196,13 @@ def test_run_batch_succeeds_when_all_pass(tmp_path: Path) -> None:
 
 
 def test_run_batch_raises_system_exit_when_any_fails_after_retry(tmp_path: Path) -> None:
-    """A file that keeps failing forces a SystemExit so CI marks the run as failed."""
+    """A file that keeps failing raises BatchError so CI marks the run as failed."""
     files = [tmp_path / "img.cr3"]
     files[0].write_text("x")
 
     with (
         patch("photo_tagger.pipeline.process_photo", return_value=False),
-        pytest.raises(SystemExit),
+        pytest.raises(BatchError),
     ):
         run_batch(files, agent=_FAKE_AGENT, options=ProcessingOptions())
 
@@ -249,7 +250,7 @@ def test_run_batch_calls_on_success_for_each_completed_file(tmp_path: Path) -> N
 
     with (
         patch("photo_tagger.pipeline.process_photo", side_effect=fake_process_photo),
-        pytest.raises(SystemExit),
+        pytest.raises(BatchError),
     ):
         run_batch(
             [success_first, success_retry, failure],
@@ -388,14 +389,14 @@ def test_run_batch_aggregates_token_usage_from_inference(tmp_path: Path) -> None
 
 
 def test_run_batch_calls_on_complete_with_totals_even_on_failure(tmp_path: Path) -> None:
-    """on_complete fires before SystemExit so the CLI can persist a summary file."""
+    """on_complete fires before BatchError so the CLI can persist a summary file."""
     files = [tmp_path / "img.cr3"]
     files[0].write_text("x")
     received: list[Any] = []
 
     with (
         patch("photo_tagger.pipeline.process_photo", return_value=False),
-        pytest.raises(SystemExit),
+        pytest.raises(BatchError),
     ):
         run_batch(
             files,
@@ -568,7 +569,7 @@ def test_run_batch_serial_handles_keyboard_interrupt(tmp_path: Path) -> None:
     received_totals: list[Any] = []
     with (
         patch("photo_tagger.pipeline.process_photo", side_effect=fake_process_photo),
-        pytest.raises(SystemExit),
+        pytest.raises(BatchError),
     ):
         run_batch(
             files,

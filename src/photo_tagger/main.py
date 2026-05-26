@@ -49,6 +49,7 @@ from photo_tagger.discovery import (
     make_skip_list_appender,
     resolve_image_batch,
 )
+from photo_tagger.errors import PhotoTaggerError
 from photo_tagger.locking import FileLock, LockHeldError
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
@@ -730,21 +731,24 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
                 )
                 raise SystemExit(1) from exc
 
-        _tag_inside_lock(
-            inputs=inputs,
-            skip_from=skip_from,
-            append_to_skip_file=append_to_skip_file,
-            image_extensions=image_extensions,
-            recursive=recursive,
-            workers=workers,
-            filter_=filter_,
-            display=display,
-            artifacts=artifacts,
-            provider=provider,
-            output=output,
-            inference=inference,
-            log=log,
-        )
+        try:
+            _tag_inside_lock(
+                inputs=inputs,
+                skip_from=skip_from,
+                append_to_skip_file=append_to_skip_file,
+                image_extensions=image_extensions,
+                recursive=recursive,
+                workers=workers,
+                filter_=filter_,
+                display=display,
+                artifacts=artifacts,
+                provider=provider,
+                output=output,
+                inference=inference,
+                log=log,
+            )
+        except PhotoTaggerError as exc:
+            raise SystemExit(1) from exc
 
 
 def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one.

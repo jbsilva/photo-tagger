@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from photo_tagger.ai import InferenceResult
+from photo_tagger.models import InferenceResult
 
 
 if TYPE_CHECKING:

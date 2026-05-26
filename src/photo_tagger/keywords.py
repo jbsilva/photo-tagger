@@ -56,25 +56,25 @@ def parse_hierarchical_keyword(keyword: str) -> tuple[str, list[str]]:
     return ("|".join(parts_reversed), parts_reversed)
 
 
-def normalize_chain_parts(parts: Iterable[str]) -> list[str]:
+def _normalize_chain_parts(parts: Iterable[str]) -> list[str]:
     """
     Return Title Case chain segments, skipping blanks.
 
     Examples:
-        >>> normalize_chain_parts([" duck ", "Bird", ""])
+        >>> _normalize_chain_parts([" duck ", "Bird", ""])
         ['Duck', 'Bird']
 
     """
     return [segment.strip().title() for segment in parts if segment and segment.strip()]
 
 
-def register_chain(registry: dict[str, list[str]], chain: list[str]) -> None:
+def _register_chain(registry: dict[str, list[str]], chain: list[str]) -> None:
     """
     Keep the longest chain for each leaf.
 
     Examples:
         >>> reg: dict[str, list[str]] = {}
-        >>> register_chain(reg, ["Animal", "Bird"])
+        >>> _register_chain(reg, ["Animal", "Bird"])
         >>> reg["bird"]
         ['Animal', 'Bird']
 
@@ -87,23 +87,23 @@ def register_chain(registry: dict[str, list[str]], chain: list[str]) -> None:
         registry[leaf_key] = chain
 
 
-def seed_longest_from_existing(hierarchical_keywords: Iterable[str]) -> dict[str, list[str]]:
+def _seed_longest_from_existing(hierarchical_keywords: Iterable[str]) -> dict[str, list[str]]:
     """
     Prime the longest-chain registry with existing hierarchical entries.
 
     Examples:
-        >>> seed_longest_from_existing(["Animal|Bird", "Plant"])
+        >>> _seed_longest_from_existing(["Animal|Bird", "Plant"])
         {'bird': ['Animal', 'Bird']}
 
     """
     registry: dict[str, list[str]] = {}
     for entry in hierarchical_keywords:
-        normalized = normalize_chain_parts(entry.split("|"))
-        register_chain(registry, normalized)
+        normalized = _normalize_chain_parts(entry.split("|"))
+        _register_chain(registry, normalized)
     return registry
 
 
-def process_new_keywords(
+def _process_new_keywords(
     new_keywords: list[str],
     subject_seen: set[str],
     subject_acc: list[str],
@@ -129,7 +129,7 @@ def process_new_keywords(
     added_subjects: list[str] = []
     for keyword in new_keywords:
         _, parts = parse_hierarchical_keyword(keyword)
-        normalized = normalize_chain_parts(parts)
+        normalized = _normalize_chain_parts(parts)
         if not normalized:
             continue
         for flat_kw in normalized:
@@ -140,11 +140,11 @@ def process_new_keywords(
             weighted_acc.append(flat_kw)
             added_subjects.append(flat_kw)
             subject_seen.add(key)
-        register_chain(chain_registry, normalized)
+        _register_chain(chain_registry, normalized)
     return added_subjects
 
 
-def collect_cumulative_entries(
+def _collect_cumulative_entries(
     chain_registry: dict[str, list[str]],
     hierarchical_seen: set[str],
 ) -> list[str]:
@@ -223,15 +223,15 @@ def merge_keywords(
     subject_seen = {kw.casefold() for kw in existing_subject}
     hierarchical_seen = {kw.casefold() for kw in existing_hierarchical}
 
-    chain_registry = seed_longest_from_existing(existing_hierarchical)
-    new_subjects = process_new_keywords(
+    chain_registry = _seed_longest_from_existing(existing_hierarchical)
+    new_subjects = _process_new_keywords(
         new_keywords,
         subject_seen,
         existing_subject,
         existing_weighted,
         chain_registry,
     )
-    new_hierarchical = collect_cumulative_entries(chain_registry, hierarchical_seen)
+    new_hierarchical = _collect_cumulative_entries(chain_registry, hierarchical_seen)
 
     merged = {
         "subject": existing_subject,

@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING
 
 from photo_tagger.discovery import parse_extensions, resolve_image_files
 from photo_tagger.keywords import (
-    collect_cumulative_entries,
+    _collect_cumulative_entries,
+    _normalize_chain_parts,
+    _process_new_keywords,
     merge_keywords,
-    normalize_chain_parts,
     parse_hierarchical_keyword,
-    process_new_keywords,
 )
 from photo_tagger.metadata import build_contextual_prompt
 
@@ -48,7 +48,7 @@ def test_parse_hierarchical_keyword_strips_trailing_gt() -> None:
 
 def test_normalize_chain_parts_title_cases_and_omits_blanks() -> None:
     """Whitespace and empty segments are ignored while remaining entries become Title Case."""
-    result = normalize_chain_parts([" duck ", "", "sea-lion", "bird"])
+    result = _normalize_chain_parts([" duck ", "", "sea-lion", "bird"])
     assert result == ["Duck", "Sea-Lion", "Bird"]
 
 
@@ -59,7 +59,7 @@ def test_process_new_keywords_updates_subjects_and_registry() -> None:
     seen = {"beach"}
     registry: dict[str, list[str]] = {"eagle": ["Animal", "Bird", "Eagle"]}
 
-    added = process_new_keywords(
+    added = _process_new_keywords(
         ["Duck<Bird<Animal", "cloud"],
         seen,
         subjects,
@@ -78,10 +78,10 @@ def test_collect_cumulative_entries_skips_duplicates() -> None:
     chains = {"duck": ["Animal", "Bird", "Duck"]}
     seen: set[str] = set()
 
-    first_pass = collect_cumulative_entries(chains, seen)
+    first_pass = _collect_cumulative_entries(chains, seen)
     assert first_pass == ["Animal|Bird", "Animal|Bird|Duck"]
 
-    second_pass = collect_cumulative_entries(chains, seen)
+    second_pass = _collect_cumulative_entries(chains, seen)
     assert second_pass == []
 
 

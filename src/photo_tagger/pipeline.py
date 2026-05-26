@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from photo_tagger.ai import InferenceResult, analyze_image_with_ai
+from photo_tagger.ai import analyze_image_with_ai
 from photo_tagger.cache import InferenceCache, hash_image_file
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
@@ -17,6 +17,7 @@ from photo_tagger.config import (
     DEFAULT_TEMPERATURE,
     DEFAULT_USER_PROMPT,
 )
+from photo_tagger.errors import BatchError
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
 from photo_tagger.metadata import (
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
     from exiftool import ExifToolHelper  # type: ignore[attr-defined]
     from pydantic_ai import Agent
 
-    from photo_tagger.models import GeneratedMetadata
+    from photo_tagger.models import GeneratedMetadata, InferenceResult
 
     OnSuccess = Callable[[Path], None]
     ProgressCallback = Callable[[Path, bool], None]
@@ -753,5 +754,5 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
             logger.exception("on_complete_callback_failed", error=str(exc))
 
     if totals.success < len(image_files):
-        raise SystemExit(1)
+        raise BatchError(totals)
     return totals
