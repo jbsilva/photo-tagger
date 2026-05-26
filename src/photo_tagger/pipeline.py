@@ -124,6 +124,25 @@ class _UsageAccumulator:
             self.cache_hits += 1
 
 
+@dataclass(slots=True)
+class _BatchContext:
+    """
+    Shared state threaded through every function in a single run_batch call.
+
+    Bundles the agent, options, callbacks, and accumulator so individual
+    functions don't need 10+ keyword arguments each.
+    """
+
+    agent: Agent[None, GeneratedMetadata]
+    options: ProcessingOptions
+    user_prompt: str
+    usage: _UsageAccumulator
+    cache: InferenceCache | None = None
+    on_success: OnSuccess | None = None
+    on_image_result: OnImageResult | None = None
+    progress: ProgressCallback | None = None
+
+
 def _cache_lookup(
     cache: InferenceCache,
     image_path: Path,
@@ -162,14 +181,11 @@ def _cache_store(
         logger.warning("inference_cache_put_failed", file=file_name, error=str(exc))
 
 
-def _resolve_inference(  # noqa: PLR0913 - cache lookup needs every model knob to call.
+def _resolve_inference(
     image_path: Path,
-    agent: Agent[None, GeneratedMetadata],
-    options: ProcessingOptions,
+    ctx: _BatchContext,
     *,
     contextual_prompt: str,
-    cache: InferenceCache | None,
-    usage: _UsageAccumulator | None,
 ) -> tuple[InferenceResult, bool]:
     """
     Return ``(inference, from_cache)`` for *image_path*.
@@ -183,42 +199,36 @@ def _resolve_inference(  # noqa: PLR0913 - cache lookup needs every model knob t
     photos that the model would otherwise process successfully.
     """
     cache_key: str | None = None
-    if cache is not None:
-        cache_key, cached = _cache_lookup(cache, image_path)
+    if ctx.cache is not None:
+        cache_key, cached = _cache_lookup(ctx.cache, image_path)
         if cached is not None:
             logger.info("cache_hit", file=image_path.name)
-            if usage is not None:
-                usage.add_cache_hit()
+            ctx.usage.add_cache_hit()
             return cached, True
 
     jpeg_bytes = prepare_image_for_agent(
         image_path,
-        jpg_quality=options.jpeg_quality,
-        max_size=options.jpeg_dimensions,
+        jpg_quality=ctx.options.jpeg_quality,
+        max_size=ctx.options.jpeg_dimensions,
     )
     inference = analyze_image_with_ai(
         image_bytes=jpeg_bytes,
-        agent=agent,
+        agent=ctx.agent,
         user_prompt=contextual_prompt,
-        temperature=options.temperature,
-        max_tokens=options.max_tokens,
+        temperature=ctx.options.temperature,
+        max_tokens=ctx.options.max_tokens,
     )
-    if usage is not None:
-        usage.add(inference)
-    if cache is not None and cache_key is not None:
-        _cache_store(cache, cache_key, inference, file_name=image_path.name)
+    ctx.usage.add(inference)
+    if ctx.cache is not None and cache_key is not None:
+        _cache_store(ctx.cache, cache_key, inference, file_name=image_path.name)
     return inference, False
 
 
-def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions plus context.
+def process_photo(
     image_path: Path,
-    agent: Agent[None, GeneratedMetadata],
-    options: ProcessingOptions,
+    ctx: _BatchContext,
     *,
     et: ExifToolHelper | None = None,
-    user_prompt: str = DEFAULT_USER_PROMPT,
-    usage: _UsageAccumulator | None = None,
-    cache: InferenceCache | None = None,
     outcome_sink: dict[str, Any] | None = None,
 ) -> bool:
     """
@@ -226,20 +236,12 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
 
     Args:
         image_path: Image to process.
-        agent: Configured pydantic-ai agent that returns the metadata schema.
-        options: Per-photo settings (sampling, sidecar mode, dry-run, etc.).
+        ctx: Shared batch context (agent, options, user_prompt, cache, usage).
         et: Optional pre-opened ExifToolHelper. Reused for every read/write in this call
             when supplied, otherwise one helper is opened for the duration of this photo.
             Concurrent callers must NOT share a helper across threads (the underlying
             -stay_open subprocess uses a single stdin/stdout pipe); pass et=None instead
             and let each task get its own.
-        user_prompt: Base prompt; existing photo metadata is appended automatically.
-        usage: Optional thread-safe accumulator. When given, the AI call's token counts
-            and latency are folded into it. ``run_batch`` passes one shared accumulator
-            so the BatchTotals at the end of the run reflect every photo.
-        cache: Optional InferenceCache. When supplied, the photo's content hash is
-            looked up first; a hit reuses the cached title/description/keywords and
-            skips both image preparation and the model call.
         outcome_sink: Optional per-call scratch dict. When provided, this function
             populates ``inference`` (InferenceResult) and ``from_cache`` (bool) so the
             caller can wrap them into an ImageOutcome without retracing the work.
@@ -249,6 +251,7 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
 
     """
     logger.info("processing_photo")
+    options = ctx.options
 
     with managed_helper(et) as helper:
         context = read_image_context(image_path, et=helper)
@@ -261,7 +264,7 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
 
         gps_info = {"position": context.gps_position} if context.gps_position else {}
         contextual_prompt = build_contextual_prompt(
-            user_prompt,
+            ctx.user_prompt,
             list(dict.fromkeys(existing_keywords_full.get("subject", []))),
             context.location_tags,
             gps_info,
@@ -270,11 +273,8 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
 
         inference, from_cache = _resolve_inference(
             image_path,
-            agent,
-            options,
+            ctx,
             contextual_prompt=contextual_prompt,
-            cache=cache,
-            usage=usage,
         )
         if outcome_sink is not None:
             outcome_sink["inference"] = inference
@@ -348,18 +348,13 @@ def _emit_outcome(
         logger.exception("on_image_result_callback_failed", file=image_file.name, error=str(exc))
 
 
-def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_photo.
+def execute_process(
     image_file: Path,
-    agent: Agent[None, GeneratedMetadata],
-    options: ProcessingOptions,
+    ctx: _BatchContext,
     *,
     index: str,
     retry: bool = False,
     et: ExifToolHelper | None = None,
-    user_prompt: str = DEFAULT_USER_PROMPT,
-    usage: _UsageAccumulator | None = None,
-    cache: InferenceCache | None = None,
-    on_image_result: OnImageResult | None = None,
 ) -> bool:
     """Run process_photo once with consistent logging and error handling."""
     context_kwargs: dict[str, Any] = {"file": image_file.name}
@@ -371,31 +366,27 @@ def execute_process(  # noqa: PLR0913 - extra kwargs are passthrough to process_
         try:
             ok = process_photo(
                 image_file,
-                agent,
-                options,
+                ctx,
                 et=et,
-                user_prompt=user_prompt,
-                usage=usage,
-                cache=cache,
                 outcome_sink=scratch,
             )
         except Exception as exc:  # noqa: BLE001 - process_photo wraps several SDKs
             event = "processing_retry_exception" if retry else "processing_exception"
             logger.exception(event, error=str(exc))
-            _emit_outcome(on_image_result, image_file, scratch, success=False, retry=retry)
+            _emit_outcome(ctx.on_image_result, image_file, scratch, success=False, retry=retry)
             return False
 
         if ok:
             event = "retry_success" if retry else "processing_success"
             logger.info(event, index=index)
-            _emit_outcome(on_image_result, image_file, scratch, success=True, retry=retry)
+            _emit_outcome(ctx.on_image_result, image_file, scratch, success=True, retry=retry)
             return True
 
         if retry:
             logger.error("retry_failed", index=index)
         else:
             logger.error("processing_failed", index=index, queued_for_retry=True)
-        _emit_outcome(on_image_result, image_file, scratch, success=False, retry=retry)
+        _emit_outcome(ctx.on_image_result, image_file, scratch, success=False, retry=retry)
         return False
 
 
@@ -437,19 +428,12 @@ def _notify_success(on_success: OnSuccess | None, image_file: Path) -> None:
         logger.exception("on_success_callback_failed", file=image_file.name, error=str(exc))
 
 
-def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_process.
+def _run_pass_serial(
     image_files: list[Path],
-    agent: Agent[None, GeneratedMetadata],
-    options: ProcessingOptions,
+    ctx: _BatchContext,
     *,
     retry: bool,
     et: ExifToolHelper | None,
-    user_prompt: str,
-    on_success: OnSuccess | None,
-    progress: ProgressCallback | None,
-    usage: _UsageAccumulator | None,
-    cache: InferenceCache | None,
-    on_image_result: OnImageResult | None,
 ) -> tuple[int, list[Path], bool]:
     """
     Run *image_files* one after another in the calling thread.
@@ -466,15 +450,10 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
         try:
             ok = execute_process(
                 image_file,
-                agent,
-                options,
+                ctx,
                 index=f"{idx}/{total}",
                 retry=retry,
                 et=et,
-                user_prompt=user_prompt,
-                usage=usage,
-                cache=cache,
-                on_image_result=on_image_result,
             )
         except KeyboardInterrupt:
             logger.warning("batch_interrupted_by_user", remaining=total - idx + 1)
@@ -482,31 +461,24 @@ def _run_pass_serial(  # noqa: PLR0913 - pass-through arguments to execute_proce
             return successes, failed, True
         if ok:
             successes += 1
-            _notify_success(on_success, image_file)
+            _notify_success(ctx.on_success, image_file)
         elif retry:
             logger.error("file_failed_after_retry", file=image_file.name)
             failed.append(image_file)
         else:
             logger.warning("file_queued_for_retry", file=image_file.name)
             failed.append(image_file)
-        if progress is not None:
-            progress(image_file, ok)
+        if ctx.progress is not None:
+            ctx.progress(image_file, ok)
     return successes, failed, False
 
 
-def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_process.
+def _run_pass_concurrent(
     image_files: list[Path],
-    agent: Agent[None, GeneratedMetadata],
-    options: ProcessingOptions,
+    ctx: _BatchContext,
     *,
     retry: bool,
-    user_prompt: str,
-    on_success: OnSuccess | None,
     workers: int,
-    progress: ProgressCallback | None,
-    usage: _UsageAccumulator | None,
-    cache: InferenceCache | None,
-    on_image_result: OnImageResult | None,
 ) -> tuple[int, list[Path], bool]:
     """
     Run *image_files* across a thread pool. Each task gets its own ExifToolHelper.
@@ -532,15 +504,10 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
             pool.submit(
                 execute_process,
                 image_file,
-                agent,
-                options,
+                ctx,
                 index=f"{idx}/{total}",
                 retry=retry,
                 et=None,
-                user_prompt=user_prompt,
-                usage=usage,
-                cache=cache,
-                on_image_result=on_image_result,
             ): image_file
             for idx, image_file in indexed
         }
@@ -559,15 +526,15 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
 
                 if ok:
                     successes += 1
-                    _notify_success(on_success, image_file)
+                    _notify_success(ctx.on_success, image_file)
                 elif retry:
                     logger.error("file_failed_after_retry", file=image_file.name)
                     failed.append(image_file)
                 else:
                     logger.warning("file_queued_for_retry", file=image_file.name)
                     failed.append(image_file)
-                if progress is not None:
-                    progress(image_file, ok)
+                if ctx.progress is not None:
+                    ctx.progress(image_file, ok)
         except KeyboardInterrupt:
             interrupted = True
             pending = [img for fut, img in future_to_image.items() if not fut.done()]
@@ -579,20 +546,13 @@ def _run_pass_concurrent(  # noqa: PLR0913 - pass-through arguments to execute_p
     return successes, failed, interrupted
 
 
-def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
+def _run_pass(
     image_files: list[Path],
-    agent: Agent[None, GeneratedMetadata],
-    options: ProcessingOptions,
+    ctx: _BatchContext,
     *,
     retry: bool,
     et: ExifToolHelper | None,
-    user_prompt: str,
-    on_success: OnSuccess | None,
     workers: int,
-    progress: ProgressCallback | None,
-    usage: _UsageAccumulator | None,
-    cache: InferenceCache | None,
-    on_image_result: OnImageResult | None,
 ) -> tuple[int, list[Path], bool]:
     """
     Run a single pass (initial or retry) over the batch.
@@ -612,33 +572,19 @@ def _run_pass(  # noqa: PLR0913 - dispatch to serial or concurrent worker.
     if workers <= 1:
         return _run_pass_serial(
             image_files,
-            agent,
-            options,
+            ctx,
             retry=retry,
             et=et,
-            user_prompt=user_prompt,
-            on_success=on_success,
-            progress=progress,
-            usage=usage,
-            cache=cache,
-            on_image_result=on_image_result,
         )
     return _run_pass_concurrent(
         image_files,
-        agent,
-        options,
+        ctx,
         retry=retry,
-        user_prompt=user_prompt,
-        on_success=on_success,
         workers=workers,
-        progress=progress,
-        usage=usage,
-        cache=cache,
-        on_image_result=on_image_result,
     )
 
 
-def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
+def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct caller knob.
     image_files: list[Path],
     agent: Agent[None, GeneratedMetadata],
     options: ProcessingOptions,
@@ -675,20 +621,24 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
         if on_success is not None:
             on_success(path)
 
+    ctx = _BatchContext(
+        agent=agent,
+        options=options,
+        user_prompt=user_prompt,
+        usage=usage,
+        cache=cache,
+        on_success=_record_success,
+        on_image_result=on_image_result,
+        progress=progress,
+    )
+
     with managed_helper(None) if workers <= 1 else _no_helper() as et:
         success, pending, interrupted = _run_pass(
             image_files,
-            agent,
-            options,
+            ctx,
             retry=False,
             et=et,
-            user_prompt=user_prompt,
-            on_success=_record_success,
             workers=workers,
-            progress=progress,
-            usage=usage,
-            cache=cache,
-            on_image_result=on_image_result,
         )
         if interrupted:
             # Don't retry after the user asked us to stop. Mark everything that
@@ -696,20 +646,17 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
             retry_successes = 0
             still_failing = pending
         else:
+            # Suppress the progress bar during retries.
+            saved_progress = ctx.progress
+            ctx.progress = None
             retry_successes, still_failing, _ = _run_pass(
                 pending,
-                agent,
-                options,
+                ctx,
                 retry=True,
                 et=et,
-                user_prompt=user_prompt,
-                on_success=_record_success,
                 workers=workers,
-                progress=None,
-                usage=usage,
-                cache=cache,
-                on_image_result=on_image_result,
             )
+            ctx.progress = saved_progress
 
     totals = BatchTotals(
         total_files=len(image_files),

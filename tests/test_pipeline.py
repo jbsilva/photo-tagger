@@ -12,6 +12,7 @@ from photo_tagger.metadata import ImageContext
 from photo_tagger.models import InferenceResult
 from photo_tagger.pipeline import (
     ProcessingOptions,
+    _BatchContext,
     _UsageAccumulator,
     execute_process,
     process_photo,
@@ -29,6 +30,22 @@ if TYPE_CHECKING:
 
 # Pipeline tests patch every IO call, so the agent value never gets touched.
 _FAKE_AGENT = cast("Agent[None, GeneratedMetadata]", object())
+
+
+def _ctx(
+    *,
+    options: ProcessingOptions | None = None,
+    cache: object | None = None,
+    usage: _UsageAccumulator | None = None,
+) -> _BatchContext:
+    """Build a minimal _BatchContext for unit tests."""
+    return _BatchContext(
+        agent=_FAKE_AGENT,
+        options=options or ProcessingOptions(),
+        user_prompt="",
+        usage=usage or _UsageAccumulator(),
+        cache=cache,  # type: ignore[arg-type]
+    )
 
 
 @contextlib.contextmanager
@@ -85,7 +102,7 @@ def test_process_photo_writes_metadata(
     image.write_text("x")
     options = ProcessingOptions()
 
-    assert process_photo(image, agent=_FAKE_AGENT, options=options) is True
+    assert process_photo(image, _ctx(options=options)) is True
 
     write_call = patched_pipeline["write"].call_args
     kwargs = write_call.kwargs
@@ -105,7 +122,7 @@ def test_process_photo_skips_optional_fields_when_disabled(
     image.write_text("x")
     options = ProcessingOptions(write_description=False, write_title=False)
 
-    process_photo(image, agent=_FAKE_AGENT, options=options)
+    process_photo(image, _ctx(options=options))
 
     kwargs = patched_pipeline["write"].call_args.kwargs
     assert kwargs["description"] is None
@@ -120,7 +137,7 @@ def test_process_photo_returns_false_when_write_fails(
     patched_pipeline["write"].return_value = False
     image = tmp_path / "img.cr3"
     image.write_text("x")
-    assert process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions()) is False
+    assert process_photo(image, _ctx()) is False
 
 
 @pytest.mark.usefixtures("patched_pipeline")
@@ -130,7 +147,7 @@ def test_process_photo_folds_token_usage_into_accumulator(tmp_path: Path) -> Non
     image.write_text("x")
     usage = _UsageAccumulator()
 
-    process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions(), usage=usage)
+    process_photo(image, _ctx(usage=usage))
 
     expected_input = 10
     expected_output = 5
@@ -151,7 +168,7 @@ def test_process_photo_dry_run_skips_write_metadata(
     image.write_text("x")
     options = ProcessingOptions(dry_run=True)
 
-    assert process_photo(image, agent=_FAKE_AGENT, options=options) is True
+    assert process_photo(image, _ctx(options=options)) is True
     patched_pipeline["write"].assert_not_called()
 
 
@@ -161,7 +178,7 @@ def test_execute_process_returns_false_on_exception(tmp_path: Path) -> None:
     image.write_text("x")
 
     with patch("photo_tagger.pipeline.process_photo", side_effect=RuntimeError("boom")):
-        ok = execute_process(image, agent=_FAKE_AGENT, options=ProcessingOptions(), index="1/1")
+        ok = execute_process(image, _ctx(), index="1/1")
     assert ok is False
 
 
@@ -172,8 +189,7 @@ def test_execute_process_logs_retry_path(tmp_path: Path) -> None:
     with patch("photo_tagger.pipeline.process_photo", return_value=True):
         ok = execute_process(
             image,
-            agent=_FAKE_AGENT,
-            options=ProcessingOptions(),
+            _ctx(),
             index="1/1",
             retry=True,
         )
@@ -463,7 +479,7 @@ def test_process_photo_skips_ai_call_on_cache_hit(
     cache = _StubCache()
     options = ProcessingOptions()
 
-    assert process_photo(image, agent=_FAKE_AGENT, options=options, cache=cache) is True  # type: ignore[arg-type]
+    assert process_photo(image, _ctx(options=options, cache=cache)) is True
 
     # The AI call must have been skipped entirely.
     patched_pipeline["analyze"].assert_not_called()
@@ -493,7 +509,7 @@ def test_process_photo_writes_to_cache_on_miss(
             self.put_calls.append((key, result))
 
     cache = _StubCache()
-    process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions(), cache=cache)  # type: ignore[arg-type]
+    process_photo(image, _ctx(cache=cache))
 
     patched_pipeline["analyze"].assert_called_once()
     assert len(cache.put_calls) == 1
@@ -521,7 +537,7 @@ def test_process_photo_survives_cache_get_raising(
             self.put_calls += 1
 
     cache = _ExplodingCache()
-    ok = process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions(), cache=cache)  # type: ignore[arg-type]
+    ok = process_photo(image, _ctx(cache=cache))
 
     assert ok is True
     patched_pipeline["analyze"].assert_called_once()
@@ -545,7 +561,7 @@ def test_process_photo_survives_cache_put_raising(
             msg = "disk full"
             raise OSError(msg)
 
-    ok = process_photo(image, agent=_FAKE_AGENT, options=ProcessingOptions(), cache=_PutExploder())  # type: ignore[arg-type]
+    ok = process_photo(image, _ctx(cache=_PutExploder()))
 
     assert ok is True
     patched_pipeline["write"].assert_called_once()
