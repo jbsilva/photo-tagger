@@ -19,6 +19,7 @@ exif
 Exif
 exiftool
 Exiftool
+filelock
 fromarray
 fstrings
 ftruncate

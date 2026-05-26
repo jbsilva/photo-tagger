@@ -29,6 +29,7 @@ classifiers = [
 ]
 dependencies = [
     "cyclopts>=4.16.1",
+    "filelock>=3.29.0",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
     "pillow>=12.2.0",

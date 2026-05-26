@@ -1523,6 +1523,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "cyclopts" },
+    { name = "filelock" },
     { name = "httpx" },
     { name = "loguru" },
     { name = "pillow" },
@@ -1551,6 +1552,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "cyclopts", specifier = ">=4.16.1" },
+    { name = "filelock", specifier = ">=3.29.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "pillow", specifier = ">=12.2.0" },

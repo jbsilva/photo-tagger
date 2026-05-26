@@ -51,8 +51,6 @@ _HOLDER_SCRIPT = textwrap.dedent(
     from photo_tagger.locking import FileLock
 
     with FileLock(Path(sys.argv[1])):
-        # Print a sentinel to stdout so the parent knows the lock is held, then
-        # wait for the parent to either send SIGTERM or for the timeout to elapse.
         print("ACQUIRED", flush=True)
         time.sleep(float(sys.argv[2]))
     """,
