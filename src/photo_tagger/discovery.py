@@ -76,7 +76,7 @@ def resolve_image_files(
 
     for path in inputs:
         path_resolved = path
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(OSError):
             path_resolved = path.resolve()
         if path_resolved.is_dir():
             files_from_dirs.extend(
