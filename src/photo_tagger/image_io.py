@@ -68,8 +68,10 @@ def _open_image(image_path: Path) -> Image.Image:
     # with rotation/mirror EXIF applied, so the model sees the image upright.
     with Image.open(image_path) as img:
         img.load()
-        rotated = ImageOps.exif_transpose(img)
-    return rotated if rotated is not None else img
+        # exif_transpose returns None when no EXIF orientation tag exists.
+        # img.load() pre-loaded pixel data so img is usable after the with-block,
+        # but returning from inside the block is cleaner.
+        return ImageOps.exif_transpose(img) or img
 
 
 def _flatten_alpha(img: Image.Image) -> Image.Image:
