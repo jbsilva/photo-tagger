@@ -1,0 +1,76 @@
+# photo-tagger config example
+#
+# Copy this file to one of the locations below and uncomment the keys you want.
+# Search order (first match wins):
+#   1. $PHOTO_TAGGER_CONFIG
+#   2. ./.photo-tagger.toml                 (project-local)
+#   3. ~/.config/photo-tagger/config.toml   (user-wide)
+#
+# CLI flags always win over values set here.
+#
+# Note: input paths, --skip-from, and --append-to-skip-file are NOT read from
+# this file. Pass them on the command line each run.
+
+# --- top-level ----------------------------------------------------------------
+
+# extensions = "cr3,jpg"      # comma-separated, case insensitive
+# recursive = false
+# workers = 1                 # photos processed concurrently
+
+# --- provider -----------------------------------------------------------------
+
+[provider]
+# provider_name = "lmstudio"  # "ollama" or "lmstudio"
+# api_base_url = "http://localhost:1234/v1"
+# model_name = "qwen/qwen3-vl-30b"
+# api_key = "..."             # prefer env vars: LM_STUDIO_API_KEY, OLLAMA_API_KEY, OPENAI_API_KEY
+# retries = 5
+
+# --- inference ----------------------------------------------------------------
+
+[inference]
+# temperature = 0.2
+# max_tokens = 1200
+# timeout_seconds = 60.0      # per-image hard cap; retry loop handles the abort
+# frequency_penalty = 0.5     # suppresses chant-style token loops
+# jpeg_dimensions = 1280      # max edge of the resized JPEG sent to the model
+# jpeg_quality = 80
+
+# --- output -------------------------------------------------------------------
+
+[output]
+# preserve_keywords = true    # false = overwrite existing keywords
+# write_description = true
+# write_title = true
+# backup_xmp = true           # ExifTool _original backup
+# use_sidecar = true          # false = embed metadata in the image file
+# dry_run = false
+# max_keywords = 15           # cap AI keywords kept per photo before merging
+
+# --- filter -------------------------------------------------------------------
+
+[filter]
+# skip_tagged = false         # skip files that already have keywords/title/description
+# newer_than = "2024-01-01"   # ISO 8601; naive timestamps treated as local time
+# older_than = "2025-01-01"
+
+# --- artifacts ----------------------------------------------------------------
+
+[artifacts]
+# summary_file = "summary.json"
+# prompt_file = "prompt.txt"
+# cache_file = ".photo-tagger-cache.db"  # SQLite cache of model outputs; safe to delete
+# lock_file  = ".photo-tagger.lock"
+
+# --- display ------------------------------------------------------------------
+
+[display]
+# progress_bar = true         # auto-disabled when stderr is not a tty
+# json_output = false         # NDJSON line per photo on stdout
+
+# --- logging ------------------------------------------------------------------
+
+[log]
+# file_log_level = "DEBUG"    # DEBUG | INFO | WARNING | ERROR | CRITICAL | OFF
+# console_log_level = "INFO"
+# log_folder = "logs"
