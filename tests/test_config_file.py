@@ -1,14 +1,13 @@
 """Tests for the TOML config file loader and dataclass override logic."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from photo_tagger.config_file import apply_overrides, find_config_file, load_config
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
 
 
@@ -20,6 +19,11 @@ class _SampleDC:
     name: str = "default"
     count: int = 0
     flag: bool = False
+
+
+@dataclass
+class _PathDC:
+    output: Path | None = None
 
 
 def test_apply_overrides_replaces_matching_fields() -> None:
@@ -45,6 +49,13 @@ def test_apply_overrides_returns_original_when_nothing_applies() -> None:
     original = _SampleDC()
     assert apply_overrides(original, {}) is original
     assert apply_overrides(original, {"nope": 1}) is original
+
+
+def test_apply_overrides_coerces_str_to_path() -> None:
+    """TOML string values are converted to Path for Path | None fields."""
+    result = apply_overrides(_PathDC(), {"output": "reports/run.json"})
+    assert result.output == Path("reports/run.json")
+    assert isinstance(result.output, Path)
 
 
 # --- find_config_file --------------------------------------------------------------------------

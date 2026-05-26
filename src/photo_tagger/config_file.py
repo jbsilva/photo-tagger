@@ -14,9 +14,11 @@ Search order (first match wins):
 
 import os
 import tomllib
+import types
+import typing
 from dataclasses import fields, replace
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, get_args, get_origin
 
 from loguru import logger
 
@@ -60,16 +62,46 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     return data
 
 
+def _coerce_field(annotation: object, value: object) -> object:
+    """
+    Convert a raw TOML value to the type required by *annotation*.
+
+    TOML only knows strings, ints, floats, bools, datetimes, arrays, and tables.
+    Dataclass fields typed as ``Path`` or ``Path | None`` therefore arrive as plain strings and must
+    be wrapped explicitly.
+    """
+    if get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+
+    if not isinstance(value, str):
+        return value
+
+    origin = get_origin(annotation)
+    if origin in (types.UnionType, typing.Union):
+        if Path in get_args(annotation):
+            return Path(value)
+    elif annotation is Path:
+        return Path(value)
+
+    return value
+
+
 def apply_overrides[T](instance: T, overrides: dict[str, Any]) -> T:
     """
     Return a copy of *instance* with dataclass fields replaced by *overrides*.
 
-    Only keys that match an existing field name are applied; unknown keys are
-    silently skipped so the TOML file can contain forward-compatible entries
-    that older versions ignore.
+    Only keys that match an existing field name are applied; unknown keys are silently skipped so
+    the TOML file can contain forward-compatible entries that older versions ignore.
     """
     valid = {f.name for f in fields(instance)}  # type: ignore[arg-type]
     applicable = {k: v for k, v in overrides.items() if k in valid}
     if not applicable:
         return instance
-    return replace(instance, **applicable)  # type: ignore[misc,no-any-return]
+
+    try:
+        hints = typing.get_type_hints(type(instance), include_extras=True)
+    except NameError, AttributeError, TypeError:
+        hints = {}
+
+    coerced = {k: _coerce_field(hints.get(k, type(v)), v) for k, v in applicable.items()}
+    return replace(instance, **coerced)  # type: ignore[misc,no-any-return]
