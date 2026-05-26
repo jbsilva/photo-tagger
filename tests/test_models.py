@@ -29,14 +29,14 @@ def test_generated_metadata_rejects_long_title() -> None:
         GeneratedMetadata(title="x" * 500, description="ok", keywords=[])
 
 
-def test_generated_metadata_rejects_too_many_keywords() -> None:
-    """Runaway keyword lists pollute Lightroom; cap at the schema level."""
-    with pytest.raises(ValidationError):
-        GeneratedMetadata(
-            title="t",
-            description="d",
-            keywords=[f"kw-{i}" for i in range(50)],
-        )
+def test_generated_metadata_truncates_too_many_keywords() -> None:
+    """Runaway keyword lists are silently capped rather than rejected."""
+    meta = GeneratedMetadata(
+        title="t",
+        description="d",
+        keywords=[f"kw-{i}" for i in range(50)],
+    )
+    assert len(meta.keywords) == 30  # noqa: PLR2004 - matches _MAX_KEYWORDS
 
 
 def test_generated_metadata_rejects_blank_keyword() -> None:

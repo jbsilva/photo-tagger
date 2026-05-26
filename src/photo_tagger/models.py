@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # Hard caps on AI output. Pydantic enforces these and pydantic-ai will retry the model when
@@ -21,4 +21,17 @@ class GeneratedMetadata(BaseModel):
 
     title: str = Field(min_length=1, max_length=_MAX_TITLE_CHARS)
     description: str = Field(min_length=1, max_length=_MAX_DESCRIPTION_CHARS)
-    keywords: list[_Keyword] = Field(default_factory=list, max_length=_MAX_KEYWORDS)
+    keywords: list[_Keyword] = Field(default_factory=list)
+
+    @field_validator("keywords")
+    @classmethod
+    def _cap_keywords(cls, v: list[str]) -> list[str]:
+        """
+        Silently truncate over-long keyword lists instead of failing validation.
+
+        Thinking models (e.g. Qwen3) occasionally overshoot the requested cap by a few items.
+        A hard ``max_length`` on the field makes pydantic-ai retry up to 5 times (and the model
+        rarely self-corrects). Truncating here avoids wasting inference budget on retries that will
+        all fail.
+        """
+        return v[:_MAX_KEYWORDS]
