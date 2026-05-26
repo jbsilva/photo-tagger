@@ -600,3 +600,39 @@ def test_run_batch_serial_handles_keyboard_interrupt(tmp_path: Path) -> None:
     # --skip-from rerun can pick them up. on_complete still fires so a
     # --summary-file is written even when the run was aborted.
     assert len(totals.failed_files) >= 1
+
+
+def test_run_batch_concurrent_handles_keyboard_interrupt(tmp_path: Path) -> None:
+    """Ctrl-C in the concurrent path cancels futures and lands pending files in failed."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(4)]
+    for f in files:
+        f.write_text("x")
+
+    call_count = {"n": 0}
+    interrupt_after = 1
+
+    def fake_process_photo(*_args: Any, **_kwargs: Any) -> bool:  # noqa: ANN401
+        call_count["n"] += 1
+        if call_count["n"] > interrupt_after:
+            raise KeyboardInterrupt
+        return True
+
+    received_totals: list[Any] = []
+    with (
+        patch("photo_tagger.pipeline.process_photo", side_effect=fake_process_photo),
+        pytest.raises(BatchError),
+    ):
+        run_batch(
+            files,
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            on_complete=received_totals.append,
+            workers=2,
+        )
+
+    assert len(received_totals) == 1
+    totals = received_totals[0]
+    # Some files were processed, some should be in failed. The exact split
+    # depends on scheduling, but we must see at least one failure and on_complete
+    # must have fired so the summary file is written.
+    assert len(totals.failed_files) >= 1
