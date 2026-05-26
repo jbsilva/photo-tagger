@@ -20,8 +20,8 @@ from photo_tagger.config import (
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
 from photo_tagger.metadata import (
-    _helper,
     build_contextual_prompt,
+    managed_helper,
     read_image_context,
     write_metadata,
 )
@@ -249,7 +249,7 @@ def process_photo(  # noqa: PLR0913 - knobs collapse to one ProcessingOptions pl
     """
     logger.info("processing_photo")
 
-    with _helper(et) as helper:
+    with managed_helper(et) as helper:
         context = read_image_context(image_path, et=helper)
         existing_keywords_full = context.existing_keywords
         if any(existing_keywords_full.values()):
@@ -674,7 +674,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
         if on_success is not None:
             on_success(path)
 
-    with _helper(None) if workers <= 1 else _no_helper() as et:
+    with managed_helper(None) if workers <= 1 else _no_helper() as et:
         success, pending, interrupted = _run_pass(
             image_files,
             agent,

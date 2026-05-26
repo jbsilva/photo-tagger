@@ -23,8 +23,13 @@ from photo_tagger.config import (
 )
 
 
+# Exception types that pyexiftool raises on bad inputs or subprocess failures.
+# Centralized here to avoid seven copies of the same three-element tuple.
+_EXIFTOOL_ERRORS = (ValueError, TypeError, ExifToolExecuteError)
+
+
 @contextlib.contextmanager
-def _helper(et: ExifToolHelper | None) -> Iterator[ExifToolHelper]:
+def managed_helper(et: ExifToolHelper | None) -> Iterator[ExifToolHelper]:
     """Yield *et* if supplied, otherwise spin up and tear down a one-shot helper."""
     if et is not None:
         yield et
@@ -174,9 +179,9 @@ def read_existing_keywords(
 
     tags_to_extract = [tag for tag, _ in _KEYWORD_TAG_TO_BUCKET]
     try:
-        with _helper(et) as helper:
+        with managed_helper(et) as helper:
             blocks = helper.get_tags(files=targets, tags=tags_to_extract)
-    except (ValueError, TypeError, ExifToolExecuteError) as e:
+    except _EXIFTOOL_ERRORS as e:
         logger.exception("failed_to_read_existing_keywords", error=str(e))
         return result
 
@@ -233,14 +238,14 @@ def find_tagged_images(
 
     tagged: set[Path] = set()
     try:
-        with _helper(et) as helper:
+        with managed_helper(et) as helper:
             for image_path in paths:
                 targets = metadata_targets(image_path)
                 if not targets:
                     continue
                 try:
                     blocks = helper.get_tags(files=targets, tags=list(_TAGGED_INDICATOR_TAGS))
-                except (ValueError, TypeError, ExifToolExecuteError) as exc:
+                except _EXIFTOOL_ERRORS as exc:
                     logger.warning(
                         "failed_to_check_tagged_status",
                         file=str(image_path),
@@ -249,7 +254,7 @@ def find_tagged_images(
                     continue
                 if _block_has_indicator(blocks):
                     tagged.add(image_path)
-    except (ValueError, TypeError, ExifToolExecuteError) as exc:
+    except _EXIFTOOL_ERRORS as exc:
         logger.exception("failed_to_open_exiftool_for_tagged_check", error=str(exc))
         return set()
 
@@ -270,9 +275,9 @@ def read_location_tags(
 
     collected: dict[str, str] = {}
     try:
-        with _helper(et) as helper:
+        with managed_helper(et) as helper:
             blocks = helper.get_tags(files=targets, tags=list(LOCATION_TAGS))
-    except (ValueError, TypeError, ExifToolExecuteError) as e:
+    except _EXIFTOOL_ERRORS as e:
         logger.exception("failed_to_read_location_tags", error=str(e))
         return {}
 
@@ -298,9 +303,9 @@ def read_gps_coordinates(
         return {}
 
     try:
-        with _helper(et) as helper:
+        with managed_helper(et) as helper:
             blocks = helper.get_tags(files=targets, tags=[_GPS_TAG])
-    except (ValueError, TypeError, ExifToolExecuteError) as e:
+    except _EXIFTOOL_ERRORS as e:
         logger.exception("failed_to_read_gps", error=str(e))
         return {}
 
@@ -374,9 +379,9 @@ def read_image_context(
     all_tags = list(dict.fromkeys([*keyword_tags, *LOCATION_TAGS, *CAMERA_TAGS, _GPS_TAG]))
 
     try:
-        with _helper(et) as helper:
+        with managed_helper(et) as helper:
             blocks = helper.get_tags(files=targets, tags=all_tags)
-    except (ValueError, TypeError, ExifToolExecuteError) as exc:
+    except _EXIFTOOL_ERRORS as exc:
         logger.exception("failed_to_read_image_context", error=str(exc))
         return ImageContext()
 
@@ -547,9 +552,9 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         set_kwargs["params"] = ["-overwrite_original"]
 
     try:
-        with _helper(et) as helper:
+        with managed_helper(et) as helper:
             helper.set_tags(**set_kwargs)
-    except (ValueError, TypeError, ExifToolExecuteError) as e:
+    except _EXIFTOOL_ERRORS as e:
         logger.exception("xmp_write_failed", error=str(e), target=str(target_path))
         return False
 

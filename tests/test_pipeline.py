@@ -32,14 +32,14 @@ _FAKE_AGENT = cast("Agent[None, GeneratedMetadata]", object())
 
 @contextlib.contextmanager
 def _stub_helper(_et: object | None = None) -> Iterator[object]:
-    """Stand-in for photo_tagger.metadata._helper that never spawns an exiftool process."""
+    """Stand-in for photo_tagger.metadata.managed_helper that never spawns an exiftool process."""
     yield object()
 
 
 @pytest.fixture(autouse=True)
 def _no_real_exiftool() -> Iterator[None]:
     """Make every test in this file safe to run without an exiftool binary on PATH."""
-    with patch("photo_tagger.pipeline._helper", _stub_helper):
+    with patch("photo_tagger.pipeline.managed_helper", _stub_helper):
         yield
 
 
