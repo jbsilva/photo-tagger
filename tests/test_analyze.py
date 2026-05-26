@@ -46,7 +46,7 @@ class StubAgent:
             output_tokens=self._output_tokens,
             total_tokens=self._input_tokens + self._output_tokens,
         )
-        return SimpleNamespace(output=metadata, usage=lambda: usage)
+        return SimpleNamespace(output=metadata, usage=usage)
 
 
 def test_analyze_image_with_ai_parses_payload() -> None:
