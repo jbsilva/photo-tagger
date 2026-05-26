@@ -358,8 +358,8 @@ def test_run_batch_progress_callback_fires_per_image(tmp_path: Path) -> None:
     assert received == [(image.name, True)]
 
 
-def test_progress_callback_not_called_during_retry_pass(tmp_path: Path) -> None:
-    """Retried images must not advance the progress bar a second time."""
+def test_progress_callback_fires_once_per_image_with_flaky_files(tmp_path: Path) -> None:
+    """A first-pass failure must not tick; a retry-pass success ticks exactly once."""
     images = [tmp_path / f"img{i}.cr3" for i in range(3)]
     for f in images:
         f.write_text("x")
@@ -381,8 +381,35 @@ def test_progress_callback_not_called_during_retry_pass(tmp_path: Path) -> None:
             progress=lambda path, ok: received.append((path.name, ok)),
         )
 
-    # Progress should fire exactly once per image (initial pass only), not again on retry.
+    # Each image ticks exactly once, with the retry-pass success outcome (ok=True).
     assert len(received) == len(images)
+    assert all(ok for _name, ok in received)
+    assert sorted(name for name, _ok in received) == sorted(p.name for p in images)
+
+
+def test_progress_callback_ticks_on_final_failure_after_retry(tmp_path: Path) -> None:
+    """A file that fails in both passes must tick exactly once (on the retry failure)."""
+    images = [tmp_path / f"img{i}.cr3" for i in range(2)]
+    for f in images:
+        f.write_text("x")
+    received: list[tuple[str, bool]] = []
+
+    with (
+        patch("photo_tagger.pipeline.process_photo", return_value=False),
+        pytest.raises(
+            BatchError,
+        ),
+    ):
+        run_batch(
+            images,
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            progress=lambda path, ok: received.append((path.name, ok)),
+        )
+
+    # Bar reaches 100% (one tick per file) even on permanent failures.
+    assert len(received) == len(images)
+    assert all(not ok for _name, ok in received)
 
 
 @pytest.mark.usefixtures("patched_pipeline")

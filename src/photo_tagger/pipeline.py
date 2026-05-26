@@ -475,7 +475,11 @@ def _run_pass_serial(
         else:
             logger.warning("file_queued_for_retry", file=image_file.name)
             failed.append(image_file)
-        if ctx.progress is not None:
+        # Advance the bar only when we're truly done with this file: a success
+        # at any point, or any outcome in the retry pass. A first-pass failure
+        # is still pending retry, so it must not tick yet (otherwise the bar
+        # would overshoot once the retry pass also ticks).
+        if ctx.progress is not None and (ok or retry):
             ctx.progress(image_file, ok)
     return successes, failed, False
 
@@ -540,7 +544,8 @@ def _run_pass_concurrent(
                 else:
                     logger.warning("file_queued_for_retry", file=image_file.name)
                     failed.append(image_file)
-                if ctx.progress is not None:
+                # See _run_pass_serial: tick only when this file is finally done.
+                if ctx.progress is not None and (ok or retry):
                     ctx.progress(image_file, ok)
         except KeyboardInterrupt:
             interrupted = True
@@ -617,8 +622,10 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
     uses this to append filenames to a skip list as work progresses, so a killed run can
     be resumed without redoing finished photos.
 
-    The optional *progress* callback fires once per image (success or failure). It is
-    used by the CLI to drive a rich progress bar.
+    The optional *progress* callback fires exactly once per image when the pipeline
+    is finally done with it: either on first-pass success, or on retry-pass success
+    or failure. First-pass failures are silent because they're still pending retry;
+    this guarantees the bar reaches 100% without overshooting on flaky files.
     """
     usage = _UsageAccumulator()
     successful_files: list[Path] = []
@@ -653,9 +660,6 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
             retry_successes = 0
             still_failing = pending
         else:
-            # Suppress the progress bar during retries.
-            saved_progress = ctx.progress
-            ctx.progress = None
             retry_successes, still_failing, _ = _run_pass(
                 pending,
                 ctx,
@@ -663,7 +667,6 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
                 et=et,
                 workers=workers,
             )
-            ctx.progress = saved_progress
 
     totals = BatchTotals(
         total_files=len(image_files),
