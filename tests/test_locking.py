@@ -34,6 +34,15 @@ def test_file_lock_writes_owning_pid(tmp_path: Path) -> None:
     assert contents == str(os.getpid())
 
 
+def test_file_lock_creates_file_owner_only(tmp_path: Path) -> None:
+    """The lock file is created with 0o600 so only the owner can read/write it."""
+    lock_path = tmp_path / "photo-tagger.lock"
+    expected_mode = 0o600
+    with FileLock(lock_path):
+        mode = lock_path.stat().st_mode & 0o777
+    assert mode == expected_mode
+
+
 _HOLDER_SCRIPT = textwrap.dedent(
     """
     import sys, time
