@@ -229,34 +229,37 @@ def find_tagged_images(
 
     An image counts as tagged if either it or its XMP sidecar has any of the indicator
     tags populated (keywords, hierarchical keywords, description, or title). The check
-    runs through a single persistent ExifToolHelper context so the pipeline does not pay
-    the per-file process startup cost.
+    batches all target files into a single exiftool call and maps the result blocks back
+    to source images, reducing the IPC cost from O(N) round-trips to O(1).
     """
     paths = list(image_paths)
     if not paths:
         return set()
 
+    # Build one flat list of targets and remember which image each target belongs to.
+    all_targets: list[str] = []
+    target_to_image: dict[str, Path] = {}
+    for image_path in paths:
+        for target in metadata_targets(image_path):
+            all_targets.append(target)
+            target_to_image[target] = image_path
+
+    if not all_targets:
+        return set()
+
     tagged: set[Path] = set()
     try:
         with managed_helper(et) as helper:
-            for image_path in paths:
-                targets = metadata_targets(image_path)
-                if not targets:
-                    continue
-                try:
-                    blocks = helper.get_tags(files=targets, tags=list(_TAGGED_INDICATOR_TAGS))
-                except _EXIFTOOL_ERRORS as exc:
-                    logger.warning(
-                        "failed_to_check_tagged_status",
-                        file=str(image_path),
-                        error=str(exc),
-                    )
-                    continue
-                if _block_has_indicator(blocks):
-                    tagged.add(image_path)
+            blocks = helper.get_tags(files=all_targets, tags=list(_TAGGED_INDICATOR_TAGS))
     except _EXIFTOOL_ERRORS as exc:
         logger.exception("failed_to_open_exiftool_for_tagged_check", error=str(exc))
         return set()
+
+    for block in blocks:
+        source_file = block.get("SourceFile", "")
+        image_path = target_to_image.get(str(source_file))
+        if image_path is not None and _block_has_indicator([block]):
+            tagged.add(image_path)
 
     if tagged:
         logger.debug("tagged_images_detected", count=len(tagged))

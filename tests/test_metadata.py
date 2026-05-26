@@ -136,10 +136,11 @@ def test_find_tagged_images_returns_paths_with_indicator(tmp_path: Path) -> None
     fake_helper = MagicMock()
     fake_helper.__enter__.return_value = fake_helper
     fake_helper.__exit__.return_value = False
-    # First image has keywords; second has nothing.
-    fake_helper.get_tags.side_effect = [
-        [{"XMP:Subject": ["Beach"]}],
-        [{"File:FileSize": 100}],
+    # Batched call returns one block per target file. First image has keywords;
+    # second has nothing. SourceFile lets the mapper find the owner.
+    fake_helper.get_tags.return_value = [
+        {"SourceFile": str(a), "XMP:Subject": ["Beach"]},
+        {"SourceFile": str(b), "File:FileSize": 100},
     ]
 
     with (
