@@ -57,7 +57,11 @@ class FileLock(AbstractContextManager["FileLock"]):
             msg = f"lock file {self._path} is held by another process"
             raise LockHeldError(msg) from exc
         # Write our PID so a human inspecting the lock file knows who owns it.
-        self._path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        try:
+            self._path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        except OSError:
+            self._lock.release()
+            raise
         logger.debug("lock_acquired", file=str(self._path), pid=os.getpid())
         return self
 

@@ -87,3 +87,25 @@ def test_file_lock_is_reentrant_after_release(tmp_path: Path) -> None:
     for _ in range(3):
         with FileLock(lock_path):
             time.sleep(0.001)
+
+
+def test_file_lock_releases_on_pid_write_failure(tmp_path: Path) -> None:
+    """If writing the PID file fails after acquiring, the lock is released."""
+    lock_path = tmp_path / "photo-tagger.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(lock_path)
+    original_write = lock_path.__class__.write_text
+
+    def _exploding_write(self: Path, *args: object, **kwargs: object) -> None:
+        msg = "disk full"
+        raise OSError(msg)
+
+    lock_path.__class__.write_text = _exploding_write  # type: ignore[assignment]
+    try:
+        with pytest.raises(OSError, match="disk full"):
+            lock.__enter__()
+    finally:
+        lock_path.__class__.write_text = original_write  # type: ignore[assignment]
+    # The lock must have been released, so re-acquiring should succeed.
+    with FileLock(lock_path):
+        pass
