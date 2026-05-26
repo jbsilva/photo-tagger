@@ -499,6 +499,8 @@ def _build_write_payload(
         payload[TAG_IPTC_KEYWORDS] = subjects
     if hierarchical := keywords.get("hierarchical"):
         payload["XMP-lr:HierarchicalSubject"] = hierarchical
+    if weighted := keywords.get("weighted"):
+        payload[TAG_XMP_WEIGHTED_FLAT_SUBJECT] = weighted
     if description:
         payload["XMP-dc:Description"] = description
         payload["XMP-exif:ImageDescription"] = description

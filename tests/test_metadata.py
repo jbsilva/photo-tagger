@@ -81,15 +81,16 @@ def test_build_contextual_prompt_includes_only_present_sections() -> None:
 
 
 def test_build_write_payload_produces_lightroom_compatible_keys() -> None:
-    """Subjects mirror to IPTC:Keywords and titles fan out to two tags."""
+    """Subjects mirror to IPTC:Keywords, weighted flat subjects, and titles fan out to two tags."""
     payload = _build_write_payload(
-        {"subject": ["Beach"], "hierarchical": ["Animal|Bird"]},
+        {"subject": ["Beach"], "hierarchical": ["Animal|Bird"], "weighted": ["Beach"]},
         description="A short desc.",
         title="A title",
     )
     assert payload["XMP-dc:Subject"] == ["Beach"]
     assert payload["IPTC:Keywords"] == ["Beach"]
     assert payload["XMP-lr:HierarchicalSubject"] == ["Animal|Bird"]
+    assert payload["XMP:WeightedFlatSubject"] == ["Beach"]
     assert payload["XMP-dc:Description"] == "A short desc."
     assert payload["XMP-exif:ImageDescription"] == "A short desc."
     assert payload["XMP-dc:Title"] == "A title"
