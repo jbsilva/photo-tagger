@@ -339,6 +339,33 @@ def test_run_batch_progress_callback_fires_per_image(tmp_path: Path) -> None:
     assert received == [(image.name, True)]
 
 
+def test_progress_callback_not_called_during_retry_pass(tmp_path: Path) -> None:
+    """Retried images must not advance the progress bar a second time."""
+    images = [tmp_path / f"img{i}.cr3" for i in range(3)]
+    for f in images:
+        f.write_text("x")
+    received: list[tuple[str, bool]] = []
+
+    # First call fails for every image, retry pass succeeds.
+    call_count: dict[str, int] = {}
+
+    def _flaky_process(image_path: Path, *args: object, **kwargs: object) -> bool:
+        name = image_path.name
+        call_count[name] = call_count.get(name, 0) + 1
+        return call_count[name] > 1  # fail first attempt, succeed on retry
+
+    with patch("photo_tagger.pipeline.process_photo", side_effect=_flaky_process):
+        run_batch(
+            images,
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            progress=lambda path, ok: received.append((path.name, ok)),
+        )
+
+    # Progress should fire exactly once per image (initial pass only), not again on retry.
+    assert len(received) == len(images)
+
+
 @pytest.mark.usefixtures("patched_pipeline")
 def test_run_batch_aggregates_token_usage_from_inference(tmp_path: Path) -> None:
     """Per-call token counts add up into the BatchTotals returned to the CLI."""

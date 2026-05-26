@@ -704,7 +704,7 @@ def run_batch(  # noqa: PLR0913 - distinct optional knobs are clearer as kwargs.
                 user_prompt=user_prompt,
                 on_success=_record_success,
                 workers=workers,
-                progress=progress,
+                progress=None,
                 usage=usage,
                 cache=cache,
                 on_image_result=on_image_result,
