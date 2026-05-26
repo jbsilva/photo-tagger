@@ -28,14 +28,14 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Recognition",
 ]
 dependencies = [
-    "cyclopts>=4.14.0",
+    "cyclopts>=4.16.1",
     "httpx>=0.28.1",
-    "rawpy>=0.27.0",
-    "pydantic>=2.13.4",
-    "pydantic-ai>=1.99.0",
     "loguru>=0.7.3",
-    "pyexiftool>=0.5.6",
     "pillow>=12.2.0",
+    "pydantic-ai>=1.102.0",
+    "pydantic>=2.13.4",
+    "pyexiftool>=0.5.6",
+    "rawpy>=0.27.0",
     "rich>=15.0.0",
 ]
 
@@ -43,7 +43,7 @@ dependencies = [
 dev = [
     "bandit>=1.9.4",
     "pycroscope>=0.4.0",
-    "ruff>=0.15.13",
+    "ruff>=0.15.14",
     "zuban>=0.7.2",
 ]
 test = [

@@ -11,12 +11,12 @@ repos:
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.11.14
+    rev: 0.11.16
     hooks:
       - id: uv-lock
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.13
+    rev: v0.15.14
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -51,7 +51,7 @@ repos:
         always_run: true
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.46.1
+    rev: v1.46.3
     hooks:
       - id: typos
 
