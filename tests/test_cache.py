@@ -94,6 +94,7 @@ def _baseline_namespace_kwargs() -> dict[str, object]:
         "user_prompt": "Describe the scene.",
         "temperature": 0.2,
         "max_tokens": 1200,
+        "frequency_penalty": 0.5,
         "jpeg_dimensions": 1280,
         "jpeg_quality": 80,
     }
@@ -119,6 +120,7 @@ def test_build_cache_namespace_changes_with_each_input() -> None:
         {"user_prompt": "Different prompt."},
         {"temperature": 0.9},
         {"max_tokens": 800},
+        {"frequency_penalty": 1.0},
         {"jpeg_dimensions": 2048},
         {"jpeg_quality": 95},
     ]

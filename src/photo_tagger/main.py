@@ -33,6 +33,7 @@ from photo_tagger.ai import create_agent
 from photo_tagger.cache import InferenceCache, build_cache_namespace
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
+    DEFAULT_FREQUENCY_PENALTY,
     DEFAULT_JPEG_QUALITY,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_NAME,
@@ -120,6 +121,13 @@ class InferenceConfig:
             help="Per-image inference timeout in seconds; aborts and lets the retry loop step in",
         ),
     ] = DEFAULT_TIMEOUT_SECONDS
+    frequency_penalty: Annotated[
+        float,
+        Parameter(
+            name=("--frequency-penalty",),
+            help="Penalty on repeated tokens (0.0-2.0); discourages chant-style output loops",
+        ),
+    ] = DEFAULT_FREQUENCY_PENALTY
     jpeg_dimensions: Annotated[
         int,
         Parameter(
@@ -372,6 +380,7 @@ def _to_processing_options(output: OutputConfig, inference: InferenceConfig) -> 
         temperature=inference.temperature,
         max_tokens=inference.max_tokens,
         timeout_seconds=inference.timeout_seconds,
+        frequency_penalty=inference.frequency_penalty,
         jpeg_dimensions=inference.jpeg_dimensions,
         jpeg_quality=inference.jpeg_quality,
         max_new_keywords=output.max_keywords,
@@ -586,6 +595,7 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
         temperature=options.temperature,
         max_tokens=options.max_tokens,
         timeout_seconds=options.timeout_seconds,
+        frequency_penalty=options.frequency_penalty,
         jpeg_dimensions=options.jpeg_dimensions,
         jpeg_quality=options.jpeg_quality,
         retries=provider.retries,
@@ -826,6 +836,7 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         user_prompt=user_prompt,
         temperature=inference.temperature,
         max_tokens=inference.max_tokens,
+        frequency_penalty=inference.frequency_penalty,
         jpeg_dimensions=inference.jpeg_dimensions,
         jpeg_quality=inference.jpeg_quality,
     )

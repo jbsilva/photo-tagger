@@ -60,6 +60,11 @@ DEFAULT_RETRIES = _env_int("RETRIES", 5)
 # path can step in instead of the call burning ten minutes against the OpenAI client
 # default.
 DEFAULT_TIMEOUT_SECONDS = _env_float("TIMEOUT_SECONDS", 60.0)
+# Discourage the model from chanting the same token over and over. At temperature 0.2 with no
+# penalty Qwen3-VL has been observed to repeat a single keyword (e.g. "Human Adult Female") until
+# the token budget is exhausted. 0.5 is mild enough to leave legitimate wording intact while
+# strongly suppressing pathological loops.
+DEFAULT_FREQUENCY_PENALTY = _env_float("FREQUENCY_PENALTY", 0.5)
 
 PROVIDER_URLS = {
     "ollama": DEFAULT_OLLAMA_BASE_URL,

@@ -13,6 +13,7 @@ from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from photo_tagger.config import (
+    DEFAULT_FREQUENCY_PENALTY,
     DEFAULT_LMSTUDIO_API_KEY,
     DEFAULT_MAX_TOKENS,
     DEFAULT_OLLAMA_API_KEY,
@@ -201,6 +202,7 @@ def analyze_image_with_ai(  # noqa: PLR0913 - each kwarg is a distinct sampling 
     temperature: float = DEFAULT_TEMPERATURE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    frequency_penalty: float = DEFAULT_FREQUENCY_PENALTY,
 ) -> InferenceResult:
     """
     Generate a short title, description, and keywords using a vision-language model.
@@ -220,6 +222,7 @@ def analyze_image_with_ai(  # noqa: PLR0913 - each kwarg is a distinct sampling 
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout_seconds,
+            frequency_penalty=frequency_penalty,
         ),
         output_type=GeneratedMetadata,
     )

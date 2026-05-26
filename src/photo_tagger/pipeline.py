@@ -12,6 +12,7 @@ from photo_tagger.ai import analyze_image_with_ai
 from photo_tagger.cache import InferenceCache, hash_image_file
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
+    DEFAULT_FREQUENCY_PENALTY,
     DEFAULT_JPEG_QUALITY,
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
@@ -88,6 +89,7 @@ class ProcessingOptions:
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_MAX_TOKENS
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    frequency_penalty: float = DEFAULT_FREQUENCY_PENALTY
     jpeg_dimensions: int = DEFAULT_DIMENSIONS
     jpeg_quality: int = DEFAULT_JPEG_QUALITY
     max_new_keywords: int | None = None
@@ -227,6 +229,7 @@ def _resolve_inference(
         temperature=ctx.options.temperature,
         max_tokens=ctx.options.max_tokens,
         timeout_seconds=ctx.options.timeout_seconds,
+        frequency_penalty=ctx.options.frequency_penalty,
     )
     ctx.usage.add(inference)
     if ctx.cache is not None and cache_key is not None:

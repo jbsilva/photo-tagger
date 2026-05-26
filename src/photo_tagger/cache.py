@@ -49,6 +49,7 @@ def build_cache_namespace(  # noqa: PLR0913 - each kwarg is a distinct input to 
     user_prompt: str,
     temperature: float,
     max_tokens: int,
+    frequency_penalty: float,
     jpeg_dimensions: int,
     jpeg_quality: int,
 ) -> str:
@@ -56,7 +57,7 @@ def build_cache_namespace(  # noqa: PLR0913 - each kwarg is a distinct input to 
     Combine *model_name* with a digest of every other inference input.
 
     The returned string is suitable as ``model_name`` for :class:`InferenceCache`.
-    Two runs that match on all six arguments share cache entries; if any of them
+    Two runs that match on every argument share cache entries; if any of them
     differs the digest changes and the cache treats them as separate namespaces.
 
     The system prompt is intentionally NOT folded in: it ships with the code, so
@@ -65,7 +66,8 @@ def build_cache_namespace(  # noqa: PLR0913 - each kwarg is a distinct input to 
     """
     h = hashlib.blake2b(digest_size=_CONFIG_DIGEST_BYTES)
     payload = (
-        f"{user_prompt}\0t={temperature}\0n={max_tokens}\0d={jpeg_dimensions}\0q={jpeg_quality}"
+        f"{user_prompt}\0t={temperature}\0n={max_tokens}"
+        f"\0fp={frequency_penalty}\0d={jpeg_dimensions}\0q={jpeg_quality}"
     )
     h.update(payload.encode("utf-8"))
     return f"{model_name}#{h.hexdigest()}"
