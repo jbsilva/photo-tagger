@@ -38,6 +38,7 @@ from photo_tagger.config import (
     DEFAULT_MODEL_NAME,
     DEFAULT_RETRIES,
     DEFAULT_TEMPERATURE,
+    DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_USER_PROMPT,
     LogLevel,
 )
@@ -112,6 +113,13 @@ class InferenceConfig:
         int,
         Parameter(name=("--max-tokens",), help="Maximum tokens to generate"),
     ] = DEFAULT_MAX_TOKENS
+    timeout_seconds: Annotated[
+        float,
+        Parameter(
+            name=("--timeout-seconds",),
+            help="Per-image inference timeout in seconds; aborts and lets the retry loop step in",
+        ),
+    ] = DEFAULT_TIMEOUT_SECONDS
     jpeg_dimensions: Annotated[
         int,
         Parameter(
@@ -363,6 +371,7 @@ def _to_processing_options(output: OutputConfig, inference: InferenceConfig) -> 
         dry_run=output.dry_run,
         temperature=inference.temperature,
         max_tokens=inference.max_tokens,
+        timeout_seconds=inference.timeout_seconds,
         jpeg_dimensions=inference.jpeg_dimensions,
         jpeg_quality=inference.jpeg_quality,
         max_new_keywords=output.max_keywords,
@@ -576,6 +585,7 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
         max_keywords=options.max_new_keywords,
         temperature=options.temperature,
         max_tokens=options.max_tokens,
+        timeout_seconds=options.timeout_seconds,
         jpeg_dimensions=options.jpeg_dimensions,
         jpeg_quality=options.jpeg_quality,
         retries=provider.retries,

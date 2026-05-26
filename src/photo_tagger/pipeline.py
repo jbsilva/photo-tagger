@@ -15,6 +15,7 @@ from photo_tagger.config import (
     DEFAULT_JPEG_QUALITY,
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
+    DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_USER_PROMPT,
 )
 from photo_tagger.errors import BatchError
@@ -86,6 +87,7 @@ class ProcessingOptions:
     dry_run: bool = False
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_MAX_TOKENS
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     jpeg_dimensions: int = DEFAULT_DIMENSIONS
     jpeg_quality: int = DEFAULT_JPEG_QUALITY
     max_new_keywords: int | None = None
@@ -224,6 +226,7 @@ def _resolve_inference(
         user_prompt=contextual_prompt,
         temperature=ctx.options.temperature,
         max_tokens=ctx.options.max_tokens,
+        timeout_seconds=ctx.options.timeout_seconds,
     )
     ctx.usage.add(inference)
     if ctx.cache is not None and cache_key is not None:

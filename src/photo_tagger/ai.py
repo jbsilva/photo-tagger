@@ -19,6 +19,7 @@ from photo_tagger.config import (
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_TEMPERATURE,
+    DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_USER_PROMPT,
     PROVIDER_URLS,
 )
@@ -192,13 +193,14 @@ def _extract_usage(usage: object | None) -> tuple[int, int, int]:
     )
 
 
-def analyze_image_with_ai(
+def analyze_image_with_ai(  # noqa: PLR0913 - each kwarg is a distinct sampling knob; bundling adds indirection
     image_bytes: BinaryContent,
     agent: Agent[None, GeneratedMetadata],
     *,
     user_prompt: str | None = None,
     temperature: float = DEFAULT_TEMPERATURE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> InferenceResult:
     """
     Generate a short title, description, and keywords using a vision-language model.
@@ -217,6 +219,7 @@ def analyze_image_with_ai(
         model_settings=ModelSettings(
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=timeout_seconds,
         ),
         output_type=GeneratedMetadata,
     )

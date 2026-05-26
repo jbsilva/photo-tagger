@@ -55,6 +55,11 @@ DEFAULT_DIMENSIONS = _env_int("JPEG_DIMENSIONS", 1280)
 DEFAULT_TEMPERATURE = _env_float("TEMPERATURE", 0.2)
 DEFAULT_MAX_TOKENS = _env_int("MAX_TOKENS", 1200)
 DEFAULT_RETRIES = _env_int("RETRIES", 5)
+# Hard cap on a single inference HTTP call. A healthy run is a few seconds; this exists
+# only to abort pathological cases (token-repetition loops, model hangs) so the retry
+# path can step in instead of the call burning ten minutes against the OpenAI client
+# default.
+DEFAULT_TIMEOUT_SECONDS = _env_float("TIMEOUT_SECONDS", 60.0)
 
 PROVIDER_URLS = {
     "ollama": DEFAULT_OLLAMA_BASE_URL,
