@@ -157,14 +157,15 @@ def create_agent(
         model=model_name,
     )
 
-    if provider_name == "ollama":
-        resolved_api_key = api_key or DEFAULT_OLLAMA_API_KEY
-        validate_ollama_model(resolved_url, model_name, resolved_api_key)
-        provider = OllamaProvider(base_url=resolved_url, api_key=resolved_api_key)
-    else:
-        resolved_api_key = api_key or DEFAULT_LMSTUDIO_API_KEY
-        validate_lmstudio_model(resolved_url, model_name, resolved_api_key)
-        provider = OpenAIProvider(base_url=resolved_url, api_key=resolved_api_key)
+    match provider_name:
+        case "ollama":
+            resolved_api_key = api_key or DEFAULT_OLLAMA_API_KEY
+            validate_ollama_model(resolved_url, model_name, resolved_api_key)
+            provider = OllamaProvider(base_url=resolved_url, api_key=resolved_api_key)
+        case "lmstudio":
+            resolved_api_key = api_key or DEFAULT_LMSTUDIO_API_KEY
+            validate_lmstudio_model(resolved_url, model_name, resolved_api_key)
+            provider = OpenAIProvider(base_url=resolved_url, api_key=resolved_api_key)
 
     chat_model = OpenAIChatModel(model_name=model_name, provider=provider)
     # pydantic-ai's Agent constructor does not propagate `output_type` into its
@@ -223,7 +224,7 @@ def analyze_image_with_ai(
     usage_obj = None
     try:
         usage_obj = result.usage
-    except Exception as exc:  # noqa: BLE001 - usage retrieval is optional metadata.
+    except AttributeError as exc:
         logger.debug("ai_usage_unavailable", error=str(exc))
     input_tokens, output_tokens, total_tokens = _extract_usage(usage_obj)
     logger.info(
