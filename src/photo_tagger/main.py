@@ -85,7 +85,13 @@ class ProviderConfig:
     ] = None
     api_key: Annotated[
         str | None,
-        Parameter(name=("--api-key", "-k"), help="Provider API key. Will try env vars if not set"),
+        Parameter(
+            name=("--api-key", "-k"),
+            help=(
+                "Provider API key. Prefer env vars (OLLAMA_API_KEY, LM_STUDIO_API_KEY,"
+                " OPENAI_API_KEY) over this flag. Note: CLI args are visible in process listings!"
+            ),
+        ),
     ] = None
     retries: Annotated[
         int,
