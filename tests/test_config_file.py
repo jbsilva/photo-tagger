@@ -2,13 +2,27 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from photo_tagger.config_file import apply_overrides, find_config_file, load_config
 
 
-if TYPE_CHECKING:
-    import pytest
+@pytest.fixture(autouse=True)
+def _isolate_config_lookup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """
+    Prevent tests from picking up the developer's real config files.
+
+    ``find_config_file`` consults ``$PHOTO_TAGGER_CONFIG`` and the module-level ``_USER_CONFIG``
+    path under the user's home directory. If either exists on the machine running the tests,
+    assertions about "no config found" silently fail.
+    Redirect both to a tmp location so every test starts from a clean slate.
+    """
+    monkeypatch.delenv("PHOTO_TAGGER_CONFIG", raising=False)
+    monkeypatch.setattr(
+        "photo_tagger.config_file._USER_CONFIG",
+        tmp_path / "nonexistent-home" / "config.toml",
+    )
 
 
 # --- apply_overrides ---------------------------------------------------------------------------
