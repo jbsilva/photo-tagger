@@ -229,7 +229,7 @@ def analyze_image_with_ai(
     elapsed = round(time.perf_counter() - started, 3)
     usage_obj = None
     try:
-        usage_obj = result.usage()  # pydantic-ai exposes RunUsage from .usage()
+        usage_obj = result.usage
     except Exception as exc:  # noqa: BLE001 - usage retrieval is optional metadata.
         logger.debug("ai_usage_unavailable", error=str(exc))
     input_tokens, output_tokens, total_tokens = _extract_usage(usage_obj)
