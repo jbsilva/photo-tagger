@@ -4,7 +4,7 @@ import contextlib
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from loguru import logger
 
@@ -41,6 +41,13 @@ if TYPE_CHECKING:
     ProgressCallback = Callable[[Path, bool], None]
     OnComplete = Callable[["BatchTotals"], None]
     OnImageResult = Callable[["ImageOutcome"], None]
+
+
+class _InferenceScratch(TypedDict, total=False):
+    """Typed scratch pad passed between process_photo and _emit_outcome."""
+
+    inference: InferenceResult
+    from_cache: bool
 
 
 @dataclass(slots=True, frozen=True)
@@ -229,7 +236,7 @@ def process_photo(
     ctx: _BatchContext,
     *,
     et: ExifToolHelper | None = None,
-    outcome_sink: dict[str, Any] | None = None,
+    outcome_sink: _InferenceScratch | None = None,
 ) -> bool:
     """
     Convert an image to JPEG bytes in memory, query the model, and persist metadata.
@@ -320,7 +327,7 @@ def process_photo(
 def _emit_outcome(
     on_image_result: OnImageResult | None,
     image_file: Path,
-    scratch: dict[str, Any],
+    scratch: _InferenceScratch,
     *,
     success: bool,
     retry: bool,
@@ -361,7 +368,7 @@ def execute_process(
     if retry:
         context_kwargs["retry"] = True
 
-    scratch: dict[str, Any] = {}
+    scratch: _InferenceScratch = {}
     with logger.contextualize(**context_kwargs):
         try:
             ok = process_photo(
