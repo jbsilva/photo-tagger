@@ -1,0 +1,62 @@
+name: "CodeQL Advanced"
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "44 5 * * 3"
+
+# Cancel superseded PR scans, but never cancel the main/scheduled baseline
+# (killing it would leave the Security tab's results stale).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: python
+            build-mode: none
+            # Scope Python to the package; tests are covered by SonarQube/bandit and not shipped.
+            # Must stay on the python entry only: a positive `paths` on the actions entry would hide
+            # all workflow YAML from it.
+            config: |
+              paths:
+                - src
+              paths-ignore:
+                - tests
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # No setup-python / uv sync: under build-mode none the extractor reads source directly (no
+      # dependency install) and the pinned CodeQL parses 3.14 syntax
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config: ${{ matrix.config }}
+          # security-extended + security-and-quality: widest coverage. The quality queries overlap
+          # SonarQube/ruff/zuban, but may still surface issues those miss; deep taint tracking is
+          # CodeQL's real strength here (exiftool subprocess, httpx/LLM, path traversal).
+          queries: security-extended,security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
