@@ -12,6 +12,10 @@ wheels/
 # Logs
 logs/
 
+# Local SQLite cache written at the repo root during manual runs
+# (plus its WAL/SHM/lock sidecars)
+/cache.sqlite*
+
 # Test coverage
 .coverage
 lcov.info
