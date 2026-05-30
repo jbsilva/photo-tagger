@@ -3,7 +3,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
@@ -17,12 +17,40 @@ from photo_tagger.discovery import (
     make_skip_list_appender,
     parse_extensions,
     resolve_image_batch,
+    resolve_image_files,
 )
 from photo_tagger.errors import DiscoveryError
 
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class _ResolveRaisingPath:
+    """Path-like whose .resolve() raises OSError, to exercise the resolve guard."""
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def resolve(self) -> Path:
+        msg = "cannot resolve"
+        raise OSError(msg)
+
+    def is_dir(self) -> bool:
+        return False
+
+    def is_file(self) -> bool:
+        return True
+
+    def exists(self) -> bool:
+        return False
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __str__(self) -> str:
+        return self._name
 
 
 def test_parse_extensions_drops_blanks_and_dots() -> None:
@@ -316,3 +344,55 @@ def test_make_skip_list_appender_is_thread_safe(tmp_path: Path) -> None:
     # No interleaved/partial lines, no duplicate names, no missing names.
     assert sorted(lines) == sorted(p.name for p in paths)
     assert len(set(lines)) == image_count
+
+
+def test_resolve_image_files_keeps_path_when_resolve_fails() -> None:
+    """If Path.resolve() raises OSError the original path is used instead of crashing."""
+    fake = _ResolveRaisingPath("weird.cr3")
+    result = resolve_image_files(cast("list[Path]", [fake]), {".cr3"}, recursive=False)
+    assert result == cast("list[Path]", [fake])
+
+
+def test_resolve_image_files_warns_on_non_file_non_dir(tmp_path: Path) -> None:
+    """An input that is neither a file nor a directory is logged and dropped."""
+    ghost = tmp_path / "missing.cr3"  # never created
+    assert resolve_image_files([ghost], {".cr3"}, recursive=False) == []
+
+
+def test_apply_skip_file_warns_when_no_files_match(tmp_path: Path) -> None:
+    """A non-empty skip list that matches nothing logs a warning and keeps every file."""
+    skip_file = tmp_path / "skip.txt"
+    skip_file.write_text("other.cr3\n", encoding="utf-8")
+    image = tmp_path / "kept.cr3"
+
+    assert apply_skip_file([image], skip_file) == [image]
+
+
+def test_apply_skip_file_keeps_all_when_skip_list_is_empty(tmp_path: Path) -> None:
+    """A comments-only skip file yields no entries, so every file passes through silently."""
+    skip_file = tmp_path / "skip.txt"
+    skip_file.write_text("# just a comment\n", encoding="utf-8")
+    image = tmp_path / "kept.cr3"
+
+    assert apply_skip_file([image], skip_file) == [image]
+
+
+def test_apply_date_filter_keeps_all_when_window_excludes_nothing(tmp_path: Path) -> None:
+    """When every file falls inside the window, nothing is skipped."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    epoch = datetime(2000, 1, 1, tzinfo=UTC)
+
+    assert apply_date_filter([image], newer_than=epoch) == [image]
+
+
+def test_make_skip_list_appender_survives_unreadable_and_unwritable_target(tmp_path: Path) -> None:
+    """A skip path pointing at a directory: the preload and the append both log and recover."""
+    skip_dir = tmp_path / "skip_as_dir"
+    skip_dir.mkdir()  # read_text() and open("a") both raise OSError on a directory
+
+    appender = make_skip_list_appender(skip_dir)
+    assert appender is not None
+
+    # The write failure is swallowed; calling the appender must not raise.
+    appender(tmp_path / "IMG_0001.CR3")
