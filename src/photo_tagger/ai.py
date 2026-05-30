@@ -140,6 +140,32 @@ def validate_ollama_model(api_base_url: str, model_name: str, api_key: str | Non
     logger.debug("ollama_model_validated", model=model_name)
 
 
+def _build_provider(
+    provider_name: ProviderName,
+    *,
+    resolved_url: str,
+    model_name: str,
+    api_key: str | None,
+) -> OllamaProvider | OpenAIProvider:
+    """
+    Validate the requested model and construct the matching pydantic-ai provider.
+
+    Each branch returns directly so there is no fall-through path where the provider is left
+    unassigned; ``assert_never`` keeps the match exhaustive for the type checker.
+    """
+    match provider_name:
+        case "ollama":
+            resolved_api_key = api_key or DEFAULT_OLLAMA_API_KEY
+            validate_ollama_model(resolved_url, model_name, resolved_api_key)
+            return OllamaProvider(base_url=resolved_url, api_key=resolved_api_key)
+        case "lmstudio":
+            resolved_api_key = api_key or DEFAULT_LMSTUDIO_API_KEY
+            validate_lmstudio_model(resolved_url, model_name, resolved_api_key)
+            return OpenAIProvider(base_url=resolved_url, api_key=resolved_api_key)
+        case _:
+            assert_never(provider_name)
+
+
 def create_agent(
     provider_name: ProviderName,
     model_name: str,
@@ -159,18 +185,12 @@ def create_agent(
         model=model_name,
     )
 
-    match provider_name:
-        case "ollama":
-            resolved_api_key = api_key or DEFAULT_OLLAMA_API_KEY
-            validate_ollama_model(resolved_url, model_name, resolved_api_key)
-            provider = OllamaProvider(base_url=resolved_url, api_key=resolved_api_key)
-        case "lmstudio":
-            resolved_api_key = api_key or DEFAULT_LMSTUDIO_API_KEY
-            validate_lmstudio_model(resolved_url, model_name, resolved_api_key)
-            provider = OpenAIProvider(base_url=resolved_url, api_key=resolved_api_key)
-        case _:
-            assert_never(provider_name)
-
+    provider = _build_provider(
+        provider_name,
+        resolved_url=resolved_url,
+        model_name=model_name,
+        api_key=api_key,
+    )
     chat_model = OpenAIChatModel(model_name=model_name, provider=provider)
     # pydantic-ai's Agent constructor does not propagate `output_type` into its
     # generic, so static analyzers see `Agent[None, str]` while the runtime
