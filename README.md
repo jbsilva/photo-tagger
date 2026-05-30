@@ -1,5 +1,18 @@
 # Photo Tagger
 
+[![MIT License](https://img.shields.io/badge/license-MIT-007EC7.svg?style=flat-square)](https://github.com/jbsilva/photo-tagger/blob/main/LICENSE)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
+[![PyPI version](https://img.shields.io/pypi/v/photo-tagger.svg?style=flat-square)](https://pypi.org/project/photo-tagger)
+[![Downloads](https://pepy.tech/badge/photo-tagger)](https://pepy.tech/project/photo-tagger)
+[![tests](https://github.com/jbsilva/photo-tagger/actions/workflows/tests.yml/badge.svg)](https://github.com/jbsilva/photo-tagger/actions/workflows/tests.yml)
+[![CodeQL](https://github.com/jbsilva/photo-tagger/actions/workflows/codeql.yml/badge.svg)](https://github.com/jbsilva/photo-tagger/actions/workflows/codeql.yml)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=jbsilva_photo-tagger&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=jbsilva_photo-tagger)
+[![codecov](https://codecov.io/github/jbsilva/photo-tagger/graph/badge.svg?token=G3EFTL5S9Z)](https://codecov.io/github/jbsilva/photo-tagger)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![prek](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/j178/prek/master/docs/assets/badge-v0.json)](https://github.com/j178/prek)
+[![BuyMeACoffee](https://img.shields.io/badge/%E2%98%95-buymeacoffee-ffdd00?style=flat-square)](https://www.buymeacoffee.com/jbsilva)
+
 Photo Tagger is a command-line helper that asks a vision-language model to analyze your photos and
 writes Lightroom-compatible metadata.
 
