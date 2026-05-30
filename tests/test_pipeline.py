@@ -15,6 +15,7 @@ from photo_tagger.pipeline import (
     ProcessingOptions,
     _BatchContext,
     _emit_outcome,
+    _notify_success,
     _UsageAccumulator,
     execute_process,
     process_photo,
@@ -815,3 +816,45 @@ def test_run_batch_concurrent_records_worker_exception(tmp_path: Path) -> None:
         pytest.raises(BatchError),
     ):
         run_batch(files, agent=_FAKE_AGENT, options=ProcessingOptions(), workers=2)
+
+
+def test_notify_success_is_a_noop_without_callback(tmp_path: Path) -> None:
+    """_notify_success returns immediately when no on_success callback is registered."""
+    # Must not raise and must not require a callable.
+    _notify_success(None, tmp_path / "img.cr3")
+
+
+def test_run_batch_concurrent_catches_future_result_exception(tmp_path: Path) -> None:
+    """An error from future.result() (execute_process itself raising) counts as a failure."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(_CONCURRENT_BATCH_SIZE)]
+    for f in files:
+        f.write_text("x")
+
+    def _exploding_execute(*_args: Any, **_kwargs: Any) -> bool:  # noqa: ANN401
+        msg = "execute_process blew up"
+        raise RuntimeError(msg)
+
+    with (
+        patch("photo_tagger.pipeline.execute_process", side_effect=_exploding_execute),
+        pytest.raises(BatchError),
+    ):
+        run_batch(files, agent=_FAKE_AGENT, options=ProcessingOptions(), workers=2)
+
+
+def test_run_batch_concurrent_progress_callback_fires_per_image(tmp_path: Path) -> None:
+    """Progress fires once per image on the concurrent path too."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(_CONCURRENT_BATCH_SIZE)]
+    for f in files:
+        f.write_text("x")
+    received: list[tuple[str, bool]] = []
+
+    with patch("photo_tagger.pipeline.process_photo", return_value=True):
+        run_batch(
+            files,
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(),
+            progress=lambda path, ok: received.append((path.name, ok)),
+            workers=2,
+        )
+
+    assert sorted(received) == sorted((f.name, True) for f in files)
