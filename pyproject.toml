@@ -161,6 +161,7 @@ addopts = [
     "--tb=short",
     "--verbose",
     "--cov=src/photo_tagger",
+    "--cov-branch",
     "--cov-report=term-missing",
     "--cov-report=xml:reports/coverage.xml",
     "-m",
