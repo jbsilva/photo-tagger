@@ -350,6 +350,25 @@ def test_cli_lock_file_blocks_second_run(tmp_path: Path) -> None:
     assert "image_files" not in captured
 
 
+def test_cli_lock_file_open_failure_exits(tmp_path: Path) -> None:
+    """An OSError while opening the lock file (e.g. unwritable dir) exits with code 1."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    lock_path = tmp_path / "run.lock"
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with (
+        setup,
+        create_agent,
+        run_batch,
+        patch.object(main_module, "FileLock", side_effect=OSError("disk full")),
+        pytest.raises(SystemExit),
+    ):
+        main_module.app(["--input", str(image), "--lock-file", str(lock_path)])
+
+    assert "image_files" not in captured
+
+
 _EXPECTED_TOTAL_TOKENS = 49
 
 

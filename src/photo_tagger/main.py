@@ -412,10 +412,10 @@ class _TextSink(Protocol):
     """
 
     def write(self, s: str, /) -> int:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover - structural Protocol, never called
 
     def flush(self) -> None:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover - structural Protocol, never called
 
 
 class _NDJSONEmitter:
@@ -878,5 +878,5 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
             cache.close()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - module entry point, not exercised by tests
     app()
