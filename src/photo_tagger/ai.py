@@ -3,7 +3,7 @@
 import time
 import urllib.parse
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 import httpx
 from loguru import logger
@@ -168,6 +168,8 @@ def create_agent(
             resolved_api_key = api_key or DEFAULT_LMSTUDIO_API_KEY
             validate_lmstudio_model(resolved_url, model_name, resolved_api_key)
             provider = OpenAIProvider(base_url=resolved_url, api_key=resolved_api_key)
+        case _:
+            assert_never(provider_name)
 
     chat_model = OpenAIChatModel(model_name=model_name, provider=provider)
     # pydantic-ai's Agent constructor does not propagate `output_type` into its
