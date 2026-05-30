@@ -7,6 +7,7 @@ from photo_tagger.keywords import (
     _collect_cumulative_entries,
     _normalize_chain_parts,
     _process_new_keywords,
+    _register_chain,
     merge_keywords,
     parse_hierarchical_keyword,
 )
@@ -44,6 +45,30 @@ def test_parse_hierarchical_keyword_strips_trailing_gt() -> None:
     hierarchical, parts = parse_hierarchical_keyword("Man<Human<Living Being>")
     assert hierarchical == "Living Being|Human|Man"
     assert parts == ["Living Being", "Human", "Man"]
+
+
+def test_parse_hierarchical_keyword_returns_empty_for_separators_only() -> None:
+    """Input that is only chain separators collapses to an empty result."""
+    fmt, parts = parse_hierarchical_keyword("<")
+    assert fmt == ""
+    assert parts == []
+
+
+def test_register_chain_keeps_existing_chain_of_equal_length() -> None:
+    """A new chain no longer than the recorded one for the same leaf does not replace it."""
+    registry = {"bird": ["Animal", "Bird"]}
+    _register_chain(registry, ["Pet", "Bird"])  # same leaf, equal length
+    assert registry["bird"] == ["Animal", "Bird"]
+
+
+def test_process_new_keywords_skips_empty_and_duplicate_subjects() -> None:
+    """Keywords that normalize to nothing are dropped; case-duplicate subjects are not re-added."""
+    subjects = ["Bird"]
+    weighted = ["Bird"]
+    seen = {"bird"}
+    added = _process_new_keywords(["<", "bird"], seen, subjects, weighted, {})
+    assert added == []
+    assert subjects == ["Bird"]
 
 
 def test_normalize_chain_parts_title_cases_and_omits_blanks() -> None:
