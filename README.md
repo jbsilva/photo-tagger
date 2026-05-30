@@ -50,6 +50,7 @@ Environment variables provide defaults so you can keep the CLI concise:
 - `JPEG_DIMENSIONS`, `JPEG_QUALITY`, `TEMPERATURE`, `MAX_TOKENS`, `RETRIES` – fine-tune runtime
 
 Any CLI flag takes precedence over the environment.
+
 ### Config file
 
 You can persist CLI defaults in a TOML file so they apply automatically. Search order:
@@ -85,8 +86,9 @@ cache_file = ".photo-tagger-cache.db"
 ```
 
 The section names match the internal option groups: `provider`, `inference`, `output`, `log`,
-`display`, `filter`, and `artifacts`. Top-level keys cover `extensions`, `recursive`, and
-`workers`. Unknown keys are silently ignored, so the file stays forward-compatible.
+`display`, `filter`, and `artifacts`. Top-level keys cover `extensions`, `recursive`, and `workers`.
+Unknown keys are silently ignored, so the file stays forward-compatible.
+
 ## Usage
 
 The CLI is exposed as `photo-tagger` once installed, or you can invoke it directly:
@@ -112,18 +114,18 @@ Key options:
 - `--no-progress` – hide the live rich progress bar (auto-disabled on non-interactive stdouts)
 - `--max-keywords N` – cap how many AI-generated keywords are kept per photo before merging
 - `--prompt-file PATH` – override the default user prompt with the contents of `PATH`
-- `--summary-file PATH` – write a JSON run summary (token usage, success/failure counts) to
-  `PATH` on completion
-- `--cache-file PATH` – persistent SQLite cache of model outputs keyed by image content hash
-  and model+prompt+settings. Reruns skip the model call when nothing relevant has changed
-- `--lock-file PATH` – acquire an exclusive file lock on `PATH` before running and refuse
-  to start if another `photo-tagger` already holds it (prevents two runs racing on the same
-  folder). Works on Linux, macOS, and Windows
-- `--json` – emit one NDJSON line per processed photo to stdout (file, status, title,
-  description, keywords, token usage, cache flag); logs and progress stay on stderr so you
-  can pipe straight into `jq` or your own tools
-- `--newer-than DATE` / `--older-than DATE` – filter the input batch by file mtime. Accepts
-  ISO 8601 like `2024-01-01` or `2024-01-01T14:30`; naive timestamps use local time
+- `--summary-file PATH` – write a JSON run summary (token usage, success/failure counts) to `PATH`
+  on completion
+- `--cache-file PATH` – persistent SQLite cache of model outputs keyed by image content hash and
+  model+prompt+settings. Reruns skip the model call when nothing relevant has changed
+- `--lock-file PATH` – acquire an exclusive file lock on `PATH` before running and refuse to start
+  if another `photo-tagger` already holds it (prevents two runs racing on the same folder). Works on
+  Linux, macOS, and Windows
+- `--json` – emit one NDJSON line per processed photo to stdout (file, status, title, description,
+  keywords, token usage, cache flag); logs and progress stay on stderr so you can pipe straight into
+  `jq` or your own tools
+- `--newer-than DATE` / `--older-than DATE` – filter the input batch by file mtime. Accepts ISO 8601
+  like `2024-01-01` or `2024-01-01T14:30`; naive timestamps use local time
 - `--jpeg-dimensions`, `--jpeg-quality`, `--temperature`, `--max-tokens`, `--retries` – control
   inference behavior
 
@@ -132,15 +134,15 @@ Key options:
 Three flags work together so you can re-run on a folder without redoing finished work:
 
 - `--skip-from FILE` – skip filenames listed in `FILE` (one per line; `#` lines are comments).
-- `--append-to-skip-file FILE` – append each successfully tagged filename to `FILE` as the
-  run progresses. The file is created if missing, so the same path can be passed to both flags
-  from the very first run.
-- `--skip-tagged` – skip files that already have keywords, a description, or a title in either
-  the image or its XMP sidecar. Catches photos tagged in Lightroom or by hand without needing a
-  skip list at all.
+- `--append-to-skip-file FILE` – append each successfully tagged filename to `FILE` as the run
+  progresses. The file is created if missing, so the same path can be passed to both flags from the
+  very first run.
+- `--skip-tagged` – skip files that already have keywords, a description, or a title in either the
+  image or its XMP sidecar. Catches photos tagged in Lightroom or by hand without needing a skip
+  list at all.
 
-Resume-on-failure pattern: pass the same path to both flags so a killed run can be restarted
-with a single command.
+Resume-on-failure pattern: pass the same path to both flags so a killed run can be restarted with a
+single command.
 
 ```bash
 photo-tagger -i ~/Pictures/Shoot -r \
