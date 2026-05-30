@@ -162,7 +162,7 @@ def _build_provider(
             resolved_api_key = api_key or DEFAULT_LMSTUDIO_API_KEY
             validate_lmstudio_model(resolved_url, model_name, resolved_api_key)
             return OpenAIProvider(base_url=resolved_url, api_key=resolved_api_key)
-        case _:
+        case _:  # pragma: no cover - unreachable; ProviderName is exhaustive above
             assert_never(provider_name)
 
 

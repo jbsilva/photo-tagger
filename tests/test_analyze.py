@@ -106,3 +106,31 @@ def test_analyze_image_with_ai_invalid_payload_raises() -> None:
 
     with pytest.raises(ValidationError):
         analyze_image_with_ai(image_bytes, agent)  # type: ignore[arg-type]
+
+
+class _NoUsageAgent(StubAgent):
+    """StubAgent whose result has no .usage, so accessing it raises AttributeError."""
+
+    def run_sync(
+        self,
+        items: list[object],
+        model_settings: ModelSettings,
+        output_type: type[GeneratedMetadata],
+    ) -> SimpleNamespace:
+        """Reuse StubAgent's parsing/recording, then drop the usage attribute."""
+        result = super().run_sync(items, model_settings, output_type)
+        del result.usage
+        return result
+
+
+def test_analyze_image_with_ai_handles_missing_usage() -> None:
+    """When result.usage raises AttributeError, token counts fall back to zero."""
+    payload = json.dumps({"title": "t", "description": "d", "keywords": []})
+    agent = _NoUsageAgent(payload)
+    image_bytes = BinaryContent(data=b"\xff\xd8stubjpeg", media_type="image/jpeg")
+
+    result = analyze_image_with_ai(image_bytes, agent)  # type: ignore[arg-type]
+
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+    assert result.total_tokens == 0

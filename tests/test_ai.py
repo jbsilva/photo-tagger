@@ -110,6 +110,40 @@ def test_fetch_lmstudio_models_returns_ids(monkeypatch: pytest.MonkeyPatch) -> N
     ) == ["alpha", "beta"]
 
 
+def test_fetch_lmstudio_models_handles_non_list_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A listing whose 'data' field is not a list yields no models rather than crashing."""
+    payload = {"data": {"unexpected": "shape"}}
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
+        return _DummyResponse(HTTPStatus.OK, payload)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert (
+        ai_module._fetch_lmstudio_models(  # noqa: SLF001
+            "http://localhost:1234/v1/models",
+            api_key=None,
+        )
+        == []
+    )
+
+
+def test_fetch_ollama_models_handles_non_list_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A listing whose 'models' field is not a list yields no models rather than crashing."""
+    payload = {"models": "not-a-list"}
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
+        return _DummyResponse(HTTPStatus.OK, payload)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert (
+        ai_module._fetch_ollama_models(  # noqa: SLF001
+            "http://localhost:11434/api/tags",
+            api_key=None,
+        )
+        == []
+    )
+
+
 def test_fetch_ollama_models_returns_names(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ollama's /api/tags returns a 'models' array of objects with a 'name' field."""
     payload = {"models": [{"name": "llava:34b"}, {"name": "qwen-vl"}, {"size": 1234}]}
