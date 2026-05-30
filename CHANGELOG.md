@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-05-30
+
+### Added
+
+- MIT License. The `LICENSE` file now ships in the sdist via PEP 639 `license-files`; the deprecated
+  `License :: OSI Approved :: MIT License` classifier was dropped.
+
+### Changed
+
+- System prompt now forbids emitting the camera body, lens model, or capture timestamp as keywords;
+  these describe equipment, not subject content. Earlier runs sometimes copied literal EXIF strings
+  (e.g. `Canon Eos R5M2`, `Rf200-800Mm F6.3-9 Is Usm`) into the keyword list.
+
+### Fixed
+
+- `create_agent` no longer has a code path where the provider could be left unbound for a value
+  outside the supported set. Provider construction moved into `_build_provider`, which returns from
+  each branch and ends in `assert_never`, keeping the match exhaustive for the type checker.
+
 ## [0.2.1] - 2026-05-27
 
 ### Fixed
@@ -100,6 +119,7 @@ Initial release.
 - In-memory JPEG conversion to keep token usage low.
 - Structured log files for debugging and auditing.
 
+[0.2.2]: https://github.com/jbsilva/photo-tagger/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/jbsilva/photo-tagger/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jbsilva/photo-tagger/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jbsilva/photo-tagger/releases/tag/v0.1.0

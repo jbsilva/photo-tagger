@@ -67,6 +67,7 @@ RDWR
 rawpy
 roundtrips
 scannerwork
+sdist
 sonarcloud
 sonarlint
 sonarqube

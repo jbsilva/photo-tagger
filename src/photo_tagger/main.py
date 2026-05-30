@@ -58,7 +58,7 @@ from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, 
 from photo_tagger.progress import batch_progress
 
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 app = App(name="photo-tagger", version=__version__)
 
