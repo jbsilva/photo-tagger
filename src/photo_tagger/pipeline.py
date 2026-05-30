@@ -427,10 +427,6 @@ class BatchTotals:
     dry_run: bool = False
 
 
-# Backwards-compatible alias for tests that still import the private name.
-_BatchTotals = BatchTotals
-
-
 def _notify_success(on_success: OnSuccess | None, image_file: Path) -> None:
     """Invoke *on_success* defensively; a callback failure must not abort the batch."""
     if on_success is None:

@@ -411,8 +411,11 @@ class _TextSink(Protocol):
     so tests can pass a buffer and the production path uses the real stream.
     """
 
-    def write(self, s: str, /) -> int: ...
-    def flush(self) -> None: ...
+    def write(self, s: str, /) -> int:
+        raise NotImplementedError
+
+    def flush(self) -> None:
+        raise NotImplementedError
 
 
 class _NDJSONEmitter:

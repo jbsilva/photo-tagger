@@ -1,6 +1,5 @@
 """Resolve user-supplied inputs (files, directories, skip lists) into a final image batch."""
 
-import contextlib
 import os
 import threading
 from datetime import UTC, datetime
@@ -75,9 +74,10 @@ def resolve_image_files(
     files_explicit: list[Path] = []
 
     for path in inputs:
-        path_resolved = path
-        with contextlib.suppress(OSError):
+        try:
             path_resolved = path.resolve()
+        except OSError:
+            path_resolved = path
         if path_resolved.is_dir():
             files_from_dirs.extend(
                 _iter_directory_matches(path_resolved, casefolded_exts, recursive=recursive),
