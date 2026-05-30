@@ -12,12 +12,27 @@ from photo_tagger.metadata import (
     build_contextual_prompt,
     find_tagged_images,
     format_metadata_value,
+    managed_helper,
+    read_existing_keywords,
+    read_gps_coordinates,
     read_image_context,
+    read_location_tags,
+    write_metadata,
 )
 
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _fake_helper(get_tags_result: object = None) -> MagicMock:
+    """Build a MagicMock standing in for an open ExifToolHelper context manager."""
+    helper = MagicMock()
+    helper.__enter__.return_value = helper
+    helper.__exit__.return_value = False
+    if get_tags_result is not None:
+        helper.get_tags.return_value = get_tags_result
+    return helper
 
 
 def test_format_metadata_value_passes_strings_through() -> None:
@@ -318,3 +333,151 @@ def test_build_contextual_prompt_renders_camera_section() -> None:
     assert "- Camera: Canon EOS R5" in prompt
     assert "- Lens: RF100mm F2.8 L Macro IS USM" in prompt
     assert "- Captured: 2024:01:15 14:32:01" in prompt
+
+
+def test_managed_helper_yields_supplied_helper_without_creating_one() -> None:
+    """When an open helper is passed in, managed_helper reuses it and never spins up its own."""
+    existing = MagicMock()
+    with (
+        patch("photo_tagger.metadata.ExifToolHelper") as factory,
+        managed_helper(existing) as helper,
+    ):
+        assert helper is existing
+    factory.assert_not_called()
+
+
+def test_read_existing_keywords_returns_empty_on_exiftool_error(tmp_path: Path) -> None:
+    """A failure inside exiftool is logged and yields the empty keyword buckets."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper()
+    helper.get_tags.side_effect = ValueError("boom")
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        result = read_existing_keywords(img)
+
+    assert result == {"subject": [], "hierarchical": [], "weighted": []}
+
+
+def test_find_tagged_images_returns_empty_when_no_block_is_tagged(tmp_path: Path) -> None:
+    """Blocks without any indicator tag leave the tagged set empty."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper([{"SourceFile": str(img), "File:FileSize": 100}])
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert find_tagged_images([img]) == set()
+
+
+def test_read_location_tags_returns_empty_without_targets(tmp_path: Path) -> None:
+    """A path with no readable file or sidecar skips exiftool entirely."""
+    ghost = tmp_path / "ghost.cr3"
+    with patch("photo_tagger.metadata.metadata_targets", return_value=[]):
+        assert read_location_tags(ghost) == {}
+
+
+def test_read_location_tags_collects_present_values(tmp_path: Path) -> None:
+    """Non-empty location tags are formatted and returned."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper([{"XMP-photoshop:City": "Lisbon", "XMP-photoshop:Country": ""}])
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_location_tags(img) == {"XMP-photoshop:City": "Lisbon"}
+
+
+def test_read_location_tags_returns_empty_on_exiftool_error(tmp_path: Path) -> None:
+    """An exiftool failure while reading location tags is swallowed."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper()
+    helper.get_tags.side_effect = TypeError("boom")
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_location_tags(img) == {}
+
+
+def test_read_gps_coordinates_returns_empty_without_targets(tmp_path: Path) -> None:
+    """A path with no targets skips exiftool and returns no coordinates."""
+    ghost = tmp_path / "ghost.cr3"
+    with patch("photo_tagger.metadata.metadata_targets", return_value=[]):
+        assert read_gps_coordinates(ghost) == {}
+
+
+def test_read_gps_coordinates_returns_position_when_present(tmp_path: Path) -> None:
+    """A non-empty GPS position is formatted and returned under 'position'."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper([{"Composite:GPSPosition": "38.7 N, 9.1 W"}])
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_gps_coordinates(img) == {"position": "38.7 N, 9.1 W"}
+
+
+def test_read_gps_coordinates_returns_empty_on_exiftool_error(tmp_path: Path) -> None:
+    """An exiftool failure while reading GPS is swallowed."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper()
+    helper.get_tags.side_effect = ValueError("boom")
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_gps_coordinates(img) == {}
+
+
+def test_read_image_context_returns_empty_on_exiftool_error(tmp_path: Path) -> None:
+    """A failure during the batched read yields a blank ImageContext."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper()
+    helper.get_tags.side_effect = ValueError("boom")
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        context = read_image_context(img)
+
+    assert context.existing_keywords == {"subject": [], "hierarchical": [], "weighted": []}
+    assert context.gps_position is None
+
+
+def test_write_metadata_with_backup_omits_overwrite_param(tmp_path: Path) -> None:
+    """With backup=True the -overwrite_original param is not passed to exiftool."""
+    img = tmp_path / "img.cr3"
+    helper = _fake_helper()
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        ok = write_metadata(img, {"subject": ["Bird"]}, backup=True)
+
+    assert ok is True
+    _, kwargs = helper.set_tags.call_args
+    assert "params" not in kwargs
+
+
+def test_write_metadata_returns_false_on_exiftool_error(tmp_path: Path) -> None:
+    """A write failure is logged and reported as False rather than raising."""
+    img = tmp_path / "img.cr3"
+    helper = _fake_helper()
+    helper.set_tags.side_effect = ValueError("boom")
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        assert write_metadata(img, {"subject": ["Bird"]}) is False
