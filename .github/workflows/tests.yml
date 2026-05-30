@@ -31,6 +31,22 @@ jobs:
         # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock
         run: uv run pytest
 
+      - name: Upload coverage to Codecov
+        # Upload even when a test fails: pytest-cov still writes the report at session end.
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: reports/coverage.xml
+
+      - name: Upload coverage report
+        # Shared with the sonarcloud job so the suite runs once and both tools report the same data.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          path: reports/coverage.xml
+          retention-days: 1
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -60,3 +76,56 @@ jobs:
       - name: zuban type check
         # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock
         run: uv run zuban check
+
+  sonarcloud:
+    # Reuse the coverage report from unit-tests instead of running the suite twice.
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # Full history so SonarQube Cloud can blame issues to commits and detect new code.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install dev dependencies
+        # NOSONAR S8541,S8544 - uv sync reads uv.lock (committed)
+        run: uv sync --group dev
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      # ruff and bandit reports feed sonar.python.{ruff,bandit}.reportPaths. exit-zero keeps the
+      # JSON written and the job green: the lint job is the gate for ruff, CodeQL/bandit for security.
+      - name: Generate ruff report
+        # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock
+        run: uv run ruff check --output-format=json --output-file=reports/ruff_report.json --exit-zero .
+
+      - name: Generate bandit report
+        # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock
+        run: uv run bandit --configfile pyproject.toml --recursive --format json --output reports/bandit_report.json --exit-zero .
+
+      - name: Download coverage report
+        # coverage.xml is produced by unit-tests; feeds sonar.python.coverage.reportPaths.
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-report
+          path: reports
+
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # Fill the ${env.*} placeholders in sonar-project.properties. Not secret (also in
+          # .sonarlint/connectedMode.json). EU region uses the default sonarcloud.io host, so
+          # SONAR_HOST_URL is intentionally omitted.
+          SONAR_ORGANIZATION: jbsilva
+          SONAR_PROJECT_KEY: jbsilva_photo-tagger
