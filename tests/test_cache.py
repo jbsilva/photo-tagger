@@ -1,7 +1,9 @@
 """Tests for the SQLite-backed inference cache."""
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 from photo_tagger.cache import InferenceCache, build_cache_namespace, hash_image_file
 from photo_tagger.models import InferenceResult
@@ -172,3 +174,16 @@ def test_inference_cache_is_thread_safe(tmp_path: Path) -> None:
             assert got.title == key
     finally:
         cache.close()
+
+
+def test_inference_cache_close_swallows_sqlite_error(tmp_path: Path) -> None:
+    """A storage error raised while closing is logged and never propagated."""
+    cache = InferenceCache(tmp_path / "cache.sqlite3", model_name="m1")
+    cache._conn.close()  # noqa: SLF001 - release the real handle before swapping in the stub
+
+    failing = MagicMock()
+    failing.close.side_effect = sqlite3.Error("already closed")
+    cache._conn = failing  # noqa: SLF001 - force the guarded close path to fail
+
+    cache.close()  # must not raise
+    failing.close.assert_called_once()

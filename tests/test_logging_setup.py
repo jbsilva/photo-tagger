@@ -28,3 +28,13 @@ def test_setup_logging_off_disables_handlers(tmp_path: Path) -> None:
     setup_logging(file_log_level="OFF", console_log_level="OFF", log_folder=folder)
     # No file handler => the folder is never created.
     assert not folder.exists()
+
+
+def test_setup_logging_adds_console_handler_without_file(tmp_path: Path) -> None:
+    """A console level other than OFF attaches a stderr sink and skips the log folder."""
+    folder = tmp_path / "logs"
+    setup_logging(file_log_level="OFF", console_log_level="INFO", log_folder=folder)
+    logger.info("on console only")
+    logger.complete()
+    # Console-only logging must not create the file log folder.
+    assert not folder.exists()

@@ -72,6 +72,20 @@ def test_apply_overrides_coerces_str_to_path() -> None:
     assert isinstance(result.output, Path)
 
 
+def test_apply_overrides_falls_back_when_type_hints_unresolvable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If get_type_hints raises, coercion falls back to each value's runtime type."""
+
+    def boom(*_args: object, **_kwargs: object) -> dict[str, object]:
+        msg = "unresolved annotation"
+        raise NameError(msg)
+
+    monkeypatch.setattr("photo_tagger.config_file.typing.get_type_hints", boom)
+    result = apply_overrides(_SampleDC(), {"count": 5})
+    assert result.count == 5  # noqa: PLR2004 - asserting override value
+
+
 # --- find_config_file --------------------------------------------------------------------------
 
 
