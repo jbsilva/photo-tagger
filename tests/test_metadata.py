@@ -481,3 +481,26 @@ def test_write_metadata_returns_false_on_exiftool_error(tmp_path: Path) -> None:
 
     with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
         assert write_metadata(img, {"subject": ["Bird"]}) is False
+
+
+# ---------------------------------------------------------------------------
+# _format_location / _camera_lines helpers
+# ---------------------------------------------------------------------------
+
+
+def test_format_location_returns_none_for_empty_tags() -> None:
+    """Empty location tags produce None, not a spurious 'None' string."""
+    from photo_tagger.metadata import _format_location  # noqa: PLC0415
+
+    assert _format_location({}) is None
+
+
+def test_camera_lines_renders_partial_info() -> None:
+    """Only present camera fields appear; missing ones are skipped."""
+    from photo_tagger.metadata import _camera_lines  # noqa: PLC0415
+
+    lines = _camera_lines({"EXIF:Model": "Canon EOS R5"})
+    assert lines == ["- Camera: Canon EOS R5"]
+
+    lines_empty = _camera_lines({})
+    assert lines_empty == []

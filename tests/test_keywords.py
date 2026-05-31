@@ -172,3 +172,20 @@ def test_resolve_image_files_deduplicates_and_preserves_explicit(tmp_path: Path)
     assert result[0] == explicit_resolved
     assert set(result) == {explicit_resolved, duplicate.resolve(), extra.resolve()}
     assert result.count(duplicate.resolve()) == 1
+
+
+def test_merge_keywords_with_all_empty_inputs() -> None:
+    """Merging empty existing keywords with no new keywords returns all-empty buckets."""
+    merged = merge_keywords(
+        {"subject": [], "hierarchical": [], "weighted": []},
+        [],
+    )
+    assert merged == {"subject": [], "hierarchical": [], "weighted": []}
+
+
+def test_merge_keywords_does_not_mutate_input() -> None:
+    """The caller's existing keyword lists remain unmodified after merge."""
+    existing = {"subject": ["A"], "hierarchical": [], "weighted": ["A"]}
+    original_subject = list(existing["subject"])
+    merge_keywords(existing, ["B"])
+    assert existing["subject"] == original_subject

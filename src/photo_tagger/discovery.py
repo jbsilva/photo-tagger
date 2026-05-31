@@ -13,7 +13,7 @@ from photo_tagger.metadata import find_tagged_images
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from exiftool import ExifToolHelper  # type: ignore[attr-defined]
@@ -40,7 +40,7 @@ def _iter_directory_matches(
     casefolded_exts: set[str],
     *,
     recursive: bool,
-) -> list[Path]:
+) -> Iterator[Path]:
     """
     Yield every file under *directory* whose suffix (casefolded) is in *casefolded_exts*.
 
@@ -50,7 +50,7 @@ def _iter_directory_matches(
     gives us the case-insensitive behavior the ``--ext`` help text has always advertised.
     """
     iterator = directory.rglob("*") if recursive else directory.iterdir()
-    return [p for p in iterator if p.is_file() and p.suffix.casefold() in casefolded_exts]
+    yield from (p for p in iterator if p.is_file() and p.suffix.casefold() in casefolded_exts)
 
 
 def resolve_image_files(

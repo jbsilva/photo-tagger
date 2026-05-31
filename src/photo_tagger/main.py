@@ -20,6 +20,7 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -503,19 +504,29 @@ def _parse_filter_date(value: str | None, *, flag: str) -> datetime | None:
 
 def _atomic_write_text(target: Path, text: str) -> None:
     """
-    Write *text* to *target* via a sibling tmp file + Path.replace.
+    Write *text* to *target* via a temp file + rename.
 
     Avoids leaving a half-written file on disk if the process is killed or the
-    filesystem fills mid-write. The tmp file lives in the same directory so
+    filesystem fills mid-write. The temp file lives in the same directory so
     the rename is a same-filesystem op, which POSIX guarantees is atomic.
+
+    Uses ``tempfile.mkstemp`` instead of a PID-based name so the temp path is
+    unpredictable and opened with ``O_EXCL``, preventing symlink-based attacks
+    in shared directories.
 
     Creates the parent directory as needed so callers can point at a fresh
     location like ``reports/run.json`` without pre-mkdir.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(target)
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        tmp_path.replace(target)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _write_summary_file(  # noqa: PLR0913 - distinct optional fields are clearer as kwargs.

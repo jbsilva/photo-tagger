@@ -18,7 +18,7 @@ import sqlite3
 import threading
 from contextlib import closing
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from loguru import logger
 
@@ -27,6 +27,7 @@ from photo_tagger.models import InferenceResult
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import TracebackType
 
 
 _HASH_DIGEST_BYTES = 16  # 128-bit BLAKE2b; collisions are not a realistic concern here.
@@ -164,6 +165,19 @@ class InferenceCache:
                 ),
             )
             self._conn.commit()
+
+    def __enter__(self) -> Self:
+        """Return the cache for use in a ``with`` block."""
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _tb: TracebackType | None,
+    ) -> None:
+        """Close the cache when leaving the ``with`` block."""
+        self.close()
 
     def close(self) -> None:
         """

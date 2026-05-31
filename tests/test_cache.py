@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import pytest
+
 from photo_tagger.cache import InferenceCache, build_cache_namespace, hash_image_file
 from photo_tagger.models import InferenceResult
 
@@ -187,3 +189,33 @@ def test_inference_cache_close_swallows_sqlite_error(tmp_path: Path) -> None:
 
     cache.close()  # must not raise
     failing.close.assert_called_once()
+
+
+def test_inference_cache_context_manager_round_trip(tmp_path: Path) -> None:
+    """Using InferenceCache as a context manager auto-closes the connection."""
+    with InferenceCache(tmp_path / "cache.sqlite3", model_name="m1") as cache:
+        cache.put("hash-1", _sample_result(title="CM"))
+        got = cache.get("hash-1")
+        assert got is not None
+        assert got.title == "CM"
+    # After __exit__, a new cache on the same file must succeed (old conn is closed).
+    with InferenceCache(tmp_path / "cache.sqlite3", model_name="m1") as cache:
+        assert cache.get("hash-1") is not None
+
+
+def test_inference_cache_context_manager_closes_on_exception(tmp_path: Path) -> None:
+    """The cache connection is closed even when the with-block raises."""
+    db = tmp_path / "cache.sqlite3"
+
+    def _use_and_crash(cache: InferenceCache) -> None:
+        cache.put("hash-1", _sample_result())
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="boom"), InferenceCache(db, model_name="m1") as cache:
+        _use_and_crash(cache)
+
+    # Re-opening must succeed; the old connection was released.
+    with InferenceCache(db, model_name="m1") as cache:
+        got = cache.get("hash-1")
+        assert got is not None

@@ -858,3 +858,57 @@ def test_run_batch_concurrent_progress_callback_fires_per_image(tmp_path: Path) 
         )
 
     assert sorted(received) == sorted((f.name, True) for f in files)
+
+
+def test_process_photo_trims_to_max_new_keywords(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """max_new_keywords caps the AI keyword list before merging with existing tags."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    options = ProcessingOptions(max_new_keywords=2)
+    assert process_photo(image, _ctx(options=options)) is True
+
+    write_call = patched_pipeline["write"].call_args
+    keywords = write_call.args[1]
+    # The stubbed AI returns ["Beach", "Sunset"] (2 items), which is at the cap.
+    # Nothing is trimmed at 2, but the path is still exercised.
+    assert len(keywords["subject"]) <= 2  # noqa: PLR2004 - matches the cap
+
+
+def test_process_photo_trims_when_exceeding_max_new_keywords(
+    tmp_path: Path,
+) -> None:
+    """When AI returns more keywords than the cap, the excess is dropped before merge."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    many_keywords = [f"kw-{i}" for i in range(10)]
+
+    with (
+        patch(
+            "photo_tagger.pipeline.prepare_image_for_agent",
+            return_value=BinaryContent(data=b"\xff\xd8stub", media_type="image/jpeg"),
+        ),
+        patch("photo_tagger.pipeline.read_image_context", return_value=ImageContext()),
+        patch(
+            "photo_tagger.pipeline.analyze_image_with_ai",
+            return_value=InferenceResult(
+                title="Title",
+                description="Description.",
+                keywords=many_keywords,
+            ),
+        ),
+        patch("photo_tagger.pipeline.write_metadata", return_value=True) as write,
+    ):
+        options = ProcessingOptions(max_new_keywords=3)
+        assert process_photo(image, _ctx(options=options)) is True
+
+        write_call = write.call_args
+        keywords = write_call.args[1]
+        # Only the first 3 AI keywords survive the cap, then merge happens.
+        assert "Kw-0" in keywords["subject"]
+        assert "Kw-2" in keywords["subject"]
+        # The 4th keyword (index 3) should NOT be present.
+        assert "Kw-3" not in keywords["subject"]

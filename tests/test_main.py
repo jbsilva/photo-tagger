@@ -508,3 +508,25 @@ def test_write_summary_file_swallows_write_error(tmp_path: Path) -> None:
             provider_name="p",
             user_prompt_chars=0,
         )
+
+
+# ---------------------------------------------------------------------------
+# _atomic_write_text edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_atomic_write_text_cleans_up_on_write_failure(tmp_path: Path) -> None:
+    """If the write to the temp file fails, the temp file is removed and the error re-raised."""
+    target = tmp_path / "output.json"
+
+    # Patch os.fdopen to raise after mkstemp creates the temp file.
+    with (
+        patch("photo_tagger.main.os.fdopen", side_effect=OSError("disk full")),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        main_module._atomic_write_text(target, "content")  # noqa: SLF001
+
+    # Target must not exist, and no temp files should be left behind.
+    assert not target.exists()
+    leftovers = list(tmp_path.glob(f".{target.name}.*"))
+    assert leftovers == []

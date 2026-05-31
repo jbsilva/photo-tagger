@@ -95,13 +95,6 @@ class ProcessingOptions:
     max_new_keywords: int | None = None
 
 
-_EMPTY_KEYWORDS: dict[str, list[str]] = {
-    "subject": [],
-    "hierarchical": [],
-    "weighted": [],
-}
-
-
 @contextlib.contextmanager
 def _no_helper() -> Iterator[None]:
     """Yield None as the shared ExifToolHelper for the concurrent path."""
@@ -305,7 +298,15 @@ def process_photo(
             )
             keywords = keywords[: options.max_new_keywords]
 
-        base = existing_keywords_full if options.preserve_existing_kw else dict(_EMPTY_KEYWORDS)
+        base = (
+            existing_keywords_full
+            if options.preserve_existing_kw
+            else {
+                "subject": [],
+                "hierarchical": [],
+                "weighted": [],
+            }
+        )
         merged_keywords = merge_keywords(base, keywords)
 
         if options.dry_run:
