@@ -108,11 +108,23 @@ jobs:
       # JSON written and the job green: the lint job is the gate for ruff, CodeQL/bandit for security.
       - name: Generate ruff report
         # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock
-        run: uv run ruff check --output-format=json --output-file=reports/ruff_report.json --exit-zero .
+        run: |
+          uv run ruff check \
+            --output-format=json \
+            --output-file=reports/ruff_report.json \
+            --exit-zero \
+            .
 
       - name: Generate bandit report
         # NOSONAR S8541,S8544 - uv run uses the locked env from uv.lock
-        run: uv run bandit --configfile pyproject.toml --recursive --format json --output reports/bandit_report.json --exit-zero .
+        run: |
+          uv run bandit \
+            --configfile pyproject.toml \
+            --recursive \
+            --format json \
+            --output reports/bandit_report.json \
+            --exit-zero \
+            .
 
       - name: Download coverage report
         # coverage.xml is produced by unit-tests; feeds sonar.python.coverage.reportPaths.
