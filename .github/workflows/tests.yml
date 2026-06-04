@@ -80,6 +80,7 @@ jobs:
   sonarcloud:
     # Reuse the coverage report from unit-tests instead of running the suite twice.
     needs: unit-tests
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
