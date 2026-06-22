@@ -1,6 +1,6 @@
-______________________________________________________________________
-
-## icon: lucide/heart-handshake
+---
+icon: lucide/heart-handshake
+---
 
 # Contributing
 
