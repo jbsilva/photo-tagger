@@ -21,11 +21,15 @@ location, GPS, and camera EXIF keeps the per-photo IPC cost to one round trip. I
 ```python
 @dataclass(slots=True, frozen=True)
 class ImageContext:
-    existing_keywords: dict[str, list[str]]  # subject, hierarchical, weighted buckets
-    location_tags: dict[str, str]            # city/country from XMP-photoshop and IPTC
-    gps_position: str | None                 # Composite:GPSPosition, if present
-    camera_info: dict[str, str]              # EXIF Model, LensModel, DateTimeOriginal
+    existing_keywords: KeywordSet  # typed subject / hierarchical / weighted views
+    location_tags: dict[str, str]  # city/country from XMP-photoshop and IPTC
+    gps_position: str | None       # Composite:GPSPosition, if present
+    camera_info: dict[str, str]    # EXIF Model, LensModel, DateTimeOriginal
 ```
+
+`KeywordSet` (in [`models.py`][models]) is a small dataclass with `subject`, `hierarchical`, and
+`weighted` list fields. It replaced a bare `dict[str, list[str]]` keyed by those strings, so a
+misspelled key is now a type error instead of a silently empty list.
 
 The read targets both the image file and any adjacent `.xmp` sidecar, so metadata that lives only in
 the sidecar is still picked up.
@@ -162,3 +166,5 @@ indicator tags populated: the keyword tags above, a title, or a description. See
     back.
 - [CLI reference](../usage/cli-reference.md): the full list of output and filter flags referenced
     here.
+
+[models]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/models.py

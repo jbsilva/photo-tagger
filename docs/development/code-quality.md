@@ -85,8 +85,9 @@ The configured hooks are:
 | pycroscope (local)         | Semi-static analysis with the project config.                 |
 | check-version-sync (local) | Keeps the package version consistent across project files.    |
 
-The `check-version-sync` hook checks the version in `pyproject.toml`, `uv.lock`,
-`src/photo_tagger/main.py`, `SECURITY.md`, and `CHANGELOG.md`.
+The `check-version-sync` hook checks the version in `pyproject.toml`, `uv.lock`, `SECURITY.md`, and
+`CHANGELOG.md`. The package itself no longer hardcodes a version: `photo_tagger.__version__` reads
+the installed distribution metadata, so `pyproject.toml` is the only code-side source.
 
 ## Before committing
 

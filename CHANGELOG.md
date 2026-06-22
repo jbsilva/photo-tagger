@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- New `openai` provider for any hosted OpenAI-compatible endpoint (the real OpenAI API or a drop-in
+  gateway). It fails fast with a clear message when no API key is configured. Set the endpoint with
+  `OPENAI_BASE_URL` / `--url` and the key with `OPENAI_API_KEY` / `--api-key`.
+- New `photo-tagger doctor` command: a pre-flight checklist that verifies ExifTool is on PATH and
+  the configured provider is reachable and serves the requested model, exiting non-zero on failure.
+
+### Changed
+
+- Backends now live in a `photo_tagger.providers` registry. Each `ProviderBackend` bundles the three
+  things that differ per backend (model-listing URL, listing parser, provider factory); the shared
+  HTTP plumbing is written once. Adding a backend is a single registry entry.
+- Existing keywords are modeled by a typed `KeywordSet` value object instead of a
+  `dict[str, list[str]]` keyed by bare strings, removing a silent-typo failure mode.
+- The package version is read from installed distribution metadata (`importlib.metadata.version`),
+  so `pyproject.toml` is the only code-side source of truth.
+- CLI option groups moved out of `main.py` into `photo_tagger.cli_options`, separating the CLI
+  schema from the orchestration logic.
+
 ## [0.2.2] - 2026-05-30
 
 ### Added
@@ -123,3 +145,4 @@ Initial release.
 [0.2.0]: https://github.com/jbsilva/photo-tagger/compare/v0.1.0...v0.2.0
 [0.2.1]: https://github.com/jbsilva/photo-tagger/compare/v0.2.0...v0.2.1
 [0.2.2]: https://github.com/jbsilva/photo-tagger/compare/v0.2.1...v0.2.2
+[unreleased]: https://github.com/jbsilva/photo-tagger/compare/v0.2.2...HEAD

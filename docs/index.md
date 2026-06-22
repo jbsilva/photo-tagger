@@ -16,7 +16,8 @@ modifying the file.
 - Generates a `title`, a short `description`, and hierarchical keywords in Lightroom's root-to-leaf
     pipe form.
 - Merges new keywords with existing ones by default, or replaces them with `--overwrite-keywords`.
-- Talks to local Ollama or LM Studio servers over an OpenAI-compatible API.
+- Talks to local Ollama or LM Studio servers, or any hosted OpenAI-compatible API.
+- A `doctor` command that pre-flights ExifTool and the model provider before a run.
 - Sends a compact, resized JPEG to the model to save tokens, with configurable dimensions and
     quality.
 - Optional SQLite cache so reruns skip the model call when nothing relevant changed.

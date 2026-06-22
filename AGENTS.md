@@ -2,6 +2,32 @@
 
 Guidance for Claude Code (claude.ai/code) when working in this repository.
 
+## Architecture
+
+`photo-tagger` is a single CLI package under `src/photo_tagger/`. The flow is: discover files → read
+existing metadata → build a prompt → call a vision model → merge keywords → write XMP/IPTC. Each
+module owns one slice of that pipeline:
+
+- `main.py` - cyclopts entry point and orchestration (`tag` default command, `doctor` command). Keep
+  it thin: it wires modules together and translates domain errors into exit codes.
+- `cli_options.py` - the CLI *schema*: the seven `@dataclass` option groups, their config-file
+  defaults (`load_defaults`), and the `ProcessingOptions` mapping. New flags go here, not in `main`.
+- `providers.py` - the backend registry. A `ProviderBackend` (Strategy) bundles the per-backend bits
+  (listing URL, listing parser, provider factory); shared HTTP plumbing is written once. Add a
+  backend by adding one entry to `_BACKENDS` plus its defaults in `config.py`, and a name to the
+  `ProviderName` Literal (a test asserts the two stay in sync).
+- `ai.py` - builds the pydantic-ai `Agent` from a backend and runs inference.
+- `pipeline.py` - the batch runner (serial + thread-pool passes, retry pass, usage accounting).
+- `metadata.py` - all ExifTool reads/writes; `keywords.py` - hierarchical-keyword merge logic.
+- `models.py` - shared data types: `GeneratedMetadata` (the model's schema), `InferenceResult`, and
+  `KeywordSet` (the typed value object that replaced the old `dict[str, list[str]]`).
+- `cache.py`, `locking.py`, `image_io.py`, `discovery.py`, `progress.py`, `logging_setup.py`,
+  `diagnostics.py` - focused single-purpose helpers; `errors.py` - the domain exception hierarchy.
+
+The version is single-sourced: `photo_tagger.__version__` reads installed distribution metadata, so
+`pyproject.toml`'s `[project].version` is the only code-side source. Do not reintroduce a hardcoded
+version string. `scripts/check_version_sync.py` guards the hand-maintained docs against it.
+
 ## Code style
 
 - Python 3.14: use modern syntax. PEP 695 generics, `match`, structural pattern matching, and PEP

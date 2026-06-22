@@ -13,6 +13,29 @@ Any flag you pass on the command line overrides the corresponding config-file va
 environment-informed default. See [Configuration](../getting-started/configuration.md) for the full
 precedence rules and TOML layout.
 
+## Commands
+
+Running `photo-tagger` with image inputs tags them (the default command). One subcommand exists:
+
+| Command               | Description                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| `photo-tagger`        | Tag the given images (default). Documented by the option groups below.                              |
+| `photo-tagger doctor` | Pre-flight check: verifies ExifTool is on `PATH` and the provider serves the model, then exits 0/1. |
+
+`doctor` accepts `--provider`, `-m/--model`, `-u/--url`, and `-k/--api-key` (same meanings as below)
+and honors the same config file and environment variables. Run it first when a tagging run will not
+start:
+
+```console
+$ photo-tagger doctor --provider lmstudio --model qwen/qwen3-vl-30b
+photo-tagger 0.2.2 environment check
+
+  OK    ExifTool: /usr/bin/exiftool
+  OK    Model 'qwen/qwen3-vl-30b' on lmstudio: available at http://localhost:1234/v1
+
+All checks passed.
+```
+
 ## Input and scanning
 
 `-i/--input` is required and repeatable: pass it once per file or directory you want to process.
@@ -28,16 +51,16 @@ precedence rules and TOML layout.
 
 ## Provider
 
-The provider group selects the local backend and how to reach it. Prefer the API-key environment
-variables over `--api-key` so the key never lands in your shell history.
+The provider group selects the backend and how to reach it. Prefer the API-key environment variables
+over `--api-key` so the key never lands in your shell history.
 
-| Flag                  | Default                                                                     | Env var                                                   | Description                                                      |
-| --------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------- |
-| `--provider` NAME     | `lmstudio`                                                                  | `-`                                                       | Backend: `ollama` or `lmstudio`.                                 |
-| `-m`, `--model` NAME  | `qwen/qwen3-vl-30b`                                                         | `MODEL_NAME`                                              | Vision-language model identifier.                                |
-| `-u`, `--url` URL     | `http://localhost:1234/v1` (lmstudio), `http://localhost:11434/v1` (ollama) | `LM_STUDIO_BASE_URL` / `OLLAMA_BASE_URL`                  | Provider API base URL.                                           |
-| `-k`, `--api-key` KEY | none                                                                        | `OLLAMA_API_KEY` / `LM_STUDIO_API_KEY` / `OPENAI_API_KEY` | API key; prefer the env vars over the flag.                      |
-| `--retries` N         | `5`                                                                         | `RETRIES`                                                 | Automatic retries when the model output fails schema validation. |
+| Flag                  | Default                                                                     | Env var                                                      | Description                                                        |
+| --------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `--provider` NAME     | `lmstudio`                                                                  | `-`                                                          | Backend: `ollama`, `lmstudio`, or `openai`.                        |
+| `-m`, `--model` NAME  | `qwen/qwen3-vl-30b`                                                         | `MODEL_NAME`                                                 | Vision-language model identifier.                                  |
+| `-u`, `--url` URL     | `http://localhost:1234/v1` (lmstudio), `http://localhost:11434/v1` (ollama) | `LM_STUDIO_BASE_URL` / `OLLAMA_BASE_URL` / `OPENAI_BASE_URL` | Provider API base URL.                                             |
+| `-k`, `--api-key` KEY | none                                                                        | `OLLAMA_API_KEY` / `LM_STUDIO_API_KEY` / `OPENAI_API_KEY`    | API key; prefer the env vars over the flag. Required for `openai`. |
+| `--retries` N         | `5`                                                                         | `RETRIES`                                                    | Automatic retries when the model output fails schema validation.   |
 
 ## Inference
 

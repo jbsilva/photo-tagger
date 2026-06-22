@@ -28,7 +28,8 @@ directly into each photo with `--embed-in-photo`.
 - Works with RAW and standard image formats (CR3, CR2, NEF, JPG, PNG, and more)
 - Generates a title, a concise description, and hierarchical keywords
 - Merges with existing metadata unless you opt-in to overwrite
-- Supports Ollama and LM Studio compatible OpenAI APIs
+- Works with Ollama, LM Studio, and any hosted OpenAI-compatible API
+- Ships a `doctor` command that pre-flights ExifTool and your model provider
 - Converts images to compact JPEG bytes to minimize token usage
 - Generates detailed log files for easy debugging and auditing
 - Highly configurable via CLI flags and environment variables
@@ -63,6 +64,8 @@ Environment variables provide defaults so you can keep the CLI concise:
 - `OLLAMA_API_KEY` – optional API key passed to Ollama requests
 - `LM_STUDIO_BASE_URL` – override the LM Studio endpoint (default `http://localhost:1234/v1`)
 - `LM_STUDIO_API_KEY` / `OPENAI_API_KEY` – API key for LM Studio’s OpenAI-compatible server
+- `OPENAI_BASE_URL` – endpoint for the `openai` provider (default `https://api.openai.com/v1`)
+- `OPENAI_API_KEY` – API key for the `openai` provider (required for that provider)
 - `MODEL_NAME` – default model name (default `qwen/qwen3-vl-30b`)
 - `JPEG_DIMENSIONS`, `JPEG_QUALITY`, `TEMPERATURE`, `MAX_TOKENS`, `RETRIES` – fine-tune runtime
 
@@ -120,7 +123,7 @@ Key options:
 - `--ext` – comma-separated extension list used when scanning directories (default `cr3,jpg`)
 - `-r/--recursive` – recurse into subdirectories while scanning inputs
 - `-m/--model` – model identifier understood by your provider
-- `--provider` – `ollama` or `lmstudio` (defaults to `lmstudio`)
+- `--provider` – `ollama`, `lmstudio`, or `openai` (defaults to `lmstudio`)
 - `--url` / `--api-key` – override provider endpoint and credentials
 - `--overwrite-keywords` – replace instead of merge existing keyword metadata
 - `--no-write-title` / `--no-write-description` – skip writing those fields
@@ -200,10 +203,22 @@ Embed metadata directly into a set of JPEGs:
 photo-tagger -i ./exports --ext jpg --embed-in-photo
 ```
 
+Check your setup before a big run (verifies ExifTool and that the provider serves the model):
+
+```bash
+photo-tagger doctor --provider lmstudio --model qwen/qwen3-vl-30b
+```
+
 Send requests to a remote Ollama host with a custom model:
 
 ```bash
 photo-tagger -i ./shoot --provider ollama --model llava:34b --url http://ollama-box:11434/v1
+```
+
+Use a hosted OpenAI-compatible API (key read from `OPENAI_API_KEY`):
+
+```bash
+photo-tagger -i ./shoot --provider openai --model gpt-4o-mini
 ```
 
 Preview proposed metadata without writing anything (useful when iterating on prompts):

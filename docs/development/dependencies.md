@@ -94,7 +94,9 @@ The same command runs as a pre-commit hook, so a malformed config is caught befo
 
 ## Version sync
 
-The package version appears in several files at once. The `check-version-sync` pre-commit hook keeps
-them aligned across `pyproject.toml`, `uv.lock`, `src/photo_tagger/main.py`, `SECURITY.md`, and
-`CHANGELOG.md`, so a release bump cannot land in one place and drift in another. For the rest of the
-local checks that run before a commit, see [Code quality](code-quality.md).
+The package version appears in a few files at once. The `check-version-sync` pre-commit hook keeps
+them aligned across `pyproject.toml`, `uv.lock`, `SECURITY.md`, and `CHANGELOG.md`, so a release
+bump cannot land in one place and drift in another. The Python package reads its own version from
+the installed distribution metadata (`importlib.metadata.version`), so there is no version string in
+the source to keep in sync. For the rest of the local checks that run before a commit, see
+[Code quality](code-quality.md).

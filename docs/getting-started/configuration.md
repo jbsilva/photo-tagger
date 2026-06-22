@@ -25,22 +25,23 @@ file or your shell profile and still override one value per run on the command l
 These variables set defaults. Any matching CLI flag still overrides them. See
 [CLI reference](../usage/cli-reference.md) for the flags they pair with.
 
-| Variable              | Default                     | Purpose                                                          |
-| --------------------- | --------------------------- | ---------------------------------------------------------------- |
-| `PHOTO_TAGGER_CONFIG` | none                        | Explicit path to a config file (highest-priority config source). |
-| `MODEL_NAME`          | `qwen/qwen3-vl-30b`         | Vision-language model identifier.                                |
-| `OLLAMA_BASE_URL`     | `http://localhost:11434/v1` | Ollama API base URL.                                             |
-| `OLLAMA_API_KEY`      | none                        | API key for Ollama.                                              |
-| `LM_STUDIO_BASE_URL`  | `http://localhost:1234/v1`  | LM Studio API base URL.                                          |
-| `LM_STUDIO_API_KEY`   | none                        | API key for LM Studio.                                           |
-| `OPENAI_API_KEY`      | none                        | Fallback API key for LM Studio.                                  |
-| `TEMPERATURE`         | `0.2`                       | Sampling temperature.                                            |
-| `MAX_TOKENS`          | `1200`                      | Maximum tokens to generate.                                      |
-| `TIMEOUT_SECONDS`     | `60.0`                      | Per-image inference timeout in seconds.                          |
-| `FREQUENCY_PENALTY`   | `0.5`                       | Penalty on repeated tokens.                                      |
-| `JPEG_DIMENSIONS`     | `1280`                      | Max dimension (px) of the JPEG sent to the model.                |
-| `JPEG_QUALITY`        | `80`                        | JPEG quality (1-100) of the image sent to the model.             |
-| `RETRIES`             | `5`                         | Retries when model output fails schema validation.               |
+| Variable              | Default                     | Purpose                                                                            |
+| --------------------- | --------------------------- | ---------------------------------------------------------------------------------- |
+| `PHOTO_TAGGER_CONFIG` | none                        | Explicit path to a config file (highest-priority config source).                   |
+| `MODEL_NAME`          | `qwen/qwen3-vl-30b`         | Vision-language model identifier.                                                  |
+| `OLLAMA_BASE_URL`     | `http://localhost:11434/v1` | Ollama API base URL.                                                               |
+| `OLLAMA_API_KEY`      | none                        | API key for Ollama.                                                                |
+| `LM_STUDIO_BASE_URL`  | `http://localhost:1234/v1`  | LM Studio API base URL.                                                            |
+| `LM_STUDIO_API_KEY`   | none                        | API key for LM Studio.                                                             |
+| `OPENAI_BASE_URL`     | `https://api.openai.com/v1` | Base URL for the `openai` provider (the real OpenAI API or a drop-in gateway).     |
+| `OPENAI_API_KEY`      | none                        | API key for the `openai` provider (required); also the fallback key for LM Studio. |
+| `TEMPERATURE`         | `0.2`                       | Sampling temperature.                                                              |
+| `MAX_TOKENS`          | `1200`                      | Maximum tokens to generate.                                                        |
+| `TIMEOUT_SECONDS`     | `60.0`                      | Per-image inference timeout in seconds.                                            |
+| `FREQUENCY_PENALTY`   | `0.5`                       | Penalty on repeated tokens.                                                        |
+| `JPEG_DIMENSIONS`     | `1280`                      | Max dimension (px) of the JPEG sent to the model.                                  |
+| `JPEG_QUALITY`        | `80`                        | JPEG quality (1-100) of the image sent to the model.                               |
+| `RETRIES`             | `5`                         | Retries when model output fails schema validation.                                 |
 
 !!! tip
 
@@ -71,7 +72,7 @@ workers = 1              # Process N photos concurrently with a thread pool.
 
 [provider]
 model_name = "qwen/qwen3-vl-30b"          # Vision-language model identifier.
-provider_name = "lmstudio"                # Backend: "ollama" or "lmstudio".
+provider_name = "lmstudio"                # Backend: "ollama", "lmstudio", or "openai".
 api_base_url = "http://localhost:1234/v1" # Provider API base URL.
 # api_key = "..."                         # Prefer the API-key env vars instead.
 retries = 5                               # Retries when output fails schema validation.
