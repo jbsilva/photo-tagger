@@ -104,6 +104,11 @@ photo** in the detail pane: it runs the model on just that photo, regardless of 
 checked (the counterpart to **Save this photo**). If some photos ended up `failed ✗`, **Retry
 failed** in the toolbar re-runs the model on every failed photo at once.
 
+To stop a run early, press **Cancel** (next to *Generate selected*). The photo already in flight
+finishes (a model request cannot be interrupted mid-call), then the run stops and the un-started
+photos return to `pending` so you can resume them later with another **Generate selected**. Anything
+already generated keeps its proposal.
+
 ### 4. Review, edit, and save
 
 Click a photo to open it on the right. The detail pane is **side-by-side** for easy comparison: an
@@ -174,9 +179,9 @@ caching, date-range filters, sampling, logging), use the [CLI](cli-reference.md)
 
 !!! warning
 
-    Generation has no cancellation hook, so **closing the window mid-run waits for the current batch to
-    finish** rather than aborting it. To stop a large batch early, interrupt the [CLI](cli-reference.md)
-    with ++ctrl+c++ instead.
+    Cancelling (or closing the window mid-run) stops at the next photo boundary: the photo **already in
+    flight runs to completion** before the run halts, because a model request cannot be interrupted
+    mid-call. With a slow model that one photo can take a while.
 
 - Loading a photo's preview and existing metadata is synchronous, so selecting a large RAW file may
     pause briefly the first time (results are cached afterwards).

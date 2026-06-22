@@ -1086,6 +1086,70 @@ def test_generate_current_needs_an_open_photo(window: gui.MainWindow) -> None:
     assert "Open a photo" in window._status.text()  # noqa: SLF001
 
 
+def test_worker_stops_after_current_photo_when_cancelled(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Calling stop() halts the batch at the next photo boundary, not mid-photo."""
+    _stub_generation(monkeypatch)
+    proposals: list[Proposal] = []
+    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg"), Path("/b.jpg")])
+
+    def record_then_cancel(proposal: Proposal) -> None:
+        # Cancel as soon as the first photo's proposal lands; the second photo must not run.
+        proposals.append(proposal)
+        worker.stop()
+
+    worker.file_done.connect(record_then_cancel)
+
+    worker.run()
+
+    assert len(proposals) == 1
+
+
+def test_cancel_generation_stops_worker_and_disables_button(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel asks the worker to stop, flags the run as cancelling, and grays the button."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_generation(monkeypatch)
+    _add_dir(window, {"a": img})
+    window._run_generation([window._items[str(img)]])  # noqa: SLF001
+    assert window._cancel_button.isEnabled()  # noqa: SLF001 - enabled while running
+
+    window._cancel_generation()  # noqa: SLF001
+
+    worker = window._worker  # noqa: SLF001
+    assert worker is not None
+    assert worker._stop is True  # noqa: SLF001
+    assert window._cancelling is True  # noqa: SLF001
+    assert not window._cancel_button.isEnabled()  # noqa: SLF001
+    assert "Cancelling" in window._status.text()  # noqa: SLF001
+    window._teardown_thread()  # noqa: SLF001 - join the worker thread the run started
+
+
+def test_finish_after_cancel_resets_working_photos_to_pending(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """A cancelled run frees the un-started (still-WORKING) photos and reports the tally."""
+    a = _jpeg(tmp_path / "a.jpg")
+    b = _jpeg(tmp_path / "b.jpg")
+    _add_dir(window, {"a": a, "b": b})
+    window._items[str(a)].status = WORKING  # noqa: SLF001 - never reached before cancel
+    window._items[str(b)].status = READY  # noqa: SLF001 - already generated, must survive
+    window._cancelling = True  # noqa: SLF001
+
+    window._on_generate_finished()  # noqa: SLF001
+
+    assert window._items[str(a)].status == PENDING  # noqa: SLF001
+    assert window._items[str(b)].status == READY  # noqa: SLF001
+    assert "Cancelled" in window._status.text()  # noqa: SLF001
+    assert "1 photo(s) not generated" in window._status.text()  # noqa: SLF001
+
+
 def test_on_file_done_applies_proposal_to_item(window: gui.MainWindow, tmp_path: Path) -> None:
     """A finished proposal updates the matching item and its tree status."""
     img = _jpeg(tmp_path / "a.jpg")

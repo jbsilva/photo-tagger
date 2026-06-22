@@ -240,6 +240,16 @@ class GenerateWorker(QObject):
         self._api_base_url = api_base_url
         self._paths = paths
         self._api_key = api_key
+        self._stop = False
+
+    def stop(self) -> None:
+        """
+        Ask the loop to stop before starting the next photo.
+
+        The model call for the photo already in flight runs to completion (there is no way to
+        interrupt a blocking request), so cancellation takes effect at the next photo boundary.
+        """
+        self._stop = True
 
     def run(self) -> None:
         """Build the agent once, then generate a proposal per photo."""
@@ -259,6 +269,8 @@ class GenerateWorker(QObject):
 
         self.started.emit(len(self._paths))
         for path in self._paths:
+            if self._stop:
+                break
             try:
                 proposal = self._generate_one(agent, path)
             except Exception as exc:  # noqa: BLE001
@@ -379,6 +391,7 @@ class MainWindow(QMainWindow):
         self._current: PhotoItem | None = None
         self._thread: QThread | None = None
         self._worker: GenerateWorker | None = None
+        self._cancelling = False
         self._thumb_thread: QThread | None = None
         self._thumb_worker: ThumbnailWorker | None = None
         self._syncing = False
@@ -484,11 +497,19 @@ class MainWindow(QMainWindow):
         self._generate_button.setObjectName("primary")
         self._generate_button.setToolTip("Run the model on the checked photos.")
         self._generate_button.clicked.connect(self._generate)
+        self._cancel_button = QPushButton("Cancel")
+        self._cancel_button.setToolTip(
+            "Stop generating. The photo currently in flight finishes; the rest are left "
+            "untouched so you can resume them later.",
+        )
+        self._cancel_button.setEnabled(False)
+        self._cancel_button.clicked.connect(self._cancel_generation)
 
         row = QHBoxLayout()
         row.addWidget(self._test_button)
         row.addWidget(self._retry_button)
         row.addStretch(1)
+        row.addWidget(self._cancel_button)
         row.addWidget(self._generate_button)
         return row
 
@@ -1265,6 +1286,7 @@ class MainWindow(QMainWindow):
         if current is not None and current in items:
             # Clear a stale failure banner the moment its photo is re-queued.
             self._update_error_banner(current)
+        self._cancelling = False
         self._set_running(running=True)
         self._status.setText(f"Generating {len(items)} photo(s)...")
 
@@ -1304,16 +1326,43 @@ class MainWindow(QMainWindow):
             self._update_error_banner(item)
         self._update_status()
 
+    def _cancel_generation(self) -> None:
+        """Ask the running worker to stop after the photo currently in flight."""
+        if self._worker is None:
+            return
+        self._cancelling = True
+        self._worker.stop()
+        self._cancel_button.setEnabled(False)
+        self._status.setText("Cancelling after the current photo finishes...")
+
     def _on_generate_finished(self) -> None:
-        self._status.setText("Generation finished.")
+        # A cancelled run leaves the un-started photos marked WORKING; reset them to PENDING so
+        # they look queued-again rather than stuck, and report what actually got done.
+        reset = self._reset_working()
+        if self._cancelling:
+            self._status.setText(f"Cancelled. {reset} photo(s) not generated.")
+        else:
+            self._status.setText("Generation finished.")
+        self._cancelling = False
         self._resort()
         self._teardown_thread()
+
+    def _reset_working(self) -> int:
+        """Revert any still-WORKING photos to PENDING; return how many were reset."""
+        reset = 0
+        for item in self._items.values():
+            if item.status == WORKING:
+                item.status = PENDING
+                self._refresh_status_cell(item)
+                reset += 1
+        return reset
 
     def _set_running(self, *, running: bool) -> None:
         self._generate_button.setEnabled(not running)
         self._generate_one_button.setEnabled(not running)
         self._retry_button.setEnabled(not running)
         self._test_button.setEnabled(not running)
+        self._cancel_button.setEnabled(running)
 
     def _teardown_thread(self) -> None:
         if self._thread is not None:
@@ -1411,11 +1460,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override.
         """
-        Wait for any in-flight generation to finish before closing.
+        Stop any in-flight generation before closing.
 
-        Generation has no cancellation hook, so closing mid-run blocks until the current batch
-        completes. Waiting keeps a running QThread from being destroyed.
+        Asking the worker to stop first means closing mid-run only waits for the photo currently in
+        flight, not the whole batch. Waiting on the thread keeps a running QThread from being
+        destroyed under it.
         """
+        if self._worker is not None:
+            self._worker.stop()
         self._stop_thumbs()
         self._teardown_thread()
         super().closeEvent(event)
