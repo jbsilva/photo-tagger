@@ -111,6 +111,7 @@ skip_tagged = false   # Skip files that already have keywords, a title, or a des
 [artifacts]
 # prompt_file = "prompt.txt"   # Replace the default user prompt with this file's contents.
 # summary_file = "summary.json" # Write a JSON run summary on completion.
+# csv_file = "report.csv"      # Write a per-photo CSV report (one row per photo) as the run streams.
 # cache_file = "cache.sqlite"   # SQLite cache of model outputs; reruns skip unchanged calls.
 # lock_file = "photo-tagger.lock" # Exclusive lock; refuse to start if another run holds it.
 ```

@@ -115,18 +115,23 @@ retry pass re-runs the whole photo once more after the first pass finishes.
 through optional callbacks that the CLI wires up. Each callback is invoked defensively: a callback
 that raises is logged and swallowed so it cannot abort the batch.
 
-| Callback          | Wired to                                     | Fires                                    |
-| ----------------- | -------------------------------------------- | ---------------------------------------- |
-| `on_image_result` | NDJSON emitter (`--json`)                    | Once per photo, with the `ImageOutcome`. |
-| `on_success`      | skip-list appender (`--append-to-skip-file`) | Once per successful photo.               |
-| `on_complete`     | summary writer (`--summary-file`)            | Once at the end, with the `BatchTotals`. |
+| Callback          | Wired to                                                   | Fires                                    |
+| ----------------- | ---------------------------------------------------------- | ---------------------------------------- |
+| `on_image_result` | NDJSON emitter (`--json`) and/or CSV writer (`--csv-file`) | Once per photo, with the `ImageOutcome`. |
+| `on_success`      | skip-list appender (`--append-to-skip-file`)               | Once per successful photo.               |
+| `on_complete`     | summary writer (`--summary-file`)                          | Once at the end, with the `BatchTotals`. |
 
 The NDJSON emitter writes one JSON line per photo to stdout (file, status, `from_cache`, `retry`,
 title, description, keywords, token counts, seconds). Logs and the progress bar stay on stderr, so
-stdout pipes cleanly into `jq`. The skip-list appender is built by `make_skip_list_appender()` and
-appends each success to the skip file, deduplicating under a lock so concurrent workers never
-produce interleaved or duplicate lines. The summary writer serializes the run totals (success and
-failure counts, failed files, token usage, wall time) to the `--summary-file` as JSON.
+stdout pipes cleanly into `jq`. The CSV writer
+([`csv_report.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/csv_report.py))
+streams the same per-photo `ImageOutcome` into a spreadsheet-friendly row (adding the read EXIF and
+the keywords already on the file) and is flushed per row so an interrupted run still leaves a valid
+file; when both `--json` and `--csv-file` are set, `main` fans the single `on_image_result` hook out
+to both. The skip-list appender is built by `make_skip_list_appender()` and appends each success to
+the skip file, deduplicating under a lock so concurrent workers never produce interleaved or
+duplicate lines. The summary writer serializes the run totals (success and failure counts, failed
+files, token usage, wall time) to the `--summary-file` as JSON.
 
 ## Graceful interruption
 

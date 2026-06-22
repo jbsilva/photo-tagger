@@ -24,7 +24,7 @@ import threading
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Protocol
+from typing import TYPE_CHECKING, Annotated, Protocol
 
 from cyclopts import App, Parameter, validators
 from loguru import logger
@@ -44,6 +44,7 @@ from photo_tagger.cli_options import (
     to_processing_options,
 )
 from photo_tagger.config import DEFAULT_USER_PROMPT
+from photo_tagger.csv_report import CsvReportWriter, ReportRow
 from photo_tagger.diagnostics import render_report, run_checks
 from photo_tagger.discovery import (
     apply_date_filter,
@@ -55,12 +56,17 @@ from photo_tagger.discovery import (
 from photo_tagger.errors import PhotoTaggerError
 from photo_tagger.locking import FileLock, LockHeldError
 from photo_tagger.logging_setup import setup_logging
+from photo_tagger.metadata import select_camera_fields, select_location
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
 
 # Runtime import (not type-only): cyclopts evaluates the Annotated[ProviderName, ...] field
 # on the doctor command to validate the --provider choices, so it must exist at definition time.
 from photo_tagger.providers import ProviderName  # noqa: TC001
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 app = App(name="photo-tagger", version=__version__)
@@ -206,6 +212,90 @@ def _open_cache(path: Path | None, *, namespace: str) -> InferenceCache | None:
         return None
 
 
+def _open_csv_report(path: Path | None) -> CsvReportWriter | None:
+    """
+    Open the CSV report at *path*, or log and skip the report on failure.
+
+    Returns ``None`` when *path* is ``None`` or the file cannot be opened (parent dir unwritable,
+    filesystem full). A report we cannot write should never block tagging, so the run proceeds
+    without one, mirroring how the cache degrades.
+    """
+    if path is None:
+        return None
+    try:
+        writer = CsvReportWriter(path)
+    except OSError as exc:
+        logger.error("csv_report_open_failed", file=str(path), error=str(exc))
+        return None
+    logger.info("csv_report_opened", file=str(path))
+    return writer
+
+
+def _outcome_to_report_row(outcome: ImageOutcome) -> ReportRow:
+    """Flatten a pipeline :class:`ImageOutcome` into a CSV :class:`ReportRow`."""
+    model, lens, captured = select_camera_fields(outcome.camera_info)
+    city, country = select_location(outcome.location_tags)
+    return ReportRow(
+        file=str(outcome.file),
+        filename=outcome.file.name,
+        status="ok" if outcome.success else "failed",
+        title=outcome.title or "",
+        description=outcome.description or "",
+        keywords=list(outcome.written_keywords),
+        hierarchical_keywords=list(outcome.hierarchical_keywords),
+        existing_keywords=list(outcome.existing_keywords),
+        camera_model=model or "",
+        lens_model=lens or "",
+        capture_date=captured or "",
+        gps_position=outcome.gps_position or "",
+        city=city or "",
+        country=country or "",
+        input_tokens=outcome.input_tokens,
+        output_tokens=outcome.output_tokens,
+        total_tokens=outcome.total_tokens,
+        seconds=outcome.seconds,
+        from_cache=outcome.from_cache,
+        retry=outcome.retry,
+    )
+
+
+class _CsvImageResultSink:
+    """``on_image_result`` callback that appends each outcome to the CSV report."""
+
+    __slots__ = ("_writer",)
+
+    def __init__(self, writer: CsvReportWriter) -> None:
+        """Wrap an open :class:`CsvReportWriter`."""
+        self._writer = writer
+
+    def __call__(self, outcome: ImageOutcome) -> None:
+        """Convert *outcome* to a report row and stream it to the file."""
+        self._writer.write(_outcome_to_report_row(outcome))
+
+
+def _combine_image_result_callbacks(
+    *callbacks: Callable[[ImageOutcome], None] | None,
+) -> Callable[[ImageOutcome], None] | None:
+    """
+    Fan one ImageOutcome out to every non-None *callback*, in order.
+
+    Lets ``--json`` and ``--csv-file`` both observe each photo from the single ``on_image_result``
+    hook. Returns the lone callback when only one is active, or ``None`` when none are, so the
+    common single-sink path adds no wrapper.
+    """
+    active = [cb for cb in callbacks if cb is not None]
+    if not active:
+        return None
+    if len(active) == 1:
+        return active[0]
+
+    def _fan_out(outcome: ImageOutcome) -> None:
+        for callback in active:
+            callback(outcome)
+
+    return _fan_out
+
+
 def _parse_filter_date(value: str | None, *, flag: str) -> datetime | None:
     """
     Parse an ISO 8601 string from *flag* into a timezone-aware datetime, or None.
@@ -321,6 +411,7 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
         workers=workers,
         prompt_file=_maybe_str(artifacts.prompt_file),
         summary_file=_maybe_str(artifacts.summary_file),
+        csv_file=_maybe_str(artifacts.csv_file),
         cache_file=_maybe_str(artifacts.cache_file),
         lock_file=_maybe_str(artifacts.lock_file),
         json_output=display.json_output,
@@ -599,7 +690,10 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
             user_prompt_chars=len(user_prompt),
         )
 
+    csv_writer = _open_csv_report(artifacts.csv_file)
     ndjson_emitter = _NDJSONEmitter(sys.stdout) if display.json_output else None
+    csv_sink = _CsvImageResultSink(csv_writer) if csv_writer is not None else None
+    on_image_result = _combine_image_result_callbacks(ndjson_emitter, csv_sink)
     try:
         with batch_progress(len(image_files), enabled=display.progress_bar) as progress:
             run_batch(
@@ -612,11 +706,13 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
                 workers=max(1, workers),
                 progress=progress,
                 cache=cache,
-                on_image_result=ndjson_emitter,
+                on_image_result=on_image_result,
             )
     finally:
         if cache is not None:
             cache.close()
+        if csv_writer is not None:
+            csv_writer.close()
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point, not exercised by tests

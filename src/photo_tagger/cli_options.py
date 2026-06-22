@@ -295,6 +295,19 @@ class ArtifactConfig:
             ),
         ),
     ] = None
+    csv_file: Annotated[
+        Path | None,
+        Parameter(
+            name=("--csv-file",),
+            validator=validators.Path(file_okay=True, dir_okay=False),
+            help=(
+                "Write a CSV report with one row per photo: filename, generated title, "
+                "description, and keywords, the keywords already on the file, the camera/location "
+                "EXIF read as context, and per-photo token usage and timing. Rows stream as photos "
+                "finish, so a stopped run still leaves a valid file. Created if missing"
+            ),
+        ),
+    ] = None
     cache_file: Annotated[
         Path | None,
         Parameter(

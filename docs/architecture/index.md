@@ -57,6 +57,7 @@ table cells cannot hard-wrap, so the link targets live in the reference block be
 | [`metadata.py`][metadata]           | `read_image_context()` batches one exiftool read; `build_contextual_prompt()` appends it; `write_metadata()` writes the sidecar or embeds; `find_tagged_images()` detects tagged files.  |
 | [`cache.py`][cache]                 | `InferenceCache`, a SQLite database (WAL mode) keyed by image content hash plus a namespace digest; a cache hit skips the model call entirely.                                           |
 | [`locking.py`][locking]             | `FileLock` wraps the filelock library for a cross-platform, non-blocking exclusive lock.                                                                                                 |
+| [`csv_report.py`][csv_report]       | `ReportRow` plus the streaming `CsvReportWriter` (CLI `--csv-file`) and batch `write_report` (GUI export): one spreadsheet row per photo, shared column schema across both frontends.    |
 | [`pipeline.py`][pipeline]           | `run_batch()` orchestrates everything: serial or concurrent processing, the per-photo steps, retries, and streaming outcomes through callbacks.                                          |
 | [`progress.py`][progress]           | rich progress bar on a TTY (stderr), no-op otherwise.                                                                                                                                    |
 | [`logging_setup.py`][logging_setup] | loguru config: console sink to stderr (so stdout NDJSON stays clean) and a rotating, compressed file sink.                                                                               |
@@ -83,6 +84,7 @@ table cells cannot hard-wrap, so the link targets live in the reference block be
 [cli_options]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/cli_options.py
 [config]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/config.py
 [config_file]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/config_file.py
+[csv_report]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/csv_report.py
 [diagnostics]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/diagnostics.py
 [discovery]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/discovery.py
 [errors]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/errors.py

@@ -180,6 +180,29 @@ def _outcome(file: Path, *, success: bool = True, from_cache: bool = False) -> I
     )
 
 
+def _rich_outcome(file: Path) -> ImageOutcome:
+    """Build an ImageOutcome with the EXIF/merged-keyword fields the CSV report reads."""
+    return ImageOutcome(
+        file=file,
+        success=True,
+        from_cache=False,
+        retry=False,
+        title="A Title",
+        description="A description.",
+        keywords=["Beach", "Sunset"],
+        input_tokens=42,
+        output_tokens=7,
+        total_tokens=49,
+        seconds=1.5,
+        written_keywords=["Beach", "Sunset"],
+        hierarchical_keywords=["Nature|Beach"],
+        existing_keywords=["Old"],
+        camera_info={"EXIF:Model": "Canon EOS R5", "EXIF:LensModel": "RF 100mm"},
+        location_tags={"XMP-photoshop:City": "Hamburg", "XMP-photoshop:Country": "Germany"},
+        gps_position="53 N, 9 E",
+    )
+
+
 def test_ndjson_emitter_writes_one_line_per_outcome(tmp_path: Path) -> None:
     """Each call to the emitter writes exactly one JSON line that round-trips through json.loads."""
     buf = io.StringIO()
@@ -238,6 +261,126 @@ def test_cli_default_does_not_install_ndjson_emitter(tmp_path: Path) -> None:
         _run_app(["--input", str(image)])
 
     assert captured["on_image_result"] is None
+
+
+# ---------------------------------------------------------------------------
+# --csv-file report
+# ---------------------------------------------------------------------------
+
+
+def test_outcome_to_report_row_maps_fields(tmp_path: Path) -> None:
+    """An ImageOutcome maps onto the report row, EXIF dicts resolved to scalar columns."""
+    rendered = main_module._outcome_to_report_row(_rich_outcome(tmp_path / "img.cr3")).as_dict()  # noqa: SLF001
+    assert rendered["filename"] == "img.cr3"
+    assert rendered["status"] == "ok"
+    assert rendered["title"] == "A Title"
+    assert rendered["keywords"] == "Beach; Sunset"
+    assert rendered["hierarchical_keywords"] == "Nature|Beach"
+    assert rendered["existing_keywords"] == "Old"
+    assert rendered["camera_model"] == "Canon EOS R5"
+    assert rendered["lens_model"] == "RF 100mm"
+    assert rendered["gps_position"] == "53 N, 9 E"
+    assert rendered["city"] == "Hamburg"
+    assert rendered["country"] == "Germany"
+    assert rendered["from_cache"] == "false"
+
+
+def test_combine_image_result_callbacks_handles_zero_one_and_many(tmp_path: Path) -> None:
+    """Combining returns None for no sinks, the lone sink for one, and a fan-out for many."""
+    seen: list[tuple[str, ImageOutcome]] = []
+
+    def first(outcome: ImageOutcome) -> None:
+        seen.append(("first", outcome))
+
+    def second(outcome: ImageOutcome) -> None:
+        seen.append(("second", outcome))
+
+    assert main_module._combine_image_result_callbacks(None, None) is None  # noqa: SLF001
+    assert main_module._combine_image_result_callbacks(None, first) is first  # noqa: SLF001
+
+    combined = main_module._combine_image_result_callbacks(first, second)  # noqa: SLF001
+    assert combined is not None
+    outcome = _rich_outcome(tmp_path / "img.cr3")
+    combined(outcome)
+    assert seen == [("first", outcome), ("second", outcome)]
+
+
+def test_open_csv_report_returns_none_for_none_path() -> None:
+    """No --csv-file means no writer, so nothing to open or close."""
+    assert main_module._open_csv_report(None) is None  # noqa: SLF001
+
+
+def test_open_csv_report_degrades_on_open_error(tmp_path: Path) -> None:
+    """A writer that cannot open is logged and skipped, never raised."""
+    with patch.object(main_module, "CsvReportWriter", side_effect=OSError("denied")):
+        assert main_module._open_csv_report(tmp_path / "report.csv") is None  # noqa: SLF001
+
+
+def test_cli_csv_file_writes_streamed_report(tmp_path: Path) -> None:
+    """--csv-file produces a header plus one row per photo the pipeline reports."""
+    import csv as csv_module  # noqa: PLC0415 - test-local parser.
+
+    image = _make_jpeg(tmp_path / "img.cr3")
+    csv_path = tmp_path / "report.csv"
+
+    def fake_run_batch(
+        image_files: list[Path],
+        agent: object,
+        options: object,
+        **kwargs: object,
+    ) -> object:
+        callback = kwargs.get("on_image_result")
+        assert callback is not None
+        callback(_rich_outcome(image))  # type: ignore[operator]
+        return None
+
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(main_module, "run_batch", side_effect=fake_run_batch),
+    ):
+        _run_app(["--input", str(image), "--csv-file", str(csv_path)])
+
+    with csv_path.open(encoding="utf-8", newline="") as fh:
+        rows = list(csv_module.DictReader(fh))
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "img.cr3"
+    assert rows[0]["title"] == "A Title"
+    assert rows[0]["keywords"] == "Beach; Sunset"
+    assert rows[0]["camera_model"] == "Canon EOS R5"
+    assert rows[0]["city"] == "Hamburg"
+    assert rows[0]["status"] == "ok"
+
+
+def test_cli_csv_file_installs_csv_sink_and_writes_header(tmp_path: Path) -> None:
+    """--csv-file alone wires a _CsvImageResultSink and emits the header even with no rows."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    csv_path = tmp_path / "report.csv"
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--csv-file", str(csv_path)])
+
+    assert isinstance(captured["on_image_result"], main_module._CsvImageResultSink)  # noqa: SLF001
+    assert csv_path.exists()
+
+
+def test_cli_csv_and_json_install_fan_out(tmp_path: Path) -> None:
+    """--json with --csv-file fans each outcome out to both sinks."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    csv_path = tmp_path / "report.csv"
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--json", "--csv-file", str(csv_path)])
+
+    callback = captured["on_image_result"]
+    assert callable(callback)
+    # Neither single sink: the combiner wrapped both behind one callable.
+    assert not isinstance(callback, main_module._NDJSONEmitter)  # noqa: SLF001
+    assert not isinstance(callback, main_module._CsvImageResultSink)  # noqa: SLF001
 
 
 def test_cli_newer_than_filters_input_batch(tmp_path: Path) -> None:

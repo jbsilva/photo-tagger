@@ -98,6 +98,23 @@ The model server is usually the bottleneck, so raising `--workers` helps most wh
 serve requests in parallel. The summary file records success and failure counts, failed files, token
 usage, and wall time.
 
+## Export a per-photo CSV report
+
+Write one CSV row per photo with everything extracted and computed: the generated title,
+description, and keywords, the metadata already on the file, the camera/location EXIF, and per-photo
+token usage and timing.
+
+```bash
+photo-tagger \
+  -i ~/Pictures/inbox \
+  --recursive \
+  --csv-file ~/Pictures/report.csv
+```
+
+Rows stream as each photo finishes, so a run stopped with Ctrl-C still leaves a valid file. Pair it
+with `--dry-run` to preview a batch as a spreadsheet without writing any metadata, or with `--json`
+to get both the CSV and the NDJSON stream from one run.
+
 ## Custom prompt with a keyword cap
 
 Replace the default user prompt and limit how many AI keywords are kept per photo.
