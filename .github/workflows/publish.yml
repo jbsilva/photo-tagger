@@ -67,6 +67,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    continue-on-error: true # TestPyPI is a staging mirror. Do not let it fail the release pipeline.
 
     environment:
       name: testpypi
@@ -86,3 +87,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         with:
           repository-url: https://test.pypi.org/legacy/
+          skip-existing: true # Do not fail if the version already exists on TestPyPI (tag re-run)
