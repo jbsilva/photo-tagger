@@ -1618,7 +1618,7 @@ wheels = [
 
 [[package]]
 name = "photo-tagger"
-version = "0.2.2"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "cyclopts" },

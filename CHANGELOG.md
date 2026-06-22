@@ -4,57 +4,40 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-06-22
 
 ### Added
 
-- Optional desktop GUI (`photo-tagger gui`), installed via the `gui` extra
-  (`pip install 'photo-tagger[gui]'`). A PySide6 frontend with a review-before-write workflow: drag
-  in photos or folders, pick what to process from a checkable, nested tree (remove entries with the
-  button or ++delete++), generate proposals with the model, then review each photo's preview
-  alongside its existing and proposed title, description, and keywords, edit any field with a live
-  Lightroom-hierarchy preview, and save. The provider list is capitalized, the model field can query
-  the provider for available models (vision-likely first), and the columns are resizable. The
-  command imports PySide6 lazily, so the base CLI never depends on Qt and prints an install hint if
-  the extra is missing. Ships with a custom app icon.
-- GUI failure handling and logs. A photo that fails to generate now shows why: hover its `failed ✗`
-  status for the reason, or open it to see a red banner above the preview. **Retry failed** re-runs
-  the model on every failed photo (or use **Generate this photo** to retry just one); a successful
-  retry clears the banner. The GUI now writes a rotating log file to `~/.photo-tagger/logs/` (with
-  full tracebacks) instead of silencing logging, and an **Open logs** button reveals that folder in
-  the file browser.
-- GUI **API key** field. The toolbar now has a masked key field alongside the provider, model, and
-  URL, so a key can be typed straight into the window. Leaving it blank falls back to the provider's
-  environment variable (the previous behavior); a typed key is used for that session only and is
-  never written to disk.
-- New `openai` provider for any hosted OpenAI-compatible endpoint (the real OpenAI API or a drop-in
-  gateway). It fails fast with a clear message when no API key is configured. Set the endpoint with
-  `OPENAI_BASE_URL` / `--url` and the key with `OPENAI_API_KEY` / `--api-key`.
-- New `photo-tagger doctor` command: a pre-flight checklist that verifies ExifTool is on PATH and
-  the configured provider is reachable and serves the requested model, exiting non-zero on failure.
+- Optional desktop GUI (`photo-tagger gui`), via the `gui` extra
+  (`pip install 'photo-tagger[gui]'`). A PySide6 review-before-write frontend: drag in photos or
+  folders, generate proposals, then review and edit each photo's title, description, and keywords
+  (with a live Lightroom-hierarchy preview) before saving. PySide6 is imported lazily, so the base
+  CLI never depends on Qt.
+- New `openai` provider for any hosted OpenAI-compatible endpoint. Set `OPENAI_BASE_URL` / `--url`
+  and `OPENAI_API_KEY` / `--api-key`; fails fast when no key is configured.
+- New `photo-tagger doctor` command: a pre-flight check that ExifTool is on PATH and the provider is
+  reachable and serves the requested model, exiting non-zero on failure.
+- `--csv-file PATH` on the `tag` command writes a per-photo CSV report (existing/written metadata,
+  camera, location, GPS, usage, timing), alongside `--summary-file` and `--json`.
+- `--write-keywords` / `--no-write-keywords` (default on) refreshes the title and description while
+  leaving existing keywords on disk untouched.
 - A PEP 561 `py.typed` marker so downstream projects can consume the package's type hints.
 
 ### Changed
 
-- Backends now live in a `photo_tagger.providers` registry. Each `ProviderBackend` bundles the three
-  things that differ per backend (model-listing URL, listing parser, provider factory); the shared
-  HTTP plumbing is written once. Adding a backend is a single registry entry.
-- Existing keywords are modeled by a typed `KeywordSet` value object instead of a
-  `dict[str, list[str]]` keyed by bare strings, removing a silent-typo failure mode.
-- The package version is read from installed distribution metadata (`importlib.metadata.version`),
-  so `pyproject.toml` is the only code-side source of truth.
-- CLI option groups moved out of `main.py` into `photo_tagger.cli_options`, separating the CLI
-  schema from the orchestration logic.
+- Backends now live in a `photo_tagger.providers` registry; adding a backend is a single entry.
+- Existing keywords use a typed `KeywordSet` value object instead of a bare `dict[str, list[str]]`.
+- The package version is read from installed distribution metadata, so `pyproject.toml` is the only
+  code-side source of truth.
+- CLI option groups moved out of `main.py` into `photo_tagger.cli_options`.
 
 ### Fixed
 
-- Hierarchical keywords are generated reliably again. The model schema now has a dedicated
-  `hierarchies` field, so the vision model is given an explicit place to put taxonomy chains
-  (`Golden Eagle<Bird of Prey<Animal`) instead of being expected to embed `<` inside the flat
-  `keywords` list, which it had stopped doing. The chains are folded back into the keyword list and
-  written to `XMP-lr:HierarchicalSubject` as before. (The CLI's `--cache-file`, if used, is keyed on
-  the user prompt and sampling only, not the system prompt, so delete a stale cache to pick up
-  hierarchies on already-processed photos; the GUI never caches and is unaffected.)
+- Hierarchical keywords are generated reliably again: the model schema now has a dedicated
+  `hierarchies` field for taxonomy chains (`Golden Eagle<Bird of Prey<Animal`) instead of expecting
+  `<` embedded in the flat `keywords` list, which the model had stopped doing. (The CLI cache is
+  keyed on the user prompt only, so delete a stale `--cache-file` to pick this up on
+  already-processed photos; the GUI never caches.)
 
 ## [0.2.2] - 2026-05-30
 
@@ -175,4 +158,4 @@ Initial release.
 [0.2.0]: https://github.com/jbsilva/photo-tagger/compare/v0.1.0...v0.2.0
 [0.2.1]: https://github.com/jbsilva/photo-tagger/compare/v0.2.0...v0.2.1
 [0.2.2]: https://github.com/jbsilva/photo-tagger/compare/v0.2.1...v0.2.2
-[unreleased]: https://github.com/jbsilva/photo-tagger/compare/v0.2.2...HEAD
+[0.3.0]: https://github.com/jbsilva/photo-tagger/compare/v0.2.2...v0.3.0
