@@ -80,7 +80,9 @@ jobs:
   sonarcloud:
     # Reuse the coverage report from unit-tests instead of running the suite twice.
     needs: unit-tests
-    if: github.actor != 'dependabot[bot]'
+    # Skip the heavy scan on Renovate's automated dependency PRs (they touch lockfile/constraints,
+    # not source). The lint + unit-tests jobs still gate those PRs.
+    if: github.actor != 'renovate[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

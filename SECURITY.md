@@ -24,7 +24,7 @@ fix lands, it goes out as a new release on that line, so upgrading is how you ge
 The current release is 0.2.2. Upgrade with:
 
 ```bash
-uv tool install --upgrade photo-tagger
+uv tool upgrade photo-tagger
 ```
 
 ## Reporting a Vulnerability
@@ -110,7 +110,7 @@ Bugs in photo-tagger's own behavior are in scope, for example:
 - **Concurrency.** With `--workers > 1`, shared resources (cache, skip list, per-thread ExifTool
   helpers) are lock-protected. Data races that corrupt those files are in scope.
 - **Supply-chain integrity of what I ship.** SHA-pinned GitHub Actions, a committed `uv.lock`,
-  Dependabot with a release cooldown, and PyPI publishing via OIDC trusted publishing. Keeping the
+  Renovate with a release cooldown, and PyPI publishing via OIDC trusted publishing. Keeping the
   release pipeline sound is in scope.
 - **What leaves the machine in a request.** The prompt forwards a curated subset of metadata
   (existing keywords, City/Country, GPS position, camera model, lens, capture date). Sending more
@@ -135,8 +135,8 @@ These are not vulnerabilities in photo-tagger:
 - **Prompt injection via image or EXIF content.** Model output is only written into metadata fields.
   It is never executed and never used to build shell commands or filesystem paths, so a model coaxed
   into emitting odd text is a content issue, not an injection vulnerability.
-- **Third-party Python dependency CVEs.** Tracked via Dependabot and CodeQL, but the underlying
-  flaws are upstream. My duty is to ship updated pins, not to patch the libraries.
+- **Third-party Python dependency CVEs.** Tracked via Renovate and CodeQL, but the underlying flaws
+  are upstream. My duty is to ship updated pins, not to patch the libraries.
 - **Secrets exposed because you passed `--api-key` on the command line.** Command-line arguments are
   visible to other local users in process listings. This is documented, and environment variables
   are recommended instead. The OS-level visibility is not something the tool can fix.
