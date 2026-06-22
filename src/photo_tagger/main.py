@@ -29,6 +29,7 @@ from typing import Annotated, Literal, Protocol
 from cyclopts import App, Parameter, validators
 from loguru import logger
 
+from photo_tagger import __version__
 from photo_tagger.ai import create_agent
 from photo_tagger.cache import InferenceCache, build_cache_namespace
 from photo_tagger.config import (
@@ -57,8 +58,6 @@ from photo_tagger.logging_setup import setup_logging
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
 
-
-__version__ = "0.2.2"
 
 app = App(name="photo-tagger", version=__version__)
 

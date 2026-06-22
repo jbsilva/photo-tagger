@@ -114,4 +114,4 @@ repos:
         entry: uv run scripts/check_version_sync.py
         language: system
         pass_filenames: false
-        files: (pyproject\.toml|uv\.lock|src/photo_tagger/main\.py|SECURITY\.md|CHANGELOG\.md)
+        files: (pyproject\.toml|uv\.lock|SECURITY\.md|CHANGELOG\.md)

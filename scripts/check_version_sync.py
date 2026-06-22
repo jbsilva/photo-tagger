@@ -53,14 +53,16 @@ def _uv_lock_version() -> str | None:
 
 
 def _collect_versions() -> dict[str, str | None]:
-    """Extract the version string from each source-of-truth file."""
+    """
+    Extract the version string from each source-of-truth file.
+
+    The package no longer hardcodes its version: ``photo_tagger.__version__`` is
+    read from the installed distribution metadata, so ``pyproject.toml`` is the
+    only code-side source. The remaining entries are docs that must be bumped by
+    hand on release, which is exactly what this check guards.
+    """
     return {
         _CANONICAL: _grep(_CANONICAL, r'^version\s*=\s*"([^"]+)"', re.MULTILINE),
-        "src/photo_tagger/main.py": _grep(
-            "src/photo_tagger/main.py",
-            r'^__version__\s*=\s*"([^"]+)"',
-            re.MULTILINE,
-        ),
         "SECURITY.md": _grep("SECURITY.md", r"The current release is (\S+)\."),
         "CHANGELOG.md": _grep("CHANGELOG.md", r"^## \[(\d+\.\d+\.\d+)]", re.MULTILINE),
         "uv.lock": _uv_lock_version(),

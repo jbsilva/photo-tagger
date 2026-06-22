@@ -61,7 +61,7 @@ The hooks cover a range of checks; these are the ones you will hit most often:
 | `pycroscope`         | Semi-static analysis that complements zuban.          |
 | `bandit`             | Flags common security issues.                         |
 | `uv-lock`            | Keeps `uv.lock` in sync with `pyproject.toml`.        |
-| `check-version-sync` | Keeps the package version consistent across the repo. |
+| `check-version-sync` | Keeps the docs version in sync with `pyproject.toml`. |
 
 !!! warning
 
