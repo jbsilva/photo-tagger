@@ -28,3 +28,7 @@ reports/
 
 # Machine-local Claude Code settings (hooks, permissions, enabled MCP servers)
 .claude/settings.local.json
+
+# Zensical documentation build output and cache (see zensical.toml)
+site/
+.cache/

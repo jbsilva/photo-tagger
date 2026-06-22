@@ -3,6 +3,7 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-007EC7.svg?style=flat-square)](https://github.com/jbsilva/photo-tagger/blob/main/LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
 [![PyPI version](https://img.shields.io/pypi/v/photo-tagger.svg?style=flat-square)](https://pypi.org/project/photo-tagger)
+[![Documentation](https://img.shields.io/badge/docs-jbsilva.github.io-blue.svg?style=flat-square)](https://jbsilva.github.io/photo-tagger/)
 [![Conda Forge version](https://anaconda.org/conda-forge/photo-tagger/badges/version.svg)](https://anaconda.org/conda-forge/photo-tagger)
 [![Downloads](https://pepy.tech/badge/photo-tagger)](https://pepy.tech/project/photo-tagger)
 [![tests](https://github.com/jbsilva/photo-tagger/actions/workflows/tests.yml/badge.svg)](https://github.com/jbsilva/photo-tagger/actions/workflows/tests.yml)
@@ -19,6 +20,8 @@ writes Lightroom-compatible metadata.
 
 By default it keeps your originals untouched by creating XMP sidecars, but you can embed the updates
 directly into each photo with `--embed-in-photo`.
+
+**Full documentation:** <https://jbsilva.github.io/photo-tagger/>
 
 ## Highlights
 

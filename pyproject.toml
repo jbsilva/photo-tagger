@@ -47,6 +47,9 @@ dev = [
     "ruff>=0.15.18",
     "zuban>=0.8.2",
 ]
+docs = [
+    "zensical>=0.0.46",
+]
 test = [
     "inline-snapshot>=0.34.2",
     "pytest-cov>=7.1.0",
@@ -57,7 +60,7 @@ test = [
 
 [project.urls]
 Homepage = "https://juliobs.com/projects/photo-tagger/"
-Documentation = "https://github.com/jbsilva/photo-tagger"
+Documentation = "https://jbsilva.github.io/photo-tagger/"
 Repository = "https://github.com/jbsilva/photo-tagger"
 Issues = "https://github.com/jbsilva/photo-tagger/issues"
 
@@ -66,6 +69,7 @@ photo-tagger = "photo_tagger.main:app"
 
 [tool.uv]
 exclude-newer = "1 day"
+exclude-newer-package = { zensical = "18 hours" }
 
 [build-system]
 requires = ["uv_build>=0.11.16,<1.0.0"]
