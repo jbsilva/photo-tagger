@@ -59,6 +59,11 @@ off the list entirely (rather than just deselect it), select it and click **Remo
 ++delete++ / ++backspace++; **Clear** empties the whole list. The status column shows each photo's
 state: blank (pending), `working...`, `ready`, `saved ✓`, or `failed ✗`.
 
+Click the **Photos** or **Status** column header to sort by it; click again to reverse. The Status
+column sorts by processing stage (pending, working, ready, saved, failed), not the label text, so
+clicking it groups all the failures or all the ready photos together. Folders stay grouped above
+their sibling files either way.
+
 The **Deselect** row unchecks photos in bulk, mirroring the CLI's skip flags so you do not have to
 hunt through a large list by hand:
 

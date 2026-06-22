@@ -359,6 +359,25 @@ def keyword_diff(
     return diff
 
 
+# Order photos take when the tree is sorted by Status (ascending): lifecycle, failures last.
+STATUS_SORT_ORDER = (PENDING, WORKING, READY, SAVED, FAILED)
+
+
+def status_sort_rank(status: str) -> int:
+    """
+    Rank a photo status for sorting the tree's Status column.
+
+    Lower ranks sort first when ascending, following the lifecycle order in
+    :data:`STATUS_SORT_ORDER` (pending, working, ready, saved, failed). Sorting on the raw status
+    label would order it alphabetically ("failed" before "ready"), which is not useful; this gives
+    the column a meaningful order that the user can flip by clicking the header.
+    """
+    try:
+        return STATUS_SORT_ORDER.index(status)
+    except ValueError:
+        return len(STATUS_SORT_ORDER)
+
+
 def status_summary(items: Iterable[PhotoItem]) -> str:
     """One-line counts for the status bar: selected, generated, saved, failed."""
     items = list(items)

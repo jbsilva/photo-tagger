@@ -90,6 +90,7 @@ from photo_tagger.gui_state import (
     paths_matching_fields,
     paths_under,
     rank_vision_models,
+    status_sort_rank,
     status_summary,
 )
 from photo_tagger.image_io import prepare_image_for_agent
@@ -125,6 +126,7 @@ _THUMB_SIZE = 160  # icon box in the grid
 _GENERATE_RETRIES = 2
 _PATH_ROLE = Qt.ItemDataRole.UserRole
 _IS_DIR_ROLE = Qt.ItemDataRole.UserRole + 1
+_STATUS_RANK_ROLE = Qt.ItemDataRole.UserRole + 2  # lifecycle rank for sorting the Status column
 _PAGE_DETAIL = 0  # right-pane stack index for one photo's detail
 _PAGE_GRID = 1  # right-pane stack index for a folder's thumbnail grid
 _DIR_MARK = "dir"  # truthy sentinel stored on folder tree items; files leave the role unset
@@ -329,6 +331,40 @@ class ThumbnailWorker(QObject):
         self.finished.emit()
 
 
+def _status_sort_key(item: QTreeWidgetItem) -> tuple[int, str]:
+    """Sort key for the Status column: lifecycle rank first, then name as a stable tiebreak."""
+    rank = item.data(1, _STATUS_RANK_ROLE)
+    return (int(rank) if rank is not None else 0, item.text(0).casefold())
+
+
+class _SortableTreeItem(QTreeWidgetItem):  # NOSONAR S8500 - Qt sorts items via __lt__ only
+    """
+    A tree row that sorts sensibly when the user clicks a column header.
+
+    Folders stay grouped above files whichever way the sort runs; the Photos column sorts by name
+    (case-insensitive) and the Status column by lifecycle rank rather than the raw label.
+
+    Only ``__lt__`` is overridden: Qt drives item sorting entirely through it, and the comparison is
+    context-dependent (it follows the active sort column and direction), so a real total ordering or
+    ``functools.total_ordering`` would be wrong here. Hence the S8500 suppression on the class.
+    """
+
+    def __lt__(self, other: QTreeWidgetItem) -> bool:
+        tree = self.treeWidget()
+        column = tree.sortColumn() if tree is not None else 0
+        self_dir = bool(self.data(0, _IS_DIR_ROLE))
+        if self_dir != bool(other.data(0, _IS_DIR_ROLE)):
+            # Keep folders above files in both directions: Qt reverses the result for a
+            # descending sort, so invert there to cancel that out.
+            ascending = (
+                tree is None or tree.header().sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
+            )
+            return self_dir if ascending else not self_dir
+        if column == 1:
+            return _status_sort_key(self) < _status_sort_key(other)
+        return self.text(0).casefold() < other.text(0).casefold()
+
+
 class MainWindow(QMainWindow):
     """The main window: a toolbar, a checkable file tree, and an editable detail pane."""
 
@@ -485,6 +521,10 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         self._tree.setColumnWidth(0, 320)
         self._tree.setColumnWidth(1, 90)
+        # Click a header to sort by name (Photos) or status; folders stay grouped above files.
+        self._tree.setSortingEnabled(True)
+        self._tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        header.setToolTip("Click a column header to sort by name or status.")
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.currentItemChanged.connect(self._on_current_changed)
         for key in (QKeySequence.StandardKey.Delete, QKeySequence(Qt.Key.Key_Backspace)):
@@ -862,13 +902,17 @@ class MainWindow(QMainWindow):
 
     def _rebuild_tree(self) -> None:
         self._syncing = True
+        # Build with sorting off so items do not shuffle on every insert; re-enabling at the
+        # end re-applies whatever column/direction the header is currently set to.
+        self._tree.setSortingEnabled(False)
         self._tree.clear()
         for node in build_tree([item.path for item in self._items.values()]):
             self._add_folder_node(self._tree, node)
+        self._tree.setSortingEnabled(True)
         self._syncing = False
 
     def _add_folder_node(self, parent: object, node: FolderNode) -> None:
-        folder_item = QTreeWidgetItem(parent, [node.label, ""])
+        folder_item = _SortableTreeItem(parent, [node.label, ""])
         folder_item.setData(0, _PATH_ROLE, str(node.path))
         folder_item.setData(0, _IS_DIR_ROLE, _DIR_MARK)
         folder_item.setFlags(folder_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -877,8 +921,9 @@ class MainWindow(QMainWindow):
             self._add_folder_node(folder_item, sub)
         for path in node.files:
             item = self._items[str(path)]
-            leaf = QTreeWidgetItem(folder_item, [path.name, _STATUS_LABEL[item.status]])
+            leaf = _SortableTreeItem(folder_item, [path.name, _STATUS_LABEL[item.status]])
             leaf.setData(0, _PATH_ROLE, str(path))
+            leaf.setData(1, _STATUS_RANK_ROLE, status_sort_rank(item.status))
             # Files leave _IS_DIR_ROLE unset (None), which reads as "not a folder".
             leaf.setFlags(leaf.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             leaf.setCheckState(0, _checked(item.selected))
@@ -1169,6 +1214,7 @@ class MainWindow(QMainWindow):
         ok = self._write_item(self._current)
         name = self._current.path.name
         self._status.setText(f"Saved {name}." if ok else f"Failed to save {name}.")
+        self._resort()
         self._update_status()
 
     def _save_selected(self) -> None:
@@ -1184,6 +1230,7 @@ class MainWindow(QMainWindow):
             return
         saved = sum(int(self._write_item(item)) for item in targets)
         self._status.setText(f"Saved {saved} of {len(targets)} checked photo(s).")
+        self._resort()
         self._update_status()
 
     # --- generation ------------------------------------------------------------------------
@@ -1259,6 +1306,7 @@ class MainWindow(QMainWindow):
 
     def _on_generate_finished(self) -> None:
         self._status.setText("Generation finished.")
+        self._resort()
         self._teardown_thread()
 
     def _set_running(self, *, running: bool) -> None:
@@ -1333,9 +1381,15 @@ class MainWindow(QMainWindow):
         leaf = self._leaf_for(item.path)
         if leaf is not None:
             leaf.setText(1, _STATUS_LABEL[item.status])
+            leaf.setData(1, _STATUS_RANK_ROLE, status_sort_rank(item.status))
             # Surface the failure reason on hover so it is discoverable straight from the tree.
             tip = item.error if item.status == FAILED else ""
             leaf.setToolTip(1, tip)
+
+    def _resort(self) -> None:
+        """Re-apply the active sort so changed statuses settle when sorting by the Status column."""
+        header = self._tree.header()
+        self._tree.sortItems(header.sortIndicatorSection(), header.sortIndicatorOrder())
 
     def _leaf_for(self, path: Path) -> QTreeWidgetItem | None:
         target = str(path)

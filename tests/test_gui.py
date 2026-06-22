@@ -30,7 +30,15 @@ from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 
 from photo_tagger import gui
 from photo_tagger.errors import ProviderError
-from photo_tagger.gui_state import FAILED, PROVIDER_LABELS, READY, SAVED, WORKING, Proposal
+from photo_tagger.gui_state import (
+    FAILED,
+    PENDING,
+    PROVIDER_LABELS,
+    READY,
+    SAVED,
+    WORKING,
+    Proposal,
+)
 from photo_tagger.metadata import FIELD_DESCRIPTION, FIELD_KEYWORDS, FIELD_TITLE, ImageContext
 from photo_tagger.models import InferenceResult, KeywordSet
 from photo_tagger.providers import PROVIDER_NAMES
@@ -262,6 +270,69 @@ def test_clear_empties_everything(window: gui.MainWindow, tmp_path: Path) -> Non
     window._clear()  # noqa: SLF001
     assert window._items == {}  # noqa: SLF001
     assert window._tree.topLevelItemCount() == 0  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# Tree sorting (click a header to sort by name or status)
+# ---------------------------------------------------------------------------
+
+
+def _leaf_order(window: gui.MainWindow) -> list[str]:
+    """Return the file-leaf names under the single top folder, in display order."""
+    top = window._tree.topLevelItem(0)  # noqa: SLF001
+    assert top is not None
+    return [top.child(i).text(0) for i in range(top.childCount())]
+
+
+def test_tree_sorts_by_name(window: gui.MainWindow, tmp_path: Path) -> None:
+    """Clicking the Photos header orders leaves by name, not creation order."""
+    for name in ("c.jpg", "a.jpg", "b.jpg"):  # created out of order
+        _jpeg(tmp_path / name)
+    window._extensions.setText("jpg")  # noqa: SLF001
+    window._add_inputs([tmp_path])  # noqa: SLF001
+
+    window._tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)  # noqa: SLF001
+
+    assert _leaf_order(window) == ["a.jpg", "b.jpg", "c.jpg"]
+
+
+def test_tree_sorts_by_status_using_lifecycle_rank(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """Sorting the Status column uses the lifecycle rank, not the alphabetical label."""
+    a = _jpeg(tmp_path / "a.jpg")
+    b = _jpeg(tmp_path / "b.jpg")
+    c = _jpeg(tmp_path / "c.jpg")
+    window._extensions.setText("jpg")  # noqa: SLF001
+    window._add_inputs([tmp_path])  # noqa: SLF001
+    window._items[str(a)].status = FAILED  # noqa: SLF001
+    window._items[str(b)].status = PENDING  # noqa: SLF001
+    window._items[str(c)].status = READY  # noqa: SLF001
+    for path in (a, b, c):
+        window._refresh_status_cell(window._items[str(path)])  # noqa: SLF001
+
+    window._tree.sortByColumn(1, Qt.SortOrder.AscendingOrder)  # noqa: SLF001
+
+    # Ascending lifecycle: pending(b) < ready(c) < failed(a). Alphabetical-by-label would differ.
+    assert _leaf_order(window) == ["b.jpg", "c.jpg", "a.jpg"]
+
+
+def test_tree_keeps_folders_above_files(window: gui.MainWindow, tmp_path: Path) -> None:
+    """A subfolder stays grouped above sibling files even when its name sorts after them."""
+    (tmp_path / "zzz").mkdir()
+    _jpeg(tmp_path / "a.jpg")  # top-level file, name sorts before "zzz"
+    _jpeg(tmp_path / "zzz" / "deep.jpg")
+    window._extensions.setText("jpg")  # noqa: SLF001
+    window._add_inputs([tmp_path])  # noqa: SLF001
+
+    window._tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)  # noqa: SLF001
+
+    top = window._tree.topLevelItem(0)  # noqa: SLF001
+    assert top is not None
+    first = top.child(0)
+    assert bool(first.data(0, gui._IS_DIR_ROLE))  # noqa: SLF001 - the folder, not "a.jpg"
+    assert first.text(0) == "zzz"
 
 
 # ---------------------------------------------------------------------------

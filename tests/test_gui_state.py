@@ -5,11 +5,15 @@ from pathlib import Path
 from photo_tagger.gui_state import (
     ADDED,
     DEFAULT_GUI_EXTENSIONS,
+    FAILED,
+    PENDING,
     PROVIDER_LABELS,
     READY,
     REMOVED,
     SAVED,
+    STATUS_SORT_ORDER,
     UNCHANGED,
+    WORKING,
     FolderNode,
     PhotoItem,
     Proposal,
@@ -29,6 +33,7 @@ from photo_tagger.gui_state import (
     paths_matching_fields,
     paths_under,
     rank_vision_models,
+    status_sort_rank,
     status_summary,
 )
 from photo_tagger.models import KeywordSet
@@ -298,6 +303,18 @@ def test_paths_matching_fields_empty_required_matches_nothing() -> None:
     presence = {Path("/a.jpg"): {"title"}}
     assert paths_matching_fields(presence, set(), match_all=True) == set()
     assert paths_matching_fields(presence, set(), match_all=False) == set()
+
+
+def test_status_sort_rank_follows_lifecycle_order() -> None:
+    """Ranks increase along the lifecycle, so a status sort is meaningful, not alphabetical."""
+    ranks = [status_sort_rank(s) for s in (PENDING, WORKING, READY, SAVED, FAILED)]
+    assert ranks == [0, 1, 2, 3, 4]
+
+
+def test_status_sort_rank_unknown_status_sorts_last() -> None:
+    """An unrecognized status ranks after every known one rather than raising."""
+    assert status_sort_rank("bogus") == len(STATUS_SORT_ORDER)
+    assert status_sort_rank("bogus") > status_sort_rank(FAILED)
 
 
 def test_status_summary_counts_states() -> None:
