@@ -75,6 +75,7 @@ The configured hooks are:
 | uv-lock                    | Keeps `uv.lock` in sync with `pyproject.toml`.                |
 | ruff-check                 | Lints with ruff and applies auto-fixes.                       |
 | ruff-format                | Formats code to the 100-column style.                         |
+| mdformat                   | Formats Markdown (a base pass plus a docs pass for `docs/`).  |
 | bandit                     | Scans for common security issues.                             |
 | pyupgrade                  | Rewrites code to modern syntax (`--py314-plus`).              |
 | cspell                     | Spell-checks code and docs.                                   |

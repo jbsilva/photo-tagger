@@ -35,6 +35,21 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  - repo: https://github.com/hukkin/mdformat
+    rev: 1.0.0
+    hooks:
+      - id: mdformat
+        exclude: ^docs/ # docs/ uses the mkdocs flavor below
+        additional_dependencies:
+          - mdformat-gfm # GitHub Flavored Markdown support
+          - mdformat-frontmatter # Don't mess with YAML front matter blocks
+      - id: mdformat
+        name: mdformat (docs)
+        files: ^docs/ # Zensical sources: admonitions and content tabs need the mkdocs plugin
+        additional_dependencies:
+          - mdformat-mkdocs # MkDocs/Material syntax (admonitions, content tabs, 4-space lists)
+          - mdformat-frontmatter # Don't mess with YAML front matter blocks
+
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.4
     hooks:

@@ -30,6 +30,7 @@ Exiftool
 filelock
 fontawesome
 fromarray
+frontmatter
 fstrings
 ftruncate
 getpid
@@ -54,6 +55,7 @@ LMSTUDIO
 loguru
 lucide
 magiclink
+mkdocs
 mtimes
 mypy
 NOSONAR
