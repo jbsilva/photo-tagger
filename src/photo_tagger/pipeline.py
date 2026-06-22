@@ -28,6 +28,7 @@ from photo_tagger.metadata import (
     read_image_context,
     write_metadata,
 )
+from photo_tagger.models import KeywordSet
 
 
 if TYPE_CHECKING:
@@ -261,16 +262,16 @@ def process_photo(
     with managed_helper(et) as helper:
         context = read_image_context(image_path, et=helper)
         existing_keywords_full = context.existing_keywords
-        if any(existing_keywords_full.values()):
+        if not existing_keywords_full.is_empty():
             logger.info(
                 "existing_keywords_found",
-                count=len(existing_keywords_full["subject"]),
+                count=len(existing_keywords_full.subject),
             )
 
         gps_info = {"position": context.gps_position} if context.gps_position else {}
         contextual_prompt = build_contextual_prompt(
             ctx.user_prompt,
-            list(dict.fromkeys(existing_keywords_full.get("subject", []))),
+            list(dict.fromkeys(existing_keywords_full.subject)),
             context.location_tags,
             gps_info,
             camera_info=context.camera_info,
@@ -297,15 +298,7 @@ def process_photo(
             )
             keywords = keywords[: options.max_new_keywords]
 
-        base = (
-            existing_keywords_full
-            if options.preserve_existing_kw
-            else {
-                "subject": [],
-                "hierarchical": [],
-                "weighted": [],
-            }
-        )
+        base = existing_keywords_full if options.preserve_existing_kw else KeywordSet()
         merged_keywords = merge_keywords(base, keywords)
 
         if options.dry_run:
@@ -314,8 +307,8 @@ def process_photo(
                 file=image_path.name,
                 title=title if options.write_title else None,
                 description=description if options.write_description else None,
-                subject_keywords=merged_keywords.get("subject", []),
-                hierarchical_keywords=merged_keywords.get("hierarchical", []),
+                subject_keywords=merged_keywords.subject,
+                hierarchical_keywords=merged_keywords.hierarchical,
             )
             return True
 

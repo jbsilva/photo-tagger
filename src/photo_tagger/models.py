@@ -1,6 +1,6 @@
 """Pydantic schemas shared by the AI layer and the rest of the pipeline."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
@@ -36,6 +36,32 @@ class GeneratedMetadata(BaseModel):
         fail.
         """
         return v[:_MAX_KEYWORDS]
+
+
+@dataclass(slots=True)
+class KeywordSet:
+    """
+    The three keyword views Lightroom tracks for a photo.
+
+    Replaces the old ``dict[str, list[str]]`` that was threaded through the reader,
+    the merge logic, and the writer keyed by the bare strings ``"subject"`` /
+    ``"hierarchical"`` / ``"weighted"``. The typed fields remove the silent-typo
+    failure mode (a misspelled key used to read back an empty list) and let the
+    type checker see the shape end to end.
+
+    Fields map to ExifTool tags as follows:
+    - ``subject``: flat keywords (XMP-dc:Subject, mirrored to IPTC:Keywords)
+    - ``hierarchical``: pipe-separated Lightroom paths (XMP-lr:HierarchicalSubject)
+    - ``weighted``: flat keywords mirroring ``subject`` (XMP-lr:WeightedFlatSubject)
+    """
+
+    subject: list[str] = field(default_factory=list)
+    hierarchical: list[str] = field(default_factory=list)
+    weighted: list[str] = field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        """Return True when none of the three views holds a keyword."""
+        return not (self.subject or self.hierarchical or self.weighted)
 
 
 @dataclass(slots=True, frozen=True)

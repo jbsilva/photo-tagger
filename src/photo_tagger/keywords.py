@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from photo_tagger.config import MIN_HIERARCHICAL_DEPTH
+from photo_tagger.models import KeywordSet
 
 
 if TYPE_CHECKING:
@@ -146,9 +147,8 @@ def _collect_cumulative_entries(
     """
     Generate Lightroom hierarchy paths from canonical chains.
 
-    Lightroom writes hierarchical keywords as full pipe-separated paths in
-    lr:HierarchicalSubject. You cannot add only "Animal|Bird|Duck"; you must
-    also add "Animal|Bird".
+    Lightroom writes hierarchical keywords as full pipe-separated paths in lr:HierarchicalSubject.
+    You cannot add only "Animal|Bird|Duck"; you must also add "Animal|Bird".
 
     Mutates: hierarchical_seen.
 
@@ -176,42 +176,42 @@ def _collect_cumulative_entries(
 
 
 def merge_keywords(
-    existing_kw: dict[str, list[str]],
+    existing_kw: KeywordSet,
     new_keywords: list[str],
-) -> dict[str, list[str]]:
+) -> KeywordSet:
     """
     Merge new AI-generated keywords with existing keywords, preserving hierarchy.
 
     Args:
-        existing_kw: Dictionary of existing keywords from read_existing_keywords()
-        new_keywords: List of new keywords from AI (may include hierarchical format)
+        existing_kw: Existing keywords read off the photo (from read_existing_keywords).
+        new_keywords: List of new keywords from AI (may include hierarchical format).
 
     Returns:
-        Dictionary with merged keywords in three formats:
-        - 'subject': All flat keywords (existing + new flattened)
-        - 'hierarchical': Hierarchical keywords (existing + new hierarchical)
-        - 'weighted': Weighted flat keywords (mirrors subject)
+        A new :class:`KeywordSet` with merged views:
+        - ``subject``: all flat keywords (existing + new flattened)
+        - ``hierarchical``: hierarchical keywords (existing + new hierarchical)
+        - ``weighted``: weighted flat keywords (mirrors subject)
 
     Note:
         Duplicate detection is case-insensitive (using casefold). Hierarchical keywords
         are flattened for Subject/WeightedFlatSubject; original hierarchy is preserved
-        in HierarchicalSubject.
+        in HierarchicalSubject. The *existing_kw* argument is never mutated.
 
     Examples:
         >>> merge_keywords(
-        ...     {
-        ...         "subject": ["Beach"],
-        ...         "hierarchical": ["Animal|Bird"],
-        ...         "weighted": ["Beach"],
-        ...     },
+        ...     KeywordSet(
+        ...         subject=["Beach"],
+        ...         hierarchical=["Animal|Bird"],
+        ...         weighted=["Beach"],
+        ...     ),
         ...     ["Seagull<Bird<Animal", "bird"],
-        ... )["hierarchical"]
+        ... ).hierarchical
         ['Animal|Bird', 'Animal|Bird|Seagull']
     """
     # Copy caller-owned lists so this stays a pure function from the caller's perspective.
-    existing_subject = list(existing_kw.get("subject", []))
-    existing_weighted = list(existing_kw.get("weighted", []))
-    existing_hierarchical = [kw for kw in existing_kw.get("hierarchical", []) if "|" in kw]
+    existing_subject = list(existing_kw.subject)
+    existing_weighted = list(existing_kw.weighted)
+    existing_hierarchical = [kw for kw in existing_kw.hierarchical if "|" in kw]
 
     subject_seen = {kw.casefold() for kw in existing_subject}
     hierarchical_seen = {kw.casefold() for kw in existing_hierarchical}
@@ -226,18 +226,18 @@ def merge_keywords(
     )
     new_hierarchical = _collect_cumulative_entries(chain_registry, hierarchical_seen)
 
-    merged = {
-        "subject": existing_subject,
-        "hierarchical": existing_hierarchical + new_hierarchical,
-        "weighted": existing_weighted,
-    }
+    merged = KeywordSet(
+        subject=existing_subject,
+        hierarchical=existing_hierarchical + new_hierarchical,
+        weighted=existing_weighted,
+    )
 
     logger.debug(
         "keywords_merged",
         new_flat_count=len(new_subjects),
         new_hierarchical_count=len(new_hierarchical),
-        total_flat=len(merged["subject"]),
-        total_hierarchical=len(merged["hierarchical"]),
+        total_flat=len(merged.subject),
+        total_hierarchical=len(merged.hierarchical),
     )
 
     return merged

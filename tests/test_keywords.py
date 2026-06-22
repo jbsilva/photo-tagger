@@ -12,6 +12,7 @@ from photo_tagger.keywords import (
     parse_hierarchical_keyword,
 )
 from photo_tagger.metadata import build_contextual_prompt
+from photo_tagger.models import KeywordSet
 
 
 if TYPE_CHECKING:
@@ -112,17 +113,17 @@ def test_collect_cumulative_entries_skips_duplicates() -> None:
 
 def test_merge_keywords_preserves_existing_and_adds_hierarchies() -> None:
     """Existing metadata survives and new hierarchical links are appended once."""
-    existing = {
-        "subject": ["Beach"],
-        "hierarchical": ["Duck", "Animal|Bird"],
-        "weighted": ["Beach"],
-    }
+    existing = KeywordSet(
+        subject=["Beach"],
+        hierarchical=["Duck", "Animal|Bird"],
+        weighted=["Beach"],
+    )
 
     merged = merge_keywords(existing, ["Duck<Bird<Animal", "cloud"])
 
-    assert merged["subject"] == ["Beach", "Animal", "Bird", "Duck", "Cloud"]
-    assert merged["weighted"] == ["Beach", "Animal", "Bird", "Duck", "Cloud"]
-    assert merged["hierarchical"] == ["Animal|Bird", "Animal|Bird|Duck"]
+    assert merged.subject == ["Beach", "Animal", "Bird", "Duck", "Cloud"]
+    assert merged.weighted == ["Beach", "Animal", "Bird", "Duck", "Cloud"]
+    assert merged.hierarchical == ["Animal|Bird", "Animal|Bird|Duck"]
 
 
 def test_build_contextual_prompt_includes_metadata_and_truncates_keywords() -> None:
@@ -175,17 +176,15 @@ def test_resolve_image_files_deduplicates_and_preserves_explicit(tmp_path: Path)
 
 
 def test_merge_keywords_with_all_empty_inputs() -> None:
-    """Merging empty existing keywords with no new keywords returns all-empty buckets."""
-    merged = merge_keywords(
-        {"subject": [], "hierarchical": [], "weighted": []},
-        [],
-    )
-    assert merged == {"subject": [], "hierarchical": [], "weighted": []}
+    """Merging an empty KeywordSet with no new keywords returns an empty KeywordSet."""
+    merged = merge_keywords(KeywordSet(), [])
+    assert merged == KeywordSet()
+    assert merged.is_empty()
 
 
 def test_merge_keywords_does_not_mutate_input() -> None:
     """The caller's existing keyword lists remain unmodified after merge."""
-    existing = {"subject": ["A"], "hierarchical": [], "weighted": ["A"]}
-    original_subject = list(existing["subject"])
+    existing = KeywordSet(subject=["A"], weighted=["A"])
+    original_subject = list(existing.subject)
     merge_keywords(existing, ["B"])
-    assert existing["subject"] == original_subject
+    assert existing.subject == original_subject

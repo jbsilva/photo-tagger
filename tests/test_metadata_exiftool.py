@@ -19,6 +19,7 @@ from photo_tagger.metadata import (
     read_location_tags,
     write_metadata,
 )
+from photo_tagger.models import KeywordSet
 
 
 if TYPE_CHECKING:
@@ -57,10 +58,10 @@ def test_write_and_read_round_trip_subject_and_hierarchy(tmp_path: Path) -> None
     img = _write_jpeg(tmp_path / "img.jpg")
     ok = write_metadata(
         img,
-        {
-            "subject": ["Beach", "Sunset"],
-            "hierarchical": ["Animal|Bird"],
-        },
+        KeywordSet(
+            subject=["Beach", "Sunset"],
+            hierarchical=["Animal|Bird"],
+        ),
         description="A small description.",
         title="A small title",
         backup=False,
@@ -69,15 +70,15 @@ def test_write_and_read_round_trip_subject_and_hierarchy(tmp_path: Path) -> None
     assert ok is True
 
     keywords = read_existing_keywords(img)
-    assert "Beach" in keywords["subject"]
-    assert "Sunset" in keywords["subject"]
-    assert "Animal|Bird" in keywords["hierarchical"]
+    assert "Beach" in keywords.subject
+    assert "Sunset" in keywords.subject
+    assert "Animal|Bird" in keywords.hierarchical
 
 
 def test_write_metadata_returns_false_for_empty_payload(tmp_path: Path) -> None:
     """Nothing to write -> early False, no exiftool call."""
     img = _write_jpeg(tmp_path / "img.jpg")
-    assert write_metadata(img, {}, use_sidecar=False) is False
+    assert write_metadata(img, KeywordSet(), use_sidecar=False) is False
 
 
 def test_read_location_tags_returns_empty_for_unset_image(tmp_path: Path) -> None:
@@ -93,6 +94,6 @@ def test_read_gps_coordinates_returns_empty_for_unset_image(tmp_path: Path) -> N
 
 
 def test_read_existing_keywords_handles_missing_file(tmp_path: Path) -> None:
-    """A missing file returns the empty buckets, not an exception."""
+    """A missing file returns an empty KeywordSet, not an exception."""
     out = read_existing_keywords(tmp_path / "ghost.jpg")
-    assert out == {"subject": [], "hierarchical": [], "weighted": []}
+    assert out == KeywordSet()

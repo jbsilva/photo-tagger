@@ -19,6 +19,7 @@ from photo_tagger.metadata import (
     read_location_tags,
     write_metadata,
 )
+from photo_tagger.models import KeywordSet
 
 
 if TYPE_CHECKING:
@@ -98,7 +99,7 @@ def test_build_contextual_prompt_includes_only_present_sections() -> None:
 def test_build_write_payload_produces_lightroom_compatible_keys() -> None:
     """Subjects mirror to IPTC:Keywords, weighted flat subjects, and titles fan out to two tags."""
     payload = _build_write_payload(
-        {"subject": ["Beach"], "hierarchical": ["Animal|Bird"], "weighted": ["Beach"]},
+        KeywordSet(subject=["Beach"], hierarchical=["Animal|Bird"], weighted=["Beach"]),
         description="A short desc.",
         title="A title",
     )
@@ -114,7 +115,7 @@ def test_build_write_payload_produces_lightroom_compatible_keys() -> None:
 
 def test_build_write_payload_skips_blank_values() -> None:
     """Empty keyword lists / blank title and description produce no entries."""
-    payload = _build_write_payload({}, description=None, title=None)
+    payload = _build_write_payload(KeywordSet(), description=None, title=None)
     assert payload == {}
 
 
@@ -216,8 +217,8 @@ def test_read_image_context_batches_keywords_location_camera_and_gps(tmp_path: P
     ):
         context = read_image_context(img)
 
-    assert context.existing_keywords["subject"] == ["Beach", "Sunset"]
-    assert context.existing_keywords["hierarchical"] == ["Animal|Bird"]
+    assert context.existing_keywords.subject == ["Beach", "Sunset"]
+    assert context.existing_keywords.hierarchical == ["Animal|Bird"]
     assert context.location_tags == {"XMP-photoshop:Country": "Portugal"}
     assert context.camera_info["EXIF:Model"] == "Canon EOS R5"
     assert context.gps_position == "38.7 N, 9.1 W"
@@ -247,7 +248,7 @@ def test_read_image_context_collapses_case_duplicates_across_blocks(tmp_path: Pa
         context = read_image_context(img)
 
     # First-seen casing wins; "Beach" survives once.
-    assert context.existing_keywords["subject"] == ["Bird", "Beach"]
+    assert context.existing_keywords.subject == ["Bird", "Beach"]
 
 
 def test_read_image_context_returns_empty_when_no_targets(tmp_path: Path) -> None:
@@ -264,7 +265,7 @@ def test_read_image_context_returns_empty_when_no_targets(tmp_path: Path) -> Non
     ):
         context = read_image_context(ghost)
 
-    assert context.existing_keywords == {"subject": [], "hierarchical": [], "weighted": []}
+    assert context.existing_keywords == KeywordSet()
     assert context.gps_position is None
     assert context.camera_info == {}
     fake_helper.get_tags.assert_not_called()
@@ -347,7 +348,7 @@ def test_managed_helper_yields_supplied_helper_without_creating_one() -> None:
 
 
 def test_read_existing_keywords_returns_empty_on_exiftool_error(tmp_path: Path) -> None:
-    """A failure inside exiftool is logged and yields the empty keyword buckets."""
+    """A failure inside exiftool is logged and yields an empty KeywordSet."""
     img = tmp_path / "img.cr3"
     img.write_text("x")
     helper = _fake_helper()
@@ -359,7 +360,7 @@ def test_read_existing_keywords_returns_empty_on_exiftool_error(tmp_path: Path) 
     ):
         result = read_existing_keywords(img)
 
-    assert result == {"subject": [], "hierarchical": [], "weighted": []}
+    assert result == KeywordSet()
 
 
 def test_find_tagged_images_returns_empty_when_no_block_is_tagged(tmp_path: Path) -> None:
@@ -456,7 +457,7 @@ def test_read_image_context_returns_empty_on_exiftool_error(tmp_path: Path) -> N
     ):
         context = read_image_context(img)
 
-    assert context.existing_keywords == {"subject": [], "hierarchical": [], "weighted": []}
+    assert context.existing_keywords == KeywordSet()
     assert context.gps_position is None
 
 
@@ -466,7 +467,7 @@ def test_write_metadata_with_backup_omits_overwrite_param(tmp_path: Path) -> Non
     helper = _fake_helper()
 
     with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
-        ok = write_metadata(img, {"subject": ["Bird"]}, backup=True)
+        ok = write_metadata(img, KeywordSet(subject=["Bird"]), backup=True)
 
     assert ok is True
     _, kwargs = helper.set_tags.call_args
@@ -480,7 +481,7 @@ def test_write_metadata_returns_false_on_exiftool_error(tmp_path: Path) -> None:
     helper.set_tags.side_effect = ValueError("boom")
 
     with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
-        assert write_metadata(img, {"subject": ["Bird"]}) is False
+        assert write_metadata(img, KeywordSet(subject=["Bird"])) is False
 
 
 # ---------------------------------------------------------------------------

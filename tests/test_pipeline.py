@@ -9,7 +9,7 @@ from pydantic_ai import BinaryContent
 
 from photo_tagger.errors import BatchError
 from photo_tagger.metadata import ImageContext
-from photo_tagger.models import InferenceResult
+from photo_tagger.models import InferenceResult, KeywordSet
 from photo_tagger.pipeline import (
     ImageOutcome,
     ProcessingOptions,
@@ -113,7 +113,7 @@ def test_process_photo_writes_metadata(
     assert kwargs["title"] == "Title"
     assert kwargs["use_sidecar"] is True
     keywords = write_call.args[1]
-    assert "Beach" in keywords["subject"]
+    assert "Beach" in keywords.subject
 
 
 def test_process_photo_skips_optional_fields_when_disabled(
@@ -714,15 +714,13 @@ def test_process_photo_discards_existing_keywords_when_preserve_false(
     )
     with patch(
         "photo_tagger.pipeline.read_image_context",
-        return_value=ImageContext(
-            existing_keywords={"subject": ["Old"], "hierarchical": [], "weighted": []},
-        ),
+        return_value=ImageContext(existing_keywords=KeywordSet(subject=["Old"])),
     ):
         process_photo(image, _ctx(options=ProcessingOptions(preserve_existing_kw=False)))
 
     written_kw = patched_pipeline["write"].call_args.args[1]
-    assert "Old" not in written_kw.get("subject", [])
-    assert "New" in written_kw["subject"]
+    assert "Old" not in written_kw.subject
+    assert "New" in written_kw.subject
 
 
 # ---------------------------------------------------------------------------
@@ -875,7 +873,7 @@ def test_process_photo_trims_to_max_new_keywords(
     keywords = write_call.args[1]
     # The stubbed AI returns ["Beach", "Sunset"] (2 items), which is at the cap.
     # Nothing is trimmed at 2, but the path is still exercised.
-    assert len(keywords["subject"]) <= 2  # noqa: PLR2004 - matches the cap
+    assert len(keywords.subject) <= 2  # noqa: PLR2004 - matches the cap
 
 
 def test_process_photo_trims_when_exceeding_max_new_keywords(
@@ -908,7 +906,7 @@ def test_process_photo_trims_when_exceeding_max_new_keywords(
         write_call = write.call_args
         keywords = write_call.args[1]
         # Only the first 3 AI keywords survive the cap, then merge happens.
-        assert "Kw-0" in keywords["subject"]
-        assert "Kw-2" in keywords["subject"]
+        assert "Kw-0" in keywords.subject
+        assert "Kw-2" in keywords.subject
         # The 4th keyword (index 3) should NOT be present.
-        assert "Kw-3" not in keywords["subject"]
+        assert "Kw-3" not in keywords.subject

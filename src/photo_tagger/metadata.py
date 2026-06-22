@@ -21,6 +21,7 @@ from photo_tagger.config import (
     TAG_XMP_SUBJECT,
     TAG_XMP_WEIGHTED_FLAT_SUBJECT,
 )
+from photo_tagger.models import KeywordSet
 
 
 # Exception types that pyexiftool raises on bad inputs or subprocess failures.
@@ -54,9 +55,10 @@ _TAGGED_INDICATOR_TAGS: tuple[str, ...] = (
     "IPTC:ObjectName",
 )
 
-# Tags read from a photo when collecting "existing" keywords. The mapping is
-# applied in order, so XMP entries arrive before IPTC fall-backs.
-_KEYWORD_TAG_TO_BUCKET: tuple[tuple[str, str], ...] = (
+# Tags read from a photo when collecting "existing" keywords, paired with the
+# KeywordSet field they feed. Applied in order, so XMP entries arrive before the
+# IPTC fall-back.
+_KEYWORD_TAG_TO_FIELD: tuple[tuple[str, str], ...] = (
     (TAG_XMP_SUBJECT, "subject"),
     (TAG_XMP_HIERARCHICAL_SUBJECT, "hierarchical"),
     (TAG_XMP_WEIGHTED_FLAT_SUBJECT, "weighted"),
@@ -105,10 +107,6 @@ def _coerce_to_list(raw_value: Any) -> list[str]:  # noqa: ANN401
     return [str(raw_value)] if str(raw_value).strip() else []
 
 
-def _empty_keyword_buckets() -> dict[str, list[str]]:
-    return {"subject": [], "hierarchical": [], "weighted": []}
-
-
 def _dedup_preserving_first_case(values: list[str]) -> list[str]:
     """
     Return *values* with case-insensitive duplicates collapsed, first-seen casing kept.
@@ -131,26 +129,33 @@ def _dedup_preserving_first_case(values: list[str]) -> list[str]:
 
 def _accumulate_keyword_blocks(
     blocks: list[dict[str, Any]],
-    result: dict[str, list[str]],
+    result: KeywordSet,
 ) -> int:
     """Fill *result* from exiftool *blocks*; returns the count of IPTC entries seen."""
     iptc_count = 0
     for block in blocks:
-        for tag, bucket in _KEYWORD_TAG_TO_BUCKET:
+        for tag, field_name in _KEYWORD_TAG_TO_FIELD:
             if tag not in block:
                 continue
             values = _coerce_to_list(block[tag])
-            result[bucket].extend(values)
+            getattr(result, field_name).extend(values)
             if tag == TAG_IPTC_KEYWORDS:
                 iptc_count += len(values)
     return iptc_count
+
+
+def _dedup_keyword_set(keywords: KeywordSet) -> None:
+    """Collapse case-insensitive duplicates in every view of *keywords* in place."""
+    keywords.subject = _dedup_preserving_first_case(keywords.subject)
+    keywords.hierarchical = _dedup_preserving_first_case(keywords.hierarchical)
+    keywords.weighted = _dedup_preserving_first_case(keywords.weighted)
 
 
 def read_existing_keywords(
     image_path: Path,
     *,
     et: ExifToolHelper | None = None,
-) -> dict[str, list[str]]:
+) -> KeywordSet:
     """
     Read existing keywords from either the image or its XMP sidecar.
 
@@ -160,21 +165,22 @@ def read_existing_keywords(
             subprocess per call. A one-shot helper is opened when omitted.
 
     Returns:
-        Dictionary with three keys:
-        - 'subject': Flat keywords aggregated from XMP-dc:Subject and IPTC:Keywords
-        - 'hierarchical': List of hierarchical keywords from XMP-lr:HierarchicalSubject
-        - 'weighted': List of flat keywords from XMP-lr:WeightedFlatSubject
+        A :class:`KeywordSet` whose views are:
+        - ``subject``: flat keywords aggregated from XMP-dc:Subject and IPTC:Keywords
+        - ``hierarchical``: hierarchical keywords from XMP-lr:HierarchicalSubject
+        - ``weighted``: flat keywords from XMP-lr:WeightedFlatSubject
 
     Note:
-        Returns empty lists if neither the primary file nor its sidecar contain keywords.
+        Returns an empty :class:`KeywordSet` if neither the primary file nor its
+        sidecar contain keywords.
     """
     targets = metadata_targets(image_path)
-    result = _empty_keyword_buckets()
+    result = KeywordSet()
     if not targets:
         logger.info("no_metadata_targets_found")
         return result
 
-    tags_to_extract = [tag for tag, _ in _KEYWORD_TAG_TO_BUCKET]
+    tags_to_extract = [tag for tag, _ in _KEYWORD_TAG_TO_FIELD]
     try:
         with managed_helper(et) as helper:
             blocks = helper.get_tags(files=targets, tags=tags_to_extract)
@@ -183,16 +189,13 @@ def read_existing_keywords(
         return result
 
     iptc_count = _accumulate_keyword_blocks(blocks, result)
-
-    for key, values in result.items():
-        if values:
-            result[key] = _dedup_preserving_first_case(values)
+    _dedup_keyword_set(result)
 
     logger.debug(
         "existing_keywords_read",
-        subject_count=len(result["subject"]),
-        hierarchical_count=len(result["hierarchical"]),
-        weighted_count=len(result["weighted"]),
+        subject_count=len(result.subject),
+        hierarchical_count=len(result.hierarchical),
+        weighted_count=len(result.weighted),
         iptc_keywords_count=iptc_count,
     )
     return result
@@ -328,7 +331,7 @@ class ImageContext:
     round-trips per image. The batched read fetches everything we need in one call.
     """
 
-    existing_keywords: dict[str, list[str]] = field(default_factory=_empty_keyword_buckets)
+    existing_keywords: KeywordSet = field(default_factory=KeywordSet)
     location_tags: dict[str, str] = field(default_factory=dict)
     gps_position: str | None = None
     camera_info: dict[str, str] = field(default_factory=dict)
@@ -374,7 +377,7 @@ def read_image_context(
         logger.info("no_metadata_targets_found")
         return ImageContext()
 
-    keyword_tags = [tag for tag, _ in _KEYWORD_TAG_TO_BUCKET]
+    keyword_tags = [tag for tag, _ in _KEYWORD_TAG_TO_FIELD]
     all_tags = list(dict.fromkeys([*keyword_tags, *LOCATION_TAGS, *CAMERA_TAGS, _GPS_TAG]))
 
     try:
@@ -384,11 +387,9 @@ def read_image_context(
         logger.exception("failed_to_read_image_context", error=str(exc))
         return ImageContext()
 
-    existing_keywords = _empty_keyword_buckets()
+    existing_keywords = KeywordSet()
     _accumulate_keyword_blocks(blocks, existing_keywords)
-    for key, values in existing_keywords.items():
-        if values:
-            existing_keywords[key] = _dedup_preserving_first_case(values)
+    _dedup_keyword_set(existing_keywords)
 
     location_tags = _extract_named_tags(blocks, LOCATION_TAGS)
     camera_info = _extract_named_tags(blocks, CAMERA_TAGS)
@@ -396,8 +397,8 @@ def read_image_context(
 
     logger.debug(
         "image_context_read",
-        subject_count=len(existing_keywords["subject"]),
-        hierarchical_count=len(existing_keywords["hierarchical"]),
+        subject_count=len(existing_keywords.subject),
+        hierarchical_count=len(existing_keywords.hierarchical),
         location_tag_count=len(location_tags),
         camera_tag_count=len(camera_info),
         gps_present=gps_position is not None,
@@ -490,19 +491,19 @@ def build_contextual_prompt(  # noqa: PLR0913 - each kwarg renders an independen
 
 
 def _build_write_payload(
-    keywords: dict[str, list[str]],
+    keywords: KeywordSet,
     description: str | None,
     title: str | None,
 ) -> dict[str, str | list[str]]:
     """Build the exiftool tag map that write_metadata will apply."""
     payload: dict[str, str | list[str]] = {}
-    if subjects := keywords.get("subject"):
+    if subjects := keywords.subject:
         payload["XMP-dc:Subject"] = subjects
         # Lightroom prioritizes IPTC:Keywords for JPEGs, so mirror the Subject list there.
         payload[TAG_IPTC_KEYWORDS] = subjects
-    if hierarchical := keywords.get("hierarchical"):
+    if hierarchical := keywords.hierarchical:
         payload["XMP-lr:HierarchicalSubject"] = hierarchical
-    if weighted := keywords.get("weighted"):
+    if weighted := keywords.weighted:
         payload[TAG_XMP_WEIGHTED_FLAT_SUBJECT] = weighted
     if description:
         payload["XMP-dc:Description"] = description
@@ -515,7 +516,7 @@ def _build_write_payload(
 
 def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as kwargs.
     image_path: Path,
-    keywords: dict[str, list[str]],
+    keywords: KeywordSet,
     *,
     description: str | None = None,
     title: str | None = None,
@@ -528,7 +529,7 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
 
     Args:
         image_path: Path to the image file. The sidecar shares its name with a `.xmp` extension.
-        keywords: Dictionary with 'subject' and 'hierarchical' keyword lists (optionally weighted).
+        keywords: A :class:`KeywordSet` of subject, hierarchical, and weighted keywords.
         description: Optional short description to write to XMP (and ImageDescription).
         title: Optional short title to write to XMP-dc:Title and IPTC:ObjectName.
         backup: If True, let ExifTool create a backup (`_original` suffix where applicable).
@@ -559,8 +560,8 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         "metadata_written_successfully",
         target=str(target_path),
         mode="sidecar" if use_sidecar else "embedded",
-        subject_keywords=len(keywords.get("subject", [])),
-        hierarchical_keywords=len(keywords.get("hierarchical", [])),
+        subject_keywords=len(keywords.subject),
+        hierarchical_keywords=len(keywords.hierarchical),
         backup_created=backup,
     )
     return True
