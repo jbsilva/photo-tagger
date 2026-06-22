@@ -48,6 +48,10 @@ DEFAULT_OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v
 DEFAULT_OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
 DEFAULT_LMSTUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
 DEFAULT_LMSTUDIO_API_KEY = os.getenv("LM_STUDIO_API_KEY", os.getenv("OPENAI_API_KEY"))
+# Hosted, OpenAI-compatible endpoints (the real OpenAI API or any drop-in gateway).
+# Unlike the local providers this one needs a key, so there is no usable local default.
+DEFAULT_OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+DEFAULT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 DEFAULT_MODEL_NAME = os.getenv("MODEL_NAME", "qwen/qwen3-vl-30b")
 DEFAULT_JPEG_QUALITY = _env_int("JPEG_QUALITY", 80)
@@ -65,11 +69,6 @@ DEFAULT_TIMEOUT_SECONDS = _env_float("TIMEOUT_SECONDS", 60.0)
 # the token budget is exhausted. 0.5 is mild enough to leave legitimate wording intact while
 # strongly suppressing pathological loops.
 DEFAULT_FREQUENCY_PENALTY = _env_float("FREQUENCY_PENALTY", 0.5)
-
-PROVIDER_URLS = {
-    "ollama": DEFAULT_OLLAMA_BASE_URL,
-    "lmstudio": DEFAULT_LMSTUDIO_BASE_URL,
-}
 
 LOCATION_TAGS = (
     "XMP-photoshop:Country",

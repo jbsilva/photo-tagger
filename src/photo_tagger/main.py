@@ -24,7 +24,7 @@ import threading
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Protocol
 
 from cyclopts import App, Parameter, validators
 from loguru import logger
@@ -58,6 +58,10 @@ from photo_tagger.logging_setup import setup_logging
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
 
+# Runtime import (not type-only): cyclopts evaluates the Annotated[ProviderName, ...] field
+# below to validate the --provider choices, so the name must exist at class-definition time.
+from photo_tagger.providers import ProviderName  # noqa: TC001
+
 
 app = App(name="photo-tagger", version=__version__)
 
@@ -78,8 +82,11 @@ class ProviderConfig:
         Parameter(name=("--model", "-m"), help="Vision-language model name"),
     ] = DEFAULT_MODEL_NAME
     provider_name: Annotated[
-        Literal["ollama", "lmstudio"],
-        Parameter(name=("--provider",), help="Backend provider: 'ollama' or 'lmstudio'"),
+        ProviderName,
+        Parameter(
+            name=("--provider",),
+            help="Backend provider: 'ollama', 'lmstudio', or 'openai' (any OpenAI-compatible API)",
+        ),
     ] = "lmstudio"
     api_base_url: Annotated[
         str | None,

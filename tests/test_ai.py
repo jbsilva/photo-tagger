@@ -1,5 +1,6 @@
-"""Tests for AI module helpers that don't require a live model."""
+"""Tests for AI agent wiring that don't require a live model."""
 
+import dataclasses
 from http import HTTPStatus
 from typing import Any
 from unittest.mock import MagicMock
@@ -9,6 +10,7 @@ import pytest
 
 from photo_tagger import ai as ai_module
 from photo_tagger.errors import ProviderError
+from photo_tagger.providers import get_backend
 
 
 class _DummyResponse:
@@ -24,167 +26,13 @@ class _DummyResponse:
         return repr(self._payload)
 
 
-def test_validate_listing_url_rejects_missing_scheme() -> None:
-    """A relative URL is caught up-front before httpx is invoked."""
-    with pytest.raises(ProviderError):
-        ai_module._validate_listing_url(  # noqa: SLF001
-            "ftp:///models",
-            event_prefix="lmstudio_model_listing",
-        )
-
-
-def test_validate_listing_url_rejects_missing_host() -> None:
-    """A URL with no netloc never reaches the network."""
-    with pytest.raises(ProviderError):
-        ai_module._validate_listing_url(  # noqa: SLF001
-            "http:///models",
-            event_prefix="lmstudio_model_listing",
-        )
-
-
-def test_fetch_lmstudio_models_handles_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A connection error is logged and exits the process."""
-
-    def boom(url: str, *, headers: dict[str, str], timeout: float) -> Any:  # noqa: ANN401
-        msg = "nope"
-        raise httpx.ConnectError(msg)
-
-    monkeypatch.setattr(httpx, "get", boom)
-    with pytest.raises(ProviderError):
-        ai_module._fetch_lmstudio_models("http://localhost:1234/v1/models", None)  # noqa: SLF001
-
-
-def test_fetch_lmstudio_models_handles_non_ok_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A non-OK status code is fatal."""
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
-        return _DummyResponse(HTTPStatus.SERVICE_UNAVAILABLE, {})
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    with pytest.raises(ProviderError):
-        ai_module._fetch_lmstudio_models("http://localhost:1234/v1/models", None)  # noqa: SLF001
-
-
-def test_truncate_for_log_caps_long_bodies() -> None:
-    """A response body well past the cap is shortened with an overflow marker."""
-    body = "x" * 5_000
-    out = ai_module._truncate_for_log(body)  # noqa: SLF001
-    assert len(out) < len(body)
-    assert out.startswith("x" * 100)
-    assert "more chars" in out
-
-
-def test_truncate_for_log_passes_short_bodies_through() -> None:
-    """Short bodies are returned unchanged so the log stays useful for tiny errors."""
-    body = "model not found"
-    assert ai_module._truncate_for_log(body) == body  # noqa: SLF001
-
-
-def test_fetch_lmstudio_models_handles_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 200 response with malformed JSON is also fatal."""
-
-    class Broken(_DummyResponse):
-        def json(self) -> Any:  # noqa: ANN401
-            msg = "not json"
-            raise ValueError(msg)
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> Broken:
-        return Broken(HTTPStatus.OK, "not json")
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    with pytest.raises(ProviderError):
-        ai_module._fetch_lmstudio_models("http://localhost:1234/v1/models", None)  # noqa: SLF001
-
-
-def test_fetch_lmstudio_models_returns_ids(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A well-formed listing returns just the id strings."""
-    payload = {"data": [{"id": "alpha"}, {"id": "beta"}, {"name": "no-id"}]}
+def _patch_listing(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> None:
+    """Make every model-listing request return *payload* with a 200."""
 
     def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
         return _DummyResponse(HTTPStatus.OK, payload)
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    assert ai_module._fetch_lmstudio_models(  # noqa: SLF001
-        "http://localhost:1234/v1/models",
-        api_key="secret",
-    ) == ["alpha", "beta"]
-
-
-def test_fetch_lmstudio_models_handles_non_list_data(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A listing whose 'data' field is not a list yields no models rather than crashing."""
-    payload = {"data": {"unexpected": "shape"}}
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
-        return _DummyResponse(HTTPStatus.OK, payload)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    assert (
-        ai_module._fetch_lmstudio_models(  # noqa: SLF001
-            "http://localhost:1234/v1/models",
-            api_key=None,
-        )
-        == []
-    )
-
-
-def test_fetch_ollama_models_handles_non_list_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A listing whose 'models' field is not a list yields no models rather than crashing."""
-    payload = {"models": "not-a-list"}
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
-        return _DummyResponse(HTTPStatus.OK, payload)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    assert (
-        ai_module._fetch_ollama_models(  # noqa: SLF001
-            "http://localhost:11434/api/tags",
-            api_key=None,
-        )
-        == []
-    )
-
-
-def test_fetch_ollama_models_returns_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ollama's /api/tags returns a 'models' array of objects with a 'name' field."""
-    payload = {"models": [{"name": "llava:34b"}, {"name": "qwen-vl"}, {"size": 1234}]}
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
-        return _DummyResponse(HTTPStatus.OK, payload)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    assert ai_module._fetch_ollama_models(  # noqa: SLF001
-        "http://localhost:11434/api/tags",
-        api_key=None,
-    ) == ["llava:34b", "qwen-vl"]
-
-
-def test_validate_ollama_model_strips_v1_suffix_and_validates(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The pydantic-ai-style /v1 base URL is rewritten to /api/tags before listing."""
-    payload = {"models": [{"name": "vision-pro"}]}
-    captured: list[str] = []
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
-        captured.append(url)
-        return _DummyResponse(HTTPStatus.OK, payload)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    ai_module.validate_ollama_model("http://localhost:11434/v1", "vision-pro", None)
-
-    assert captured == ["http://localhost:11434/api/tags"]
-
-
-def test_validate_ollama_model_exits_when_model_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ProviderError is raised when the requested model id is not in the local listing."""
-    payload = {"models": [{"name": "other-model"}]}
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
-        return _DummyResponse(HTTPStatus.OK, payload)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    with pytest.raises(ProviderError):
-        ai_module.validate_ollama_model("http://localhost:11434", "missing", None)
 
 
 # ---------------------------------------------------------------------------
@@ -193,14 +41,8 @@ def test_validate_ollama_model_exits_when_model_missing(monkeypatch: pytest.Monk
 
 
 def test_create_agent_ollama_validates_and_builds_agent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """create_agent('ollama') calls validate_ollama_model, wires OllamaProvider, returns Agent."""
-    payload = {"models": [{"name": "test-model"}]}
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
-        return _DummyResponse(HTTPStatus.OK, payload)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-
+    """create_agent('ollama') validates against /api/tags and returns an Agent."""
+    _patch_listing(monkeypatch, {"models": [{"name": "test-model"}]})
     agent = ai_module.create_agent(
         "ollama",
         "test-model",
@@ -212,14 +54,8 @@ def test_create_agent_ollama_validates_and_builds_agent(monkeypatch: pytest.Monk
 
 
 def test_create_agent_lmstudio_validates_and_builds_agent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """create_agent('lmstudio') calls validate_lmstudio_model, wires OpenAIProvider."""
-    payload = {"data": [{"id": "test-model"}]}
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
-        return _DummyResponse(HTTPStatus.OK, payload)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-
+    """create_agent('lmstudio') validates against /v1/models and wires OpenAIProvider."""
+    _patch_listing(monkeypatch, {"data": [{"id": "test-model"}]})
     agent = ai_module.create_agent(
         "lmstudio",
         "test-model",
@@ -230,15 +66,45 @@ def test_create_agent_lmstudio_validates_and_builds_agent(monkeypatch: pytest.Mo
     assert agent is not None
 
 
+def test_create_agent_openai_validates_with_supplied_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """create_agent('openai') accepts an explicit key and validates the model id."""
+    _patch_listing(monkeypatch, {"data": [{"id": "gpt-4o-mini"}]})
+    agent = ai_module.create_agent(
+        "openai",
+        "gpt-4o-mini",
+        api_base_url="https://api.openai.com/v1",
+        api_key="sk-test",
+        retries=1,
+    )
+    assert agent is not None
+
+
+def test_create_agent_openai_without_key_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hosted OpenAI backend refuses to run without a key, before any network call."""
+
+    def explode(*_args: object, **_kwargs: object) -> Any:  # noqa: ANN401
+        msg = "httpx.get must not be called when the key is missing"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(httpx, "get", explode)
+    # The default key is captured from the environment at import time, so build a
+    # keyless clone (frozen dataclasses copy via dataclasses.replace) and route the
+    # lookup to it regardless of what OPENAI_API_KEY happens to be on this machine.
+    keyless = dataclasses.replace(get_backend("openai"), default_api_key=None)
+    monkeypatch.setattr(ai_module, "get_backend", lambda _name: keyless)
+    with pytest.raises(ProviderError):
+        ai_module.create_agent(
+            "openai",
+            "gpt-4o-mini",
+            api_base_url=None,
+            api_key=None,
+            retries=1,
+        )
+
+
 def test_create_agent_uses_default_url_when_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When api_base_url is None, the provider's default URL is used."""
-    payload = {"models": [{"name": "m"}]}
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> _DummyResponse:
-        return _DummyResponse(HTTPStatus.OK, payload)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-
+    """When api_base_url is None, the backend's default URL is used."""
+    _patch_listing(monkeypatch, {"models": [{"name": "m"}]})
     agent = ai_module.create_agent(
         "ollama",
         "m",

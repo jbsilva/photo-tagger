@@ -1,169 +1,27 @@
 """Vision-language agent setup and inference helpers."""
 
 import time
-import urllib.parse
-from http import HTTPStatus
-from typing import TYPE_CHECKING, Literal, assert_never
+from typing import TYPE_CHECKING
 
-import httpx
 from loguru import logger
 from pydantic_ai import Agent, AgentRunResult, ModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.ollama import OllamaProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from photo_tagger.config import (
     DEFAULT_FREQUENCY_PENALTY,
-    DEFAULT_LMSTUDIO_API_KEY,
     DEFAULT_MAX_TOKENS,
-    DEFAULT_OLLAMA_API_KEY,
-    DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_TEMPERATURE,
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_USER_PROMPT,
-    PROVIDER_URLS,
 )
 from photo_tagger.errors import ProviderError
 from photo_tagger.models import GeneratedMetadata, InferenceResult
+from photo_tagger.providers import ProviderName, get_backend
 
 
 if TYPE_CHECKING:
     from pydantic_ai import BinaryContent
-
-
-ProviderName = Literal["ollama", "lmstudio"]
-
-# Cap on the response body included in failure logs. A misconfigured provider
-# can return an entire HTML page (or paste back the request including an
-# Authorization header), and we do not want a multi-MB string in the log file.
-_MAX_LOGGED_BODY_CHARS = 500
-
-
-def _truncate_for_log(text: str, *, limit: int = _MAX_LOGGED_BODY_CHARS) -> str:
-    """Return *text* trimmed to *limit* chars with a tail marker on overflow."""
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"... [{len(text) - limit} more chars]"
-
-
-def _validate_listing_url(url: str, *, event_prefix: str) -> None:
-    """Reject malformed URLs before we hit the network."""
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        msg = f"Invalid URL scheme {parsed.scheme!r} for {url}"
-        logger.error(f"{event_prefix}_invalid_scheme", url=url, scheme=parsed.scheme)
-        raise ProviderError(msg)
-    if not parsed.netloc:
-        msg = f"Missing host in URL {url}"
-        logger.error(f"{event_prefix}_missing_host", url=url)
-        raise ProviderError(msg)
-
-
-def _fetch_listing(url: str, api_key: str | None, *, event_prefix: str) -> dict[str, object]:
-    """GET *url* with an optional Bearer token; return the parsed JSON body."""
-    headers = {"Accept": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    try:
-        response = httpx.get(url, headers=headers, timeout=5.0)
-    except httpx.HTTPError as exc:
-        logger.error(f"{event_prefix}_error", error=str(exc), url=url)
-        raise ProviderError(str(exc)) from exc
-
-    if response.status_code != HTTPStatus.OK:
-        body = _truncate_for_log(response.text)
-        logger.error(
-            f"{event_prefix}_failed",
-            status=response.status_code,
-            url=url,
-            body=body,
-        )
-        msg = f"HTTP {response.status_code} from {url}: {body}"
-        raise ProviderError(msg)
-
-    try:
-        return response.json()  # type: ignore[no-any-return]
-    except ValueError as exc:
-        logger.error(f"{event_prefix}_invalid_json", error=str(exc), url=url)
-        raise ProviderError(str(exc)) from exc
-
-
-def _fetch_lmstudio_models(url: str, api_key: str | None) -> list[str]:
-    """Return the list of model ids exposed by an LM Studio ``/v1/models`` endpoint."""
-    listing = _fetch_listing(url, api_key, event_prefix="lmstudio_model_listing")
-    raw_data = listing.get("data", [])
-    if not isinstance(raw_data, list):
-        return []
-    return [str(entry["id"]) for entry in raw_data if isinstance(entry, dict) and "id" in entry]
-
-
-def _fetch_ollama_models(url: str, api_key: str | None) -> list[str]:
-    """Return the list of locally-installed Ollama models from ``/api/tags``."""
-    listing = _fetch_listing(url, api_key, event_prefix="ollama_model_listing")
-    raw_models = listing.get("models", [])
-    if not isinstance(raw_models, list):
-        return []
-    return [
-        str(entry["name"]) for entry in raw_models if isinstance(entry, dict) and "name" in entry
-    ]
-
-
-def validate_lmstudio_model(api_base_url: str, model_name: str, api_key: str | None) -> None:
-    """Fail fast when LM Studio cannot resolve the requested model name."""
-    url = urllib.parse.urljoin(api_base_url.rstrip("/") + "/", "models")
-    _validate_listing_url(url, event_prefix="lmstudio_model_listing")
-    models = _fetch_lmstudio_models(url, api_key)
-    if model_name not in models:
-        msg = f"Model {model_name!r} not available in LM Studio (available: {models})"
-        logger.error("lmstudio_model_not_available", requested=model_name, available=models)
-        raise ProviderError(msg)
-    logger.debug("lmstudio_model_validated", model=model_name)
-
-
-def validate_ollama_model(api_base_url: str, model_name: str, api_key: str | None) -> None:
-    """
-    Fail fast when Ollama cannot resolve the requested model name.
-
-    Ollama exposes ``/api/tags`` (not ``/v1/models``) so we strip a trailing ``/v1`` from the
-    configured OpenAI-compatible URL before querying. Matching is exact against the ``name`` field,
-    which on Ollama already includes the ``:tag`` suffix where present.
-    """
-    base = api_base_url.rstrip("/").removesuffix("/v1").rstrip("/")
-    url = base + "/api/tags"
-    _validate_listing_url(url, event_prefix="ollama_model_listing")
-    models = _fetch_ollama_models(url, api_key)
-    if model_name not in models:
-        msg = f"Model {model_name!r} not available in Ollama (available: {models})"
-        logger.error("ollama_model_not_available", requested=model_name, available=models)
-        raise ProviderError(msg)
-    logger.debug("ollama_model_validated", model=model_name)
-
-
-def _build_provider(
-    provider_name: ProviderName,
-    *,
-    resolved_url: str,
-    model_name: str,
-    api_key: str | None,
-) -> OllamaProvider | OpenAIProvider:
-    """
-    Validate the requested model and construct the matching pydantic-ai provider.
-
-    Each branch returns directly so there is no fall-through path where the provider is left
-    unassigned; ``assert_never`` keeps the match exhaustive for the type checker.
-    """
-    match provider_name:
-        case "ollama":
-            resolved_api_key = api_key or DEFAULT_OLLAMA_API_KEY
-            validate_ollama_model(resolved_url, model_name, resolved_api_key)
-            return OllamaProvider(base_url=resolved_url, api_key=resolved_api_key)
-        case "lmstudio":
-            resolved_api_key = api_key or DEFAULT_LMSTUDIO_API_KEY
-            validate_lmstudio_model(resolved_url, model_name, resolved_api_key)
-            return OpenAIProvider(base_url=resolved_url, api_key=resolved_api_key)
-        case _:  # pragma: no cover - unreachable; ProviderName is exhaustive above
-            assert_never(provider_name)
 
 
 def create_agent(
@@ -174,8 +32,9 @@ def create_agent(
     api_key: str | None,
     retries: int,
 ) -> Agent[None, GeneratedMetadata]:
-    """Build a configured pydantic-ai Agent backed by Ollama or LM Studio."""
-    resolved_url = api_base_url or PROVIDER_URLS.get(provider_name, DEFAULT_OLLAMA_BASE_URL)
+    """Build a configured pydantic-ai Agent backed by the requested provider."""
+    backend = get_backend(provider_name)
+    resolved_url = api_base_url or backend.default_base_url
     if api_base_url is None:
         logger.debug("using_default_provider_url", url=resolved_url)
     logger.info(
@@ -185,12 +44,16 @@ def create_agent(
         model=model_name,
     )
 
-    provider = _build_provider(
-        provider_name,
-        resolved_url=resolved_url,
-        model_name=model_name,
-        api_key=api_key,
-    )
+    resolved_api_key = backend.resolve_api_key(api_key)
+    if backend.requires_api_key and not resolved_api_key:
+        msg = (
+            f"Provider {provider_name!r} requires an API key. Set OPENAI_API_KEY or pass --api-key."
+        )
+        logger.error("provider_api_key_required", provider=provider_name)
+        raise ProviderError(msg)
+
+    backend.validate_model(resolved_url, model_name, resolved_api_key)
+    provider = backend.build_provider(resolved_url, resolved_api_key)
     chat_model = OpenAIChatModel(model_name=model_name, provider=provider)
     # pydantic-ai's Agent constructor does not propagate `output_type` into its
     # generic, so static analyzers see `Agent[None, str]` while the runtime
