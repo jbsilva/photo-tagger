@@ -1,0 +1,34 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/python
+{
+  "name": "photo-tagger",
+  // Matches requires-python (>=3.14) in pyproject.toml.
+  "image": "mcr.microsoft.com/devcontainers/python:3.14-bookworm",
+
+  // Install uv + ExifTool, sync the dev/test deps from uv.lock, and install the git hooks.
+  "postCreateCommand": "bash scripts/dev-setup.sh",
+
+  "customizations": {
+    "vscode": {
+      // Mirror .vscode/extensions.json so the container is productive on first open.
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "pycqa.bandit-pycqa",
+        "streetsidesoftware.code-spell-checker",
+        "tamasfe.even-better-toml",
+        "zuban.zubanls"
+      ],
+      "settings": {
+        // Point the editor (and its test runner) at the synced virtual environment.
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python"
+      }
+    }
+  },
+
+  // Put the virtual environment's bin on PATH so terminals and the system pre-commit hooks
+  // (zuban, pycroscope) and the photo-tagger CLI resolve without an explicit "uv run".
+  "remoteEnv": {
+    "PATH": "${containerWorkspaceFolder}/.venv/bin:${containerEnv:PATH}"
+  }
+}
