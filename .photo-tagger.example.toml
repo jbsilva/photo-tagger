@@ -20,7 +20,7 @@
 # --- provider -----------------------------------------------------------------
 
 [provider]
-# provider_name = "lmstudio"  # "ollama" or "lmstudio"
+# provider_name = "lmstudio"  # "ollama", "lmstudio", or "openai"
 # api_base_url = "http://localhost:1234/v1"
 # model_name = "qwen/qwen3-vl-30b"
 # api_key = "..."             # prefer env vars: LM_STUDIO_API_KEY, OLLAMA_API_KEY, OPENAI_API_KEY

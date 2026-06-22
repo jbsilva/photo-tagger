@@ -13,6 +13,7 @@ All notable changes to this project are documented here. The format is based on
   `OPENAI_BASE_URL` / `--url` and the key with `OPENAI_API_KEY` / `--api-key`.
 - New `photo-tagger doctor` command: a pre-flight checklist that verifies ExifTool is on PATH and
   the configured provider is reachable and serves the requested model, exiting non-zero on failure.
+- A PEP 561 `py.typed` marker so downstream projects can consume the package's type hints.
 
 ### Changed
 
