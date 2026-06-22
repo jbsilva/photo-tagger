@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from photo_tagger.metadata import (
+    SOURCE_IMAGE,
+    SOURCE_SIDECAR,
     _block_has_indicator,
     _build_write_payload,
     _coerce_to_list,
@@ -13,10 +15,12 @@ from photo_tagger.metadata import (
     find_tagged_images,
     format_metadata_value,
     managed_helper,
+    read_caption,
     read_existing_keywords,
     read_gps_coordinates,
     read_image_context,
     read_location_tags,
+    read_metadata_sources,
     write_metadata,
 )
 from photo_tagger.models import KeywordSet
@@ -485,6 +489,56 @@ def test_write_metadata_returns_false_on_exiftool_error(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# read_caption
+# ---------------------------------------------------------------------------
+
+
+def test_read_caption_reads_title_and_description_with_fallbacks(tmp_path: Path) -> None:
+    """The IPTC/EXIF fall-back tags are used when the preferred XMP tags are absent."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper(
+        [{"IPTC:ObjectName": "Fallback Title", "EXIF:ImageDescription": "Fallback caption."}],
+    )
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_caption(img) == ("Fallback Title", "Fallback caption.")
+
+
+def test_read_caption_returns_none_when_absent(tmp_path: Path) -> None:
+    """A file with neither title nor description yields (None, None)."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper([{"SourceFile": str(img)}])
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_caption(img) == (None, None)
+
+
+def test_read_caption_returns_none_when_no_targets(tmp_path: Path) -> None:
+    """A missing file (no metadata targets) returns (None, None) without calling exiftool."""
+    with patch("photo_tagger.metadata.metadata_targets", return_value=[]):
+        assert read_caption(tmp_path / "ghost.cr3") == (None, None)
+
+
+def test_read_caption_returns_none_on_exiftool_error(tmp_path: Path) -> None:
+    """A failure inside exiftool is logged and yields (None, None)."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper()
+    helper.get_tags.side_effect = ValueError("boom")
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_caption(img) == (None, None)
+
+
+# ---------------------------------------------------------------------------
 # _format_location / _camera_lines helpers
 # ---------------------------------------------------------------------------
 
@@ -540,3 +594,74 @@ def test_select_location_prefers_xmp_then_falls_back_to_iptc() -> None:
     assert select_location(iptc) == ("Berlin", "Germany")
 
     assert select_location({}) == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# read_metadata_sources
+# ---------------------------------------------------------------------------
+
+
+def test_read_metadata_sources_reports_image_and_sidecar(tmp_path: Path) -> None:
+    """Targets carrying indicator tags are reported by source (image vs sidecar)."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    xmp = str(img.with_suffix(".xmp"))
+    helper = _fake_helper(
+        [
+            {"SourceFile": str(img), "XMP:Subject": ["Bird"]},
+            {"SourceFile": xmp, "XMP:Title": "A title"},
+        ],
+    )
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img), xmp]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_metadata_sources(img) == [SOURCE_IMAGE, SOURCE_SIDECAR]
+
+
+def test_read_metadata_sources_deduplicates_same_source(tmp_path: Path) -> None:
+    """Two blocks from the same source collapse to a single label."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper(
+        [
+            {"SourceFile": str(img), "XMP:Subject": ["Bird"]},
+            {"SourceFile": str(img), "XMP:Title": "A title"},
+        ],
+    )
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_metadata_sources(img) == [SOURCE_IMAGE]
+
+
+def test_read_metadata_sources_skips_targets_without_metadata(tmp_path: Path) -> None:
+    """A target present but free of indicator tags is not reported as a source."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper([{"SourceFile": str(img), "EXIF:Make": "Canon"}])
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_metadata_sources(img) == []
+
+
+def test_read_metadata_sources_empty_when_no_targets(tmp_path: Path) -> None:
+    """A missing file yields no sources without calling exiftool."""
+    with patch("photo_tagger.metadata.metadata_targets", return_value=[]):
+        assert read_metadata_sources(tmp_path / "ghost.cr3") == []
+
+
+def test_read_metadata_sources_returns_empty_on_exiftool_error(tmp_path: Path) -> None:
+    """An exiftool failure is logged and yields no sources."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+    helper = _fake_helper()
+    helper.get_tags.side_effect = ValueError("boom")
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert read_metadata_sources(img) == []

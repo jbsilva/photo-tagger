@@ -618,7 +618,7 @@ def test_write_summary_file_noop_when_path_is_none(tmp_path: Path) -> None:
 
 
 def test_write_summary_file_noop_when_totals_is_none(tmp_path: Path) -> None:
-    """Totals=None is the early-exit path when the batch never ran."""
+    """``totals=None`` is the early-exit path when the batch never ran."""
     from datetime import UTC, datetime  # noqa: PLC0415
 
     dest = tmp_path / "out.json"
@@ -701,3 +701,35 @@ def test_doctor_exits_one_when_a_check_fails() -> None:
     ):
         main_module.doctor(provider="lmstudio", model="m", url=None, api_key=None)
     assert exc_info.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# gui command (lazy PySide6 import)
+# ---------------------------------------------------------------------------
+
+
+def test_gui_reports_missing_pyside6(capsys: pytest.CaptureFixture[str]) -> None:
+    """Without the optional extra, the command exits 1 with a pip install hint."""
+
+    def raise_import_error(_name: str) -> object:
+        msg = "No module named 'PySide6'"
+        raise ImportError(msg)
+
+    with (
+        patch("photo_tagger.main.importlib.import_module", raise_import_error),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main_module.gui()
+    assert exc_info.value.code == 1
+    assert "photo-tagger[gui]" in capsys.readouterr().err
+
+
+def test_gui_launches_when_available() -> None:
+    """When PySide6 is present, the command delegates to gui.launch() and exits with its code."""
+    fake_gui = type("FakeGui", (), {"launch": staticmethod(lambda: 0)})
+    with (
+        patch("photo_tagger.main.importlib.import_module", return_value=fake_gui),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main_module.gui()
+    assert exc_info.value.code == 0

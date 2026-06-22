@@ -14,6 +14,7 @@ from PIL import Image
 
 from photo_tagger.metadata import (
     metadata_targets,
+    read_caption,
     read_existing_keywords,
     read_gps_coordinates,
     read_location_tags,
@@ -97,3 +98,17 @@ def test_read_existing_keywords_handles_missing_file(tmp_path: Path) -> None:
     """A missing file returns an empty KeywordSet, not an exception."""
     out = read_existing_keywords(tmp_path / "ghost.jpg")
     assert out == KeywordSet()
+
+
+def test_read_caption_round_trip(tmp_path: Path) -> None:
+    """A written title and description are read back by read_caption."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+    write_metadata(
+        img,
+        KeywordSet(subject=["X"]),
+        description="A small description.",
+        title="A small title",
+        backup=False,
+        use_sidecar=False,
+    )
+    assert read_caption(img) == ("A small title", "A small description.")

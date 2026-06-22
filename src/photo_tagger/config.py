@@ -92,6 +92,12 @@ TAG_IPTC_KEYWORDS = "IPTC:Keywords"
 TAG_XMP_SUBJECT = "XMP:Subject"
 TAG_XMP_HIERARCHICAL_SUBJECT = "XMP:HierarchicalSubject"
 TAG_XMP_WEIGHTED_FLAT_SUBJECT = "XMP:WeightedFlatSubject"
+# Title and description tags. Reads use the generic family-group tag (e.g. "XMP:Title"); writes
+# target the specific namespace tag (e.g. "XMP-dc:Title"). IPTC:ObjectName is shared by both.
+TAG_IPTC_OBJECT_NAME = "IPTC:ObjectName"
+TAG_XMP_TITLE = "XMP:Title"
+TAG_XMP_DESCRIPTION = "XMP:Description"
+TAG_EXIF_IMAGE_DESCRIPTION = "EXIF:ImageDescription"
 
 # Plain text only. The OpenAI-compatible chat completion endpoint wraps this in the
 # model's chat template (e.g. <|im_start|>system ... <|im_end|> for Qwen), so embedding

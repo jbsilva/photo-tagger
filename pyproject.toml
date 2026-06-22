@@ -40,6 +40,11 @@ dependencies = [
     "rich>=15.0.0",
 ]
 
+[project.optional-dependencies]
+# Optional desktop GUI. Kept out of the base install so the CLI stays lean and dependency-light:
+# `pip install photo-tagger[gui]` pulls Qt only when wanted.
+gui = ["pyside6>=6.11.1"]
+
 [dependency-groups]
 dev = [
     "bandit>=1.9.4",
@@ -162,6 +167,18 @@ missing_parameter_annotation = false
 suggested_parameter_type = false
 suggested_return_type = false
 
+# PySide6's widget attributes are generated at runtime by shiboken, so pycroscope's
+# static view of the Qt classes reports every .addWidget/.clicked/etc. as undefined.
+# These are false positives; the GUI shell is verified by the offscreen tests in
+# test_gui.py instead. (gui.py is likewise excluded from coverage and from zuban
+# via its `# mypy: ignore-errors` header.)
+[[tool.pycroscope.overrides]]
+module = "photo_tagger.gui"
+undefined_attribute = false
+# QTreeWidgetItemIterator supports `it += 1` at runtime, but pycroscope's static view of the
+# shiboken-generated class does not model the operator.
+unsupported_operation = false
+
 [tool.bandit]
 exclude_dirs = [".git", ".venv", "__pycache__", "tests"]
 
@@ -188,3 +205,11 @@ addopts = [
 markers = [
     "integration: marks tests as integration testsdeselect with '-m \"not integration\"'",
 ]
+
+[tool.coverage.run]
+# The PySide6 desktop window and its Qt event loop cannot run under the headless
+# CI suite (no display, and the [gui] extra is intentionally not installed there).
+# Its testable, Qt-free logic lives in gui_state.py, which is covered normally;
+# gui.py is the widget/event-loop shell, exercised manually and by the
+# offscreen-guarded tests in test_gui.py when PySide6 is present.
+omit = ["src/photo_tagger/gui.py"]

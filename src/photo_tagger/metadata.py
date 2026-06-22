@@ -16,9 +16,13 @@ if TYPE_CHECKING:
 from photo_tagger.config import (
     CAMERA_TAGS,
     LOCATION_TAGS,
+    TAG_EXIF_IMAGE_DESCRIPTION,
     TAG_IPTC_KEYWORDS,
+    TAG_IPTC_OBJECT_NAME,
+    TAG_XMP_DESCRIPTION,
     TAG_XMP_HIERARCHICAL_SUBJECT,
     TAG_XMP_SUBJECT,
+    TAG_XMP_TITLE,
     TAG_XMP_WEIGHTED_FLAT_SUBJECT,
 )
 from photo_tagger.models import KeywordSet
@@ -41,6 +45,11 @@ def managed_helper(et: ExifToolHelper | None) -> Iterator[ExifToolHelper]:
 
 _GPS_TAG = "Composite:GPSPosition"
 
+# Existing title/description tags, in read priority order (first non-empty wins). The GUI
+# surfaces these so a user can see and edit what is already on the photo before saving.
+_TITLE_TAGS: tuple[str, ...] = (TAG_XMP_TITLE, TAG_IPTC_OBJECT_NAME)
+_DESCRIPTION_TAGS: tuple[str, ...] = (TAG_XMP_DESCRIPTION, TAG_EXIF_IMAGE_DESCRIPTION)
+
 # Any of these tags being non-empty marks an image as already tagged. Covers the cases
 # where another tool (Lightroom, exiftool by hand, a previous photo-tagger run) wrote
 # keywords, a description, or a title to either the image or its XMP sidecar.
@@ -49,10 +58,8 @@ _TAGGED_INDICATOR_TAGS: tuple[str, ...] = (
     TAG_XMP_HIERARCHICAL_SUBJECT,
     TAG_XMP_WEIGHTED_FLAT_SUBJECT,
     TAG_IPTC_KEYWORDS,
-    "XMP:Description",
-    "EXIF:ImageDescription",
-    "XMP:Title",
-    "IPTC:ObjectName",
+    *_DESCRIPTION_TAGS,
+    *_TITLE_TAGS,
 )
 
 # Tags read from a photo when collecting "existing" keywords, paired with the
@@ -321,6 +328,83 @@ def read_gps_coordinates(
     return {}
 
 
+def _first_tag_value(blocks: list[dict[str, Any]], tags: tuple[str, ...]) -> str | None:
+    """Return the first non-blank value across *blocks* for the first matching *tags* entry."""
+    for tag in tags:
+        for block in blocks:
+            value = block.get(tag)
+            if value not in (None, ""):
+                return format_metadata_value(value)
+    return None
+
+
+def read_caption(
+    image_path: Path,
+    *,
+    et: ExifToolHelper | None = None,
+) -> tuple[str | None, str | None]:
+    """
+    Read the existing title and description from the image or its XMP sidecar.
+
+    Returns ``(title, description)``, each ``None`` when absent. Title prefers XMP-dc:Title and
+    falls back to IPTC:ObjectName; description prefers XMP-dc:Description and falls back to
+    EXIF:ImageDescription. The GUI uses this to show a user what is already on a photo before it
+    writes new metadata.
+    """
+    targets = metadata_targets(image_path)
+    if not targets:
+        return (None, None)
+
+    try:
+        with managed_helper(et) as helper:
+            blocks = helper.get_tags(files=targets, tags=[*_TITLE_TAGS, *_DESCRIPTION_TAGS])
+    except _EXIFTOOL_ERRORS as e:
+        logger.exception("failed_to_read_caption", error=str(e))
+        return (None, None)
+
+    return (_first_tag_value(blocks, _TITLE_TAGS), _first_tag_value(blocks, _DESCRIPTION_TAGS))
+
+
+# Human-readable labels for where existing metadata lives.
+SOURCE_IMAGE = "image file"
+SOURCE_SIDECAR = "XMP sidecar"
+
+
+def read_metadata_sources(
+    image_path: Path,
+    *,
+    et: ExifToolHelper | None = None,
+) -> list[str]:
+    """
+    Report where existing metadata lives: the image file, an XMP sidecar, or both.
+
+    Returns a list of source labels (:data:`SOURCE_IMAGE`, :data:`SOURCE_SIDECAR`) for the targets
+    that actually carry an indicator tag (keywords, title, or description), so the GUI can tell the
+    user whether what it shows came from the photo or its sidecar. Returns an empty list when
+    neither target has any such metadata.
+    """
+    targets = metadata_targets(image_path)
+    if not targets:
+        return []
+
+    try:
+        with managed_helper(et) as helper:
+            blocks = helper.get_tags(files=targets, tags=list(_TAGGED_INDICATOR_TAGS))
+    except _EXIFTOOL_ERRORS as exc:
+        logger.exception("failed_to_read_metadata_sources", error=str(exc))
+        return []
+
+    sources: list[str] = []
+    for block in blocks:
+        if not _block_has_indicator([block]):
+            continue
+        source_file = str(block.get("SourceFile", ""))
+        label = SOURCE_SIDECAR if source_file.casefold().endswith(".xmp") else SOURCE_IMAGE
+        if label not in sources:
+            sources.append(label)
+    return sources
+
+
 @dataclass(slots=True, frozen=True)
 class ImageContext:
     """
@@ -531,7 +615,7 @@ def _build_write_payload(
         payload["XMP-exif:ImageDescription"] = description
     if title:
         payload["XMP-dc:Title"] = title
-        payload["IPTC:ObjectName"] = title
+        payload[TAG_IPTC_OBJECT_NAME] = title
     return payload
 
 

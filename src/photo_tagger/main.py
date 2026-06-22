@@ -15,6 +15,7 @@ Requirements:
 """
 
 import contextlib
+import importlib
 import json
 import os
 import sqlite3
@@ -122,6 +123,30 @@ def doctor(
     results = run_checks(provider, model, api_base_url=url, api_key=api_key)
     if not render_report(results):
         raise SystemExit(1)
+
+
+@app.command
+def gui() -> None:
+    """
+    Launch the desktop GUI (requires the optional ``[gui]`` extra).
+
+    The GUI is a thin frontend over the same pipeline as the ``tag`` command: pick a provider,
+    model, and folder, then watch each photo's generated title, description, and keywords stream
+    into a table as they are produced. Install it with ``pip install 'photo-tagger[gui]'``.
+
+    PySide6 is imported lazily here so the base CLI never depends on Qt; a missing dependency is
+    reported with an install hint rather than a traceback.
+    """
+    try:
+        gui_module = importlib.import_module("photo_tagger.gui")
+    except ImportError as exc:
+        sys.stderr.write(
+            "The desktop GUI needs PySide6, which is not installed.\n"
+            "Install the optional extra with:\n"
+            "    pip install 'photo-tagger[gui]'\n",
+        )
+        raise SystemExit(1) from exc
+    raise SystemExit(gui_module.launch())
 
 
 def _read_prompt_file(prompt_file: Path | None) -> str:
