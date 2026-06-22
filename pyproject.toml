@@ -97,6 +97,9 @@ ignore = [
     "S106",   # Allow hardcoded password in function calls in tests
     "ARG001", # Allow unused arguments in tests (for pytest fixtures)
     "INP001", # No __init__.py needed — pytest uses --import-mode=importlib
+    "TC001",  # Keep imports at runtime in tests; the import-cost the TC rules guard is irrelevant
+    "TC002",  # here, and a TYPE_CHECKING block for a test's own framework import reads oddly.
+    "TC003",
 ]
 "**/__init__.py" = [
     "D104", # Allow empty __init__.py files

@@ -44,6 +44,7 @@ from photo_tagger.cli_options import (
     to_processing_options,
 )
 from photo_tagger.config import DEFAULT_USER_PROMPT
+from photo_tagger.diagnostics import render_report, run_checks
 from photo_tagger.discovery import (
     apply_date_filter,
     apply_skip_file,
@@ -56,6 +57,10 @@ from photo_tagger.locking import FileLock, LockHeldError
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
+
+# Runtime import (not type-only): cyclopts evaluates the Annotated[ProviderName, ...] field
+# on the doctor command to validate the --provider choices, so it must exist at definition time.
+from photo_tagger.providers import ProviderName  # noqa: TC001
 
 
 app = App(name="photo-tagger", version=__version__)
@@ -75,6 +80,42 @@ _DEFAULT_FILTER = _DEFAULTS.filter
 _DEFAULT_EXTENSIONS = _DEFAULTS.extensions
 _DEFAULT_WORKERS = _DEFAULTS.workers
 _DEFAULT_RECURSIVE = _DEFAULTS.recursive
+
+
+@app.command
+def doctor(
+    *,
+    provider: Annotated[
+        ProviderName,
+        Parameter(name=("--provider",), help="Backend provider to check"),
+    ] = _DEFAULT_PROVIDER.provider_name,
+    model: Annotated[
+        str,
+        Parameter(name=("--model", "-m"), help="Model name expected to be served"),
+    ] = _DEFAULT_PROVIDER.model_name,
+    url: Annotated[
+        str | None,
+        Parameter(name=("--url", "-u"), help="Provider API base URL"),
+    ] = _DEFAULT_PROVIDER.api_base_url,
+    api_key: Annotated[
+        str | None,
+        Parameter(name=("--api-key", "-k"), help="Provider API key (prefer env vars)"),
+    ] = _DEFAULT_PROVIDER.api_key,
+) -> None:
+    """
+    Check that ExifTool and the model provider are reachable, then exit.
+
+    Prints a short checklist and exits 0 when everything is in order, 1 if any check fails. Run this
+    first when a tagging run cannot start: it isolates a missing ExifTool, an unreachable provider,
+    or a model name typo from the rest of the pipeline. Honors the same config file and env vars as
+    ``tag``.
+    """
+    # Silence loguru so only the checklist reaches the terminal; failures are
+    # captured in the report itself, not the logs.
+    logger.remove()
+    results = run_checks(provider, model, api_base_url=url, api_key=api_key)
+    if not render_report(results):
+        raise SystemExit(1)
 
 
 def _read_prompt_file(prompt_file: Path | None) -> str:

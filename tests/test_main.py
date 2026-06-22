@@ -530,3 +530,31 @@ def test_atomic_write_text_cleans_up_on_write_failure(tmp_path: Path) -> None:
     assert not target.exists()
     leftovers = list(tmp_path.glob(f".{target.name}.*"))
     assert leftovers == []
+
+
+# ---------------------------------------------------------------------------
+# doctor command
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_exits_zero_when_all_checks_pass() -> None:
+    """A clean checklist returns normally (cyclopts treats no SystemExit as exit 0)."""
+    from photo_tagger.diagnostics import CheckResult  # noqa: PLC0415 - test-local import.
+
+    ok = [CheckResult("ExifTool", ok=True, detail="/usr/bin/exiftool")]
+    with patch.object(main_module, "run_checks", return_value=ok):
+        # No SystemExit means success; _run_app would swallow one if raised.
+        main_module.doctor(provider="lmstudio", model="m", url=None, api_key=None)
+
+
+def test_doctor_exits_one_when_a_check_fails() -> None:
+    """A failing check makes the command raise SystemExit(1)."""
+    from photo_tagger.diagnostics import CheckResult  # noqa: PLC0415 - test-local import.
+
+    bad = [CheckResult("ExifTool", ok=False, detail="missing")]
+    with (
+        patch.object(main_module, "run_checks", return_value=bad),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main_module.doctor(provider="lmstudio", model="m", url=None, api_key=None)
+    assert exc_info.value.code == 1
