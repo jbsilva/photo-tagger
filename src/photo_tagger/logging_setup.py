@@ -40,7 +40,6 @@ def setup_logging(
         file_log_level: Log level for file (use 'OFF' to disable)
         console_log_level: Log level for console (use 'OFF' to disable)
         log_folder: Directory where log files are stored
-
     """
     logger.remove()
     if file_log_level != "OFF":

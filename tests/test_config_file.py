@@ -15,8 +15,8 @@ def _isolate_config_lookup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 
     ``find_config_file`` consults ``$PHOTO_TAGGER_CONFIG`` and the module-level ``_USER_CONFIG``
     path under the user's home directory. If either exists on the machine running the tests,
-    assertions about "no config found" silently fail.
-    Redirect both to a tmp location so every test starts from a clean slate.
+    assertions about "no config found" silently fail. Redirect both to a tmp location so every test
+    starts from a clean slate.
     """
     monkeypatch.delenv("PHOTO_TAGGER_CONFIG", raising=False)
     monkeypatch.setattr(

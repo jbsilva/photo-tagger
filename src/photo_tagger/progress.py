@@ -1,10 +1,10 @@
 """
 Progress bar built on rich.
 
-Wraps rich.Progress so the CLI gets one-line live status (e.g. ``43/500 ETA 12m``) on
-interactive terminals and a no-op callback on non-tty stdouts (CI, file redirects).
-The bar is always rendered to **stderr** so that ``--json`` (per-image NDJSON on
-stdout) and a downstream consumer reading stdout stay uncorrupted.
+Wraps rich.Progress so the CLI gets one-line live status (e.g. ``43/500 ETA 12m``) on interactive
+terminals and a no-op callback on non-tty stdouts (CI, file redirects). The bar is always rendered
+to **stderr** so that ``--json`` (per-image NDJSON on stdout) and a downstream consumer reading
+stdout stay uncorrupted.
 """
 
 import sys
@@ -39,7 +39,6 @@ def batch_progress(total: int, *, enabled: bool = True) -> Iterator[ProgressCall
         total: Number of images about to be processed (used to size the bar).
         enabled: If False (or stderr is not a tty), yield ``None`` so the caller can
             short-circuit. CI runs and piped output stay quiet that way.
-
     """
     if not enabled or not sys.stderr.isatty() or total <= 0:
         yield None

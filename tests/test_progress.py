@@ -7,7 +7,7 @@ from photo_tagger.progress import batch_progress
 
 
 def test_batch_progress_yields_none_when_disabled() -> None:
-    """enabled=False produces a None callback so the pipeline skips progress tracking."""
+    """``enabled=False`` produces a ``None`` callback so the pipeline skips progress tracking."""
     with batch_progress(10, enabled=False) as cb:
         assert cb is None
 

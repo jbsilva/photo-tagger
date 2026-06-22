@@ -304,7 +304,7 @@ _CONCURRENT_BATCH_SIZE = 4
 
 
 def test_run_batch_concurrent_processes_all_files(tmp_path: Path) -> None:
-    """workers>1 dispatches to a thread pool and reports the same totals as serial."""
+    """Workers>1 dispatches to a thread pool and reports the same totals as serial."""
     files = [tmp_path / f"img{i}.cr3" for i in range(_CONCURRENT_BATCH_SIZE)]
     for f in files:
         f.write_text("x")
@@ -343,7 +343,7 @@ def test_run_batch_concurrent_calls_on_success_per_image(tmp_path: Path) -> None
 
 
 def test_run_batch_progress_callback_fires_per_image(tmp_path: Path) -> None:
-    """progress=callable fires once per image with (path, ok) for both serial and concurrent."""
+    """Progress=callable fires once per image with (path, ok) for both serial and concurrent."""
     image = tmp_path / "img.cr3"
     image.write_text("x")
     received: list[tuple[str, bool]] = []

@@ -71,7 +71,6 @@ def metadata_targets(image_path: Path) -> list[str]:
     Examples:
         >>> metadata_targets(Path("/photos/image.cr3"))  # doctest: +SKIP
         ['/photos/image.cr3', '/photos/image.xmp']
-
     """
     targets: list[str] = []
     xmp_path = image_path.with_suffix(".xmp")
@@ -91,7 +90,6 @@ def format_metadata_value(value: Any) -> str:  # noqa: ANN401
         'sky'
         >>> format_metadata_value(42)
         '42'
-
     """
     if isinstance(value, str):
         return value
@@ -115,10 +113,10 @@ def _dedup_preserving_first_case(values: list[str]) -> list[str]:
     """
     Return *values* with case-insensitive duplicates collapsed, first-seen casing kept.
 
-    Photos often carry the same keyword in both XMP-dc:Subject and IPTC:Keywords with
-    different casing (``Bird`` vs ``bird``). Exact-match dedup leaves both, and the
-    writer faithfully replays the duplicate back to disk. Compare on casefold instead
-    so the output keyword list reflects what Lightroom would consider distinct.
+    Photos often carry the same keyword in both XMP-dc:Subject and IPTC:Keywords with different
+    casing (``Bird`` vs ``bird``). Exact-match dedup leaves both, and the writer faithfully replays
+    the duplicate back to disk. Compare on casefold instead so the output keyword list reflects what
+    Lightroom would consider distinct.
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -169,7 +167,6 @@ def read_existing_keywords(
 
     Note:
         Returns empty lists if neither the primary file nor its sidecar contain keywords.
-
     """
     targets = metadata_targets(image_path)
     result = _empty_keyword_buckets()
@@ -227,10 +224,10 @@ def find_tagged_images(
     """
     Return the subset of *image_paths* that already carry meaningful metadata.
 
-    An image counts as tagged if either it or its XMP sidecar has any of the indicator
-    tags populated (keywords, hierarchical keywords, description, or title). The check
-    batches all target files into a single exiftool call and maps the result blocks back
-    to source images, reducing the IPC cost from O(N) round-trips to O(1).
+    An image counts as tagged if either it or its XMP sidecar has any of the indicator tags
+    populated (keywords, hierarchical keywords, description, or title). The check batches all target
+    files into a single exiftool call and maps the result blocks back to source images, reducing the
+    IPC cost from O(N) round-trips to O(1).
     """
     paths = list(image_paths)
     if not paths:
@@ -326,10 +323,9 @@ class ImageContext:
     """
     Bundle of metadata read off a photo before the AI call.
 
-    Replaces the older sequence of separate ``read_existing_keywords`` /
-    ``read_location_tags`` / ``read_gps_coordinates`` calls that the pipeline
-    used to issue, which cost three exiftool IPC round-trips per image. The
-    batched read fetches everything we need in one call.
+    Replaces the older sequence of separate ``read_existing_keywords`` / ``read_location_tags`` /
+    ``read_gps_coordinates`` calls that the pipeline used to issue, which cost three exiftool IPC
+    round-trips per image. The batched read fetches everything we need in one call.
     """
 
     existing_keywords: dict[str, list[str]] = field(default_factory=_empty_keyword_buckets)
@@ -369,9 +365,9 @@ def read_image_context(
     """
     Fetch every read-only tag the pipeline needs in a single exiftool call.
 
-    This is the production path used by ``process_photo``. The older single-purpose
-    helpers (``read_existing_keywords``, ``read_location_tags``, ``read_gps_coordinates``)
-    remain available for callers that need only one slice (Tests, for example).
+    This is the production path used by ``process_photo``. The older single-purpose helpers
+    (``read_existing_keywords``, ``read_location_tags``, ``read_gps_coordinates``) remain available
+    for callers that need only one slice (Tests, for example).
     """
     targets = metadata_targets(image_path)
     if not targets:
@@ -426,10 +422,10 @@ def _format_location(location_tags: dict[str, str]) -> str | None:
     """
     Build a "City, Country" hint, falling back to whichever single field is set.
 
-    XMP-photoshop and IPTC each define their own city/country fields, so this
-    helper picks the first present in each category and joins them. Returning
-    both means the model gets the full place name (e.g. "Barcelona, Spain")
-    instead of silently losing the city under the older "first hit wins" logic.
+    XMP-photoshop and IPTC each define their own city/country fields, so this helper picks the first
+    present in each category and joins them. Returning both means the model gets the full place name
+    (e.g. "Barcelona, Spain") instead of silently losing the city under the older "first hit wins"
+    logic.
     """
     city = _first_present(location_tags, "XMP-photoshop:City", "IPTC:City")
     country = _first_present(
@@ -466,10 +462,9 @@ def build_contextual_prompt(  # noqa: PLR0913 - each kwarg renders an independen
     """
     Create a concise user prompt that surfaces existing photo metadata.
 
-    *camera_info* is a mapping of ExifTool tag names (``EXIF:Model`` etc.) to their
-    string values. When present, equipment and capture-date hints are appended so
-    the model can take cues from the gear used (macro lens, telephoto, wide angle)
-    and the time of year.
+    *camera_info* is a mapping of ExifTool tag names (``EXIF:Model`` etc.) to their string values.
+    When present, equipment and capture-date hints are appended so the model can take cues from the
+    gear used (macro lens, telephoto, wide angle) and the time of year.
     """
     metadata_lines: list[str] = []
 
@@ -542,7 +537,6 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
 
     Returns:
         True on success, False on failure.
-
     """
     target_path = image_path.with_suffix(".xmp") if use_sidecar else image_path
     payload = _build_write_payload(keywords, description, title)

@@ -1,15 +1,14 @@
 """
 SQLite-backed cache for vision-language inference results.
 
-Keyed by (image content hash, namespace), where the namespace combines model
-name with a digest of every other input that influences output: base user
-prompt, sampling settings, JPEG quality/dimensions. Reruns with identical
-inputs skip the model call; reruns with any of those changed automatically
-land in a fresh namespace instead of replaying stale results.
+Keyed by (image content hash, namespace), where the namespace combines model name with a digest of
+every other input that influences output: base user prompt, sampling settings, JPEG
+quality/dimensions. Reruns with identical inputs skip the model call; reruns with any of those
+changed automatically land in a fresh namespace instead of replaying stale results.
 
-Persistence is a single SQLite file. SQLite handles atomicity and crash safety
-for us, so the only synchronization concern is the in-process lock that guards
-the shared sqlite3 Connection across worker threads.
+Persistence is a single SQLite file. SQLite handles atomicity and crash safety for us, so the only
+synchronization concern is the in-process lock that guards the shared sqlite3 Connection across
+worker threads.
 """
 
 import hashlib
@@ -57,13 +56,13 @@ def build_cache_namespace(  # noqa: PLR0913 - each kwarg is a distinct input to 
     """
     Combine *model_name* with a digest of every other inference input.
 
-    The returned string is suitable as ``model_name`` for :class:`InferenceCache`.
-    Two runs that match on every argument share cache entries; if any of them
-    differs the digest changes and the cache treats them as separate namespaces.
+    The returned string is suitable as ``model_name`` for :class:`InferenceCache`. Two runs that
+    match on every argument share cache entries; if any of them differs the digest changes and the
+    cache treats them as separate namespaces.
 
-    The system prompt is intentionally NOT folded in: it ships with the code, so
-    a different system prompt means a new release, which is the right moment for
-    a stale cache to be re-validated by the user anyway.
+    The system prompt is intentionally NOT folded in: it ships with the code, so a different system
+    prompt means a new release, which is the right moment for a stale cache to be re-validated by
+    the user anyway.
     """
     h = hashlib.blake2b(digest_size=_CONFIG_DIGEST_BYTES)
     payload = (
@@ -181,10 +180,10 @@ class InferenceCache:
 
     def close(self) -> None:
         """
-        Close the underlying connection. Safe to call multiple times.
+        Close the underlying connection; safe to call multiple times.
 
-        Storage errors during close are logged and swallowed so that the close
-        path can never mask the run's actual exit reason.
+        Storage errors during close are logged and swallowed so that the close path can never mask
+        the run's actual exit reason.
         """
         with self._lock:
             try:

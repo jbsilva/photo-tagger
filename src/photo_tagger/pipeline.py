@@ -57,10 +57,10 @@ class ImageOutcome:
     """
     Per-image result the pipeline streams to consumers via ``on_image_result``.
 
-    Carries the AI fields (or what the cache replayed) plus the success bit and
-    a ``from_cache`` flag. The CLI uses this to emit one NDJSON line per photo
-    when ``--json`` is set, so downstream tools can act on each result as soon
-    as it lands instead of waiting for the BatchTotals summary at the end.
+    Carries the AI fields (or what the cache replayed) plus the success bit and a ``from_cache``
+    flag. The CLI uses this to emit one NDJSON line per photo when ``--json`` is set, so downstream
+    tools can act on each result as soon as it lands instead of waiting for the BatchTotals summary
+    at the end.
     """
 
     file: Path
@@ -133,8 +133,8 @@ class _BatchContext:
     """
     Shared state threaded through every function in a single run_batch call.
 
-    Bundles the agent, options, callbacks, and accumulator so individual
-    functions don't need 10+ keyword arguments each.
+    Bundles the agent, options, callbacks, and accumulator so individual functions don't need 10+
+    keyword arguments each.
     """
 
     agent: Agent[None, GeneratedMetadata]
@@ -154,9 +154,9 @@ def _cache_lookup(
     """
     Look up *image_path* in *cache*; return ``(cache_key, hit_or_none)``.
 
-    A failure to hash the source file or read from the cache is logged and
-    treated as a miss, never raised. ``cache_key`` is ``None`` when hashing
-    failed, signaling the caller to skip ``put`` as well.
+    A failure to hash the source file or read from the cache is logged and treated as a miss, never
+    raised. ``cache_key`` is ``None`` when hashing failed, signaling the caller to skip ``put`` as
+    well.
     """
     try:
         cache_key = hash_image_file(image_path)
@@ -194,13 +194,13 @@ def _resolve_inference(
     """
     Return ``(inference, from_cache)`` for *image_path*.
 
-    Hits the on-disk cache when one is provided and the photo's content hash
-    matches a prior entry recorded under the same namespace. On miss, prepares
-    the JPEG bytes, calls the model, and writes the result back to the cache.
+    Hits the on-disk cache when one is provided and the photo's content hash matches a prior entry
+    recorded under the same namespace. On miss, prepares the JPEG bytes, calls the model, and writes
+    the result back to the cache.
 
-    Cache I/O failures are logged at warning level but never raised: a broken
-    SQLite file or full disk degrades the run to "no cache" without aborting
-    photos that the model would otherwise process successfully.
+    Cache I/O failures are logged at warning level but never raised: a broken SQLite file or full
+    disk degrades the run to "no cache" without aborting photos that the model would otherwise
+    process successfully.
     """
     cache_key: str | None = None
     if ctx.cache is not None:
@@ -254,7 +254,6 @@ def process_photo(
 
     Returns:
         True if every step succeeded, False if metadata writing failed.
-
     """
     logger.info("processing_photo")
     options = ctx.options
@@ -448,10 +447,9 @@ def _run_pass_serial(
     """
     Run *image_files* one after another in the calling thread.
 
-    A ``KeyboardInterrupt`` raised between photos stops the pass and returns
-    ``(successes, still-pending, interrupted=True)`` so the caller can still
-    emit a BatchTotals + summary file. Photos that were not yet attempted land
-    in the failed list so they show up in the summary too.
+    A ``KeyboardInterrupt`` raised between photos stops the pass and returns ``(successes, still-
+    pending, interrupted=True)`` so the caller can still emit a BatchTotals + summary file. Photos
+    that were not yet attempted land in the failed list so they show up in the summary too.
     """
     total = len(image_files)
     successes = 0
@@ -495,16 +493,15 @@ def _run_pass_concurrent(
     workers: int,
 ) -> tuple[int, list[Path], bool]:
     """
-    Run *image_files* across a thread pool. Each task gets its own ExifToolHelper.
+    Run *image_files* across a thread pool.
 
-    pyexiftool's -stay_open subprocess uses one stdin/stdout pipe per helper, so a
-    helper cannot be shared across threads safely. Each task receives et=None and
-    process_photo opens a short-lived helper for the duration of one photo.
+    Each task gets its own ExifToolHelper.     pyexiftool's -stay_open subprocess uses one
+    stdin/stdout pipe per helper, so a     helper cannot be shared across threads safely. Each task
+    receives et=None and     process_photo opens a short-lived helper for the duration of one photo.
 
-    A ``KeyboardInterrupt`` during the as_completed loop cancels pending futures
-    and returns ``(successes, still-pending, interrupted=True)``. Already in-flight
-    workers cannot be interrupted from the outside, so this is a best-effort
-    quick stop rather than an instant abort.
+    A ``KeyboardInterrupt`` during the as_completed loop cancels pending futures and returns
+    ``(successes, still-pending, interrupted=True)``. Already in-flight workers cannot be
+    interrupted from the outside, so this is a best-effort quick stop rather than an instant abort.
     """
     total = len(image_files)
     successes = 0
@@ -572,11 +569,10 @@ def _run_pass(
     """
     Run a single pass (initial or retry) over the batch.
 
-    Returns ``(success_count, still_failing, interrupted)``. The first pass logs
-    failures with ``file_queued_for_retry``; the retry pass logs them with
-    ``file_failed_after_retry``. The interrupted flag is True if a Ctrl-C caused
-    the pass to abort early; the caller uses it to skip the retry pass and to
-    mark the run as a partial completion.
+    Returns ``(success_count, still_failing, interrupted)``. The first pass logs failures with
+    ``file_queued_for_retry``; the retry pass logs them with ``file_failed_after_retry``. The
+    interrupted flag is True if a Ctrl-C caused the pass to abort early; the caller uses it to skip
+    the retry pass and to mark the run as a partial completion.
     """
     if not image_files:
         return 0, [], False

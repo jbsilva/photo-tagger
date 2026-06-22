@@ -54,7 +54,7 @@ def test_prepare_image_for_agent_returns_jpeg_binary(tmp_path: Path) -> None:
 
 
 def test_prepare_image_for_agent_resizes_when_max_size_smaller(tmp_path: Path) -> None:
-    """thumbnail() shrinks the image when max_size is below either dimension."""
+    """``thumbnail()`` shrinks the image when ``max_size`` is below either dimension."""
     src = _save_png(tmp_path / "big.png", size=(64, 32))
     out = prepare_image_for_agent(src, max_size=_RESIZE_TARGET)
     decoded = Image.open(BytesIO(out.data))

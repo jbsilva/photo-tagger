@@ -66,9 +66,9 @@ def _coerce_field(annotation: object, value: object) -> object:
     """
     Convert a raw TOML value to the type required by *annotation*.
 
-    TOML only knows strings, ints, floats, bools, datetimes, arrays, and tables.
-    Dataclass fields typed as ``Path`` or ``Path | None`` therefore arrive as plain strings and must
-    be wrapped explicitly.
+    TOML only knows strings, ints, floats, bools, datetimes, arrays, and tables. Dataclass fields
+    typed as ``Path`` or ``Path | None`` therefore arrive as plain strings and must be wrapped
+    explicitly.
     """
     if get_origin(annotation) is Annotated:
         annotation = get_args(annotation)[0]

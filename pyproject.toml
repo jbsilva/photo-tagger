@@ -83,6 +83,7 @@ select = ["ALL"]
 ignore = [
     "D203", # one-blank-line-before-class
     "D212", # multi-line-summary-first-line
+    "D413", # blank-line-after-last-section
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -106,6 +107,16 @@ line-ending = "lf"
 combine-as-imports = true
 force-wrap-aliases = true
 lines-after-imports = 2
+
+[tool.docformatter]
+# Reflow docstrings to the project's 100-column width. `pre-summary-newline` keeps the summary on the
+# second line to match the active D213 (the D212 alternative is ignored above). The pre-commit hook
+# passes `--in-place`; a bare `docformatter src` only prints a diff. A couple of files are excluded
+# from the hook (see .pre-commit-config.yaml for which and why).
+recursive = true
+wrap-summaries = 100
+wrap-descriptions = 100
+pre-summary-newline = true
 
 [tool.zuban]
 strict = true

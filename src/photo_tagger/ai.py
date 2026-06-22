@@ -125,9 +125,9 @@ def validate_ollama_model(api_base_url: str, model_name: str, api_key: str | Non
     """
     Fail fast when Ollama cannot resolve the requested model name.
 
-    Ollama exposes ``/api/tags`` (not ``/v1/models``) so we strip a trailing ``/v1`` from
-    the configured OpenAI-compatible URL before querying. Matching is exact against the
-    ``name`` field, which on Ollama already includes the ``:tag`` suffix where present.
+    Ollama exposes ``/api/tags`` (not ``/v1/models``) so we strip a trailing ``/v1`` from the
+    configured OpenAI-compatible URL before querying. Matching is exact against the ``name`` field,
+    which on Ollama already includes the ``:tag`` suffix where present.
     """
     base = api_base_url.rstrip("/").removesuffix("/v1").rstrip("/")
     url = base + "/api/tags"
@@ -232,7 +232,6 @@ def analyze_image_with_ai(  # noqa: PLR0913 - each kwarg is a distinct sampling 
     Returns:
         :class:`InferenceResult` carrying the model output plus per-call token usage and
         wall-clock seconds, so the pipeline can surface aggregate cost in the batch summary.
-
     """
     logger.info("analyzing_image_with_ai")
     started = time.perf_counter()

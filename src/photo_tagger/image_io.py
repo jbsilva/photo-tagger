@@ -45,9 +45,9 @@ def _open_image(image_path: Path) -> Image.Image:
     """
     Open an image with PIL, using rawpy unless the suffix is known non-RAW.
 
-    Returns a fully-loaded, EXIF-rotated, RGB-friendly image. The underlying file
-    handle is closed before this function returns, so the caller can operate on
-    the result without holding the source file open.
+    Returns a fully-loaded, EXIF-rotated, RGB-friendly image. The underlying file handle is closed
+    before this function returns, so the caller can operate on the result without holding the source
+    file open.
     """
     suffix = image_path.suffix.lower()
     if suffix in _NON_RAW_EXTS:
@@ -102,7 +102,6 @@ def prepare_image_for_agent(
 
     Returns:
         BinaryContent wrapping the in-memory JPEG bytes.
-
     """
     try:
         img = _flatten_alpha(_open_image(image_path))

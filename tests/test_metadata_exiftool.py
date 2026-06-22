@@ -1,8 +1,8 @@
 """
 Integration-ish tests for metadata reads and writes via a real exiftool binary.
 
-The functions here invoke exiftool through pyexiftool, so they need the binary
-on PATH. They write to real (small) JPEG files in a tmp directory.
+The functions here invoke exiftool through pyexiftool, so they need the binary on PATH. They write
+to real (small) JPEG files in a tmp directory.
 """
 
 import shutil

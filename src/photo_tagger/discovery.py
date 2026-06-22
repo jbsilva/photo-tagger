@@ -26,7 +26,6 @@ def parse_extensions(image_extensions: str) -> set[str]:
     Examples:
         >>> sorted(parse_extensions("cr3, jpg ,PNG"))
         ['.PNG', '.cr3', '.jpg']
-
     """
     return {
         f".{ext.strip().lstrip('.')}"
@@ -44,10 +43,10 @@ def _iter_directory_matches(
     """
     Yield every file under *directory* whose suffix (casefolded) is in *casefolded_exts*.
 
-    pathlib.Path.glob is case-sensitive on Linux and APFS-case-sensitive volumes, so
-    matching ``--ext cr3`` against ``IMG_0001.CR3`` used to silently return nothing on
-    those filesystems. Walking the directory once and comparing ``suffix.casefold()``
-    gives us the case-insensitive behavior the ``--ext`` help text has always advertised.
+    pathlib.Path.glob is case-sensitive on Linux and APFS-case-sensitive volumes, so matching
+    ``--ext cr3`` against ``IMG_0001.CR3`` used to silently return nothing on those filesystems.
+    Walking the directory once and comparing ``suffix.casefold()`` gives us the case-insensitive
+    behavior the ``--ext`` help text has always advertised.
     """
     iterator = directory.rglob("*") if recursive else directory.iterdir()
     yield from (p for p in iterator if p.is_file() and p.suffix.casefold() in casefolded_exts)
@@ -239,7 +238,6 @@ def apply_date_filter(
 
     Returns:
         Filtered list preserving input order.
-
     """
     if newer_than is None and older_than is None:
         return image_files
@@ -275,9 +273,9 @@ def apply_skip_tagged(
     """
     Drop images that already have keywords, a description, or a title.
 
-    Useful when a folder mixes new shots with photos that have already been processed
-    (by photo-tagger, Lightroom, or by hand) and the user does not want to redo the work.
-    Pass *et* to reuse an already-open ExifToolHelper across the batch.
+    Useful when a folder mixes new shots with photos that have already been processed (by photo-
+    tagger, Lightroom, or by hand) and the user does not want to redo the work. Pass *et* to reuse
+    an already-open ExifToolHelper across the batch.
     """
     if not skip_tagged or not image_files:
         return image_files

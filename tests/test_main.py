@@ -1,10 +1,10 @@
 """
 End-to-end wiring tests for the cyclopts CLI in photo_tagger.main.
 
-The agent (network calls) and pipeline (long-running work) are mocked; the goal is to
-prove that flag values reach the right collaborators with the right shape, and that the
-short-circuit / skip code paths run end to end without raising. Real work is exercised
-elsewhere by the per-module unit tests.
+The agent (network calls) and pipeline (long-running work) are mocked; the goal is to prove that
+flag values reach the right collaborators with the right shape, and that the short-circuit / skip
+code paths run end to end without raising. Real work is exercised elsewhere by the per-module unit
+tests.
 """
 
 import contextlib
@@ -475,7 +475,7 @@ def test_write_summary_file_noop_when_path_is_none(tmp_path: Path) -> None:
 
 
 def test_write_summary_file_noop_when_totals_is_none(tmp_path: Path) -> None:
-    """totals=None is the early-exit path when the batch never ran."""
+    """Totals=None is the early-exit path when the batch never ran."""
     from datetime import UTC, datetime  # noqa: PLC0415
 
     dest = tmp_path / "out.json"

@@ -15,6 +15,19 @@ repos:
     hooks:
       - id: uv-lock
 
+  # Docformatter: format docstrings and make sure we use 100 columns.
+  # See [tool.docformatter] in pyproject.toml. Must run before ruff.
+  # Excluded files:
+  #   - errors.py: blank-line conflict with Ruff
+  #   - test_locking.py: docformatter mistakes the indented triple-quoted docstring
+  #     Drop this exclusion once https://github.com/PyCQA/docformatter/issues/344 is fixed.
+  - repo: https://github.com/PyCQA/docformatter
+    rev: v1.7.8
+    hooks:
+      - id: docformatter
+        args: [--in-place, --config, ./pyproject.toml]
+        exclude: ^(src/photo_tagger/errors\.py|tests/test_locking\.py)$
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.18
     hooks:

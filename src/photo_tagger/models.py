@@ -30,10 +30,10 @@ class GeneratedMetadata(BaseModel):
         """
         Silently truncate over-long keyword lists instead of failing validation.
 
-        Thinking models (e.g. Qwen3) occasionally overshoot the requested cap by a few items.
-        A hard ``max_length`` on the field makes pydantic-ai retry up to 5 times (and the model
-        rarely self-corrects). Truncating here avoids wasting inference budget on retries that will
-        all fail.
+        Thinking models (e.g. Qwen3) occasionally overshoot the requested cap by a few items. A hard
+        ``max_length`` on the field makes pydantic-ai retry up to 5 times (and the model rarely
+        self-corrects). Truncating here avoids wasting inference budget on retries that will all
+        fail.
         """
         return v[:_MAX_KEYWORDS]
 

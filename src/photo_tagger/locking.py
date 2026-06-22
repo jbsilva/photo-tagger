@@ -1,10 +1,10 @@
 """
 Cross-process file lock used to prevent concurrent runs from racing on the same outputs.
 
-Uses the ``filelock`` library for cross-platform support (POSIX + Windows).
-The lock is advisory: it only stops other photo-tagger runs that opt into the same lock file.
-The OS releases the lock automatically when the process exits or the file descriptor is closed, so a
-crashed run does not leave a stale lock behind.
+Uses the ``filelock`` library for cross-platform support (POSIX + Windows). The lock is advisory: it
+only stops other photo-tagger runs that opt into the same lock file. The OS releases the lock
+automatically when the process exits or the file descriptor is closed, so a crashed run does not
+leave a stale lock behind.
 """
 
 import os
@@ -31,9 +31,9 @@ class FileLock(AbstractContextManager["FileLock"]):
     """
     Non-blocking exclusive lock on a sentinel file.
 
-    Use as a context manager. ``__enter__`` raises :class:`LockHeldError` immediately if
-    the lock is already held by another process; the caller is expected to translate
-    that into a CLI-friendly error.
+    Use as a context manager. ``__enter__`` raises :class:`LockHeldError` immediately if the lock is
+    already held by another process; the caller is expected to translate that into a CLI-friendly
+    error.
 
     Delegates to ``filelock.FileLock`` which works on Linux, macOS, and Windows.
     """
@@ -71,6 +71,10 @@ class FileLock(AbstractContextManager["FileLock"]):
         _exc: BaseException | None,
         _tb: TracebackType | None,
     ) -> None:
-        """Release the lock. Safe to call multiple times."""
+        """
+        Release the lock.
+
+        Safe to call multiple times.
+        """
         self._lock.release()
         logger.debug("lock_released", file=str(self._path))

@@ -1,10 +1,9 @@
 """
 Hierarchical-keyword parsing and merging logic.
 
-Lightroom expresses hierarchical keywords as pipe-separated paths ("Animal|Bird|Duck").
-The model emits the inverse, leaf-first form ("Duck<Bird<Animal").
-This module converts between the two and merges fresh AI keywords with whatever already lives on the
-photo.
+Lightroom expresses hierarchical keywords as pipe-separated paths ("Animal|Bird|Duck"). The model
+emits the inverse, leaf-first form ("Duck<Bird<Animal"). This module converts between the two and
+merges fresh AI keywords with whatever already lives on the photo.
 """
 
 from typing import TYPE_CHECKING
@@ -36,7 +35,6 @@ def parse_hierarchical_keyword(keyword: str) -> tuple[str, list[str]]:
         ('Animal|Bird|Duck', ['Animal', 'Bird', 'Duck'])
         >>> parse_hierarchical_keyword("Landscape")
         ('Landscape', ['Landscape'])
-
     """
     keyword = keyword.strip()
     if not keyword:
@@ -63,7 +61,6 @@ def _normalize_chain_parts(parts: Iterable[str]) -> list[str]:
     Examples:
         >>> _normalize_chain_parts([" duck ", "Bird", ""])
         ['Duck', 'Bird']
-
     """
     return [segment.strip().title() for segment in parts if segment and segment.strip()]
 
@@ -94,7 +91,6 @@ def _seed_longest_from_existing(hierarchical_keywords: Iterable[str]) -> dict[st
     Examples:
         >>> _seed_longest_from_existing(["Animal|Bird", "Plant"])
         {'bird': ['Animal', 'Bird']}
-
     """
     registry: dict[str, list[str]] = {}
     for entry in hierarchical_keywords:
@@ -124,7 +120,6 @@ def _process_new_keywords(
 
     Returns:
         Subjects appended during this call, in append order.
-
     """
     added_subjects: list[str] = []
     for keyword in new_keywords:
@@ -167,7 +162,6 @@ def _collect_cumulative_entries(
     Examples:
         >>> collect_cumulative_entries({"duck": ["Animal", "Bird", "Duck"]}, set())
         ['Animal|Bird', 'Animal|Bird|Duck']
-
     """
     additions: list[str] = []
     for canonical_chain in chain_registry.values():
@@ -213,7 +207,6 @@ def merge_keywords(
         ...     ["Seagull<Bird<Animal", "bird"],
         ... )["hierarchical"]
         ['Animal|Bird', 'Animal|Bird|Seagull']
-
     """
     # Copy caller-owned lists so this stays a pure function from the caller's perspective.
     existing_subject = list(existing_kw.get("subject", []))

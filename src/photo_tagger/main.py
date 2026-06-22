@@ -12,7 +12,6 @@ This can be done with ExifTool manually as well:
 Requirements:
  - Exiftool installed and available in PATH.
  - Ollama or LM Studio server running and containing a vision-language model.
-
 """
 
 import contextlib
@@ -408,8 +407,8 @@ class _TextSink(Protocol):
     """
     Minimal text-output interface the NDJSON emitter relies on.
 
-    ``sys.stdout`` and ``io.StringIO`` both satisfy this without any extra glue,
-    so tests can pass a buffer and the production path uses the real stream.
+    ``sys.stdout`` and ``io.StringIO`` both satisfy this without any extra glue, so tests can pass a
+    buffer and the production path uses the real stream.
     """
 
     def write(self, s: str, /) -> int:
@@ -423,9 +422,9 @@ class _NDJSONEmitter:
     """
     Thread-safe ``on_image_result`` callback that writes NDJSON to a stream.
 
-    Workers call this concurrently. The lock prevents two lines being interleaved
-    in stdout under ``--workers > 1``. Each line is a complete JSON object that
-    downstream consumers can parse with one ``json.loads`` per readline.
+    Workers call this concurrently. The lock prevents two lines being interleaved in stdout under
+    ``--workers > 1``. Each line is a complete JSON object that downstream consumers can parse with
+    one ``json.loads`` per readline.
     """
 
     __slots__ = ("_lock", "_stream")
@@ -463,10 +462,9 @@ def _open_cache(path: Path | None, *, namespace: str) -> InferenceCache | None:
     """
     Open the SQLite cache at *path*, or warn and degrade to no-cache on failure.
 
-    Returns ``None`` when *path* is ``None`` or the cache cannot be opened.
-    Cache-open failures (permission denied, corrupt DB, parent dir unwritable)
-    log a warning and let the rest of the run proceed without caching, since
-    losing the cache should never block tagging photos.
+    Returns ``None`` when *path* is ``None`` or the cache cannot be opened. Cache-open failures
+    (permission denied, corrupt DB, parent dir unwritable) log a warning and let the rest of the run
+    proceed without caching, since losing the cache should never block tagging photos.
     """
     if path is None:
         return None
@@ -481,10 +479,9 @@ def _parse_filter_date(value: str | None, *, flag: str) -> datetime | None:
     """
     Parse an ISO 8601 string from *flag* into a timezone-aware datetime, or None.
 
-    A naive timestamp like ``2024-01-01`` is read as **local** time (matching
-    ``git log --since`` and ``find -newer`` conventions). The system local zone
-    is attached, and the value is returned aware so downstream comparisons with
-    UTC mtimes do the right thing.
+    A naive timestamp like ``2024-01-01`` is read as **local** time (matching ``git log --since``
+    and ``find -newer`` conventions). The system local zone is attached, and the value is returned
+    aware so downstream comparisons with UTC mtimes do the right thing.
     """
     if value is None:
         return None
@@ -506,16 +503,15 @@ def _atomic_write_text(target: Path, text: str) -> None:
     """
     Write *text* to *target* via a temp file + rename.
 
-    Avoids leaving a half-written file on disk if the process is killed or the
-    filesystem fills mid-write. The temp file lives in the same directory so
-    the rename is a same-filesystem op, which POSIX guarantees is atomic.
+    Avoids leaving a half-written file on disk if the process is killed or the filesystem fills mid-
+    write. The temp file lives in the same directory so the rename is a same-filesystem op, which
+    POSIX guarantees is atomic.
 
-    Uses ``tempfile.mkstemp`` instead of a PID-based name so the temp path is
-    unpredictable and opened with ``O_EXCL``, preventing symlink-based attacks
-    in shared directories.
+    Uses ``tempfile.mkstemp`` instead of a PID-based name so the temp path is unpredictable and
+    opened with ``O_EXCL``, preventing symlink-based attacks in shared directories.
 
-    Creates the parent directory as needed so callers can point at a fresh
-    location like ``reports/run.json`` without pre-mkdir.
+    Creates the parent directory as needed so callers can point at a fresh location like
+    ``reports/run.json`` without pre-mkdir.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.")
@@ -538,7 +534,11 @@ def _write_summary_file(  # noqa: PLR0913 - distinct optional fields are clearer
     provider_name: str,
     user_prompt_chars: int,
 ) -> None:
-    """Serialize *totals* to *summary_file* as JSON. Errors are logged, never raised."""
+    """
+    Serialize *totals* to *summary_file* as JSON.
+
+    Errors are logged, never raised.
+    """
     if summary_file is None or totals is None:
         return
     payload: dict[str, object] = {
@@ -736,7 +736,6 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
             Pictures/Camera
 
         photo-tagger -i Pictures/Mixed --skip-tagged
-
     """
     setup_logging(
         file_log_level=log.file_log_level,
