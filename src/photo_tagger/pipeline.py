@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from exiftool import ExifToolHelper  # type: ignore[attr-defined]
     from pydantic_ai import Agent
 
+    from photo_tagger.metadata import ImageContext
     from photo_tagger.models import GeneratedMetadata, InferenceResult
 
     OnSuccess = Callable[[Path], None]
@@ -51,6 +52,8 @@ class _InferenceScratch(TypedDict, total=False):
 
     inference: InferenceResult
     from_cache: bool
+    context: ImageContext
+    merged_keywords: KeywordSet
 
 
 @dataclass(slots=True, frozen=True)
@@ -62,6 +65,12 @@ class ImageOutcome:
     flag. The CLI uses this to emit one NDJSON line per photo when ``--json`` is set, so downstream
     tools can act on each result as soon as it lands instead of waiting for the BatchTotals summary
     at the end.
+
+    The trailing fields carry the rest of what ``--csv-file`` reports: the final keywords actually
+    written (``written_keywords`` / ``hierarchical_keywords``), the keywords already on the file,
+    and the camera/location EXIF read as context. They default to empty so a photo that fails before
+    inference still yields a row with whatever was read. ``keywords`` stays the raw AI list (what
+    NDJSON emits); ``written_keywords`` is the merged set that landed on the file.
     """
 
     file: Path
@@ -75,6 +84,12 @@ class ImageOutcome:
     output_tokens: int
     total_tokens: int
     seconds: float
+    written_keywords: list[str] = field(default_factory=list)
+    hierarchical_keywords: list[str] = field(default_factory=list)
+    existing_keywords: list[str] = field(default_factory=list)
+    camera_info: dict[str, str] = field(default_factory=dict)
+    location_tags: dict[str, str] = field(default_factory=dict)
+    gps_position: str | None = None
 
 
 @dataclass(slots=True)
@@ -231,6 +246,31 @@ def _resolve_inference(
     return inference, False
 
 
+def _record_scratch(
+    sink: _InferenceScratch | None,
+    *,
+    context: ImageContext | None = None,
+    inference: InferenceResult | None = None,
+    from_cache: bool = False,
+    merged_keywords: KeywordSet | None = None,
+) -> None:
+    """
+    Write the supplied pieces into the per-call *sink*, a no-op when no sink was given.
+
+    Centralizes the ``outcome_sink is not None`` guard so process_photo records context, inference,
+    and merged keywords as plain one-liners as each becomes available.
+    """
+    if sink is None:
+        return
+    if context is not None:
+        sink["context"] = context
+    if inference is not None:
+        sink["inference"] = inference
+        sink["from_cache"] = from_cache
+    if merged_keywords is not None:
+        sink["merged_keywords"] = merged_keywords
+
+
 def process_photo(
     image_path: Path,
     ctx: _BatchContext,
@@ -267,6 +307,9 @@ def process_photo(
                 "existing_keywords_found",
                 count=len(existing_keywords_full.subject),
             )
+        # Stash the read context early so even a photo that fails during inference still
+        # carries its EXIF/existing-keyword columns into the CSV report.
+        _record_scratch(outcome_sink, context=context)
 
         gps_info = {"position": context.gps_position} if context.gps_position else {}
         contextual_prompt = build_contextual_prompt(
@@ -282,9 +325,7 @@ def process_photo(
             ctx,
             contextual_prompt=contextual_prompt,
         )
-        if outcome_sink is not None:
-            outcome_sink["inference"] = inference
-            outcome_sink["from_cache"] = from_cache
+        _record_scratch(outcome_sink, inference=inference, from_cache=from_cache)
 
         title = inference.title
         description = inference.description
@@ -300,6 +341,7 @@ def process_photo(
 
         base = existing_keywords_full if options.preserve_existing_kw else KeywordSet()
         merged_keywords = merge_keywords(base, keywords)
+        _record_scratch(outcome_sink, merged_keywords=merged_keywords)
 
         if options.dry_run:
             logger.info(
@@ -335,6 +377,8 @@ def _emit_outcome(
     if on_image_result is None:
         return
     inference: InferenceResult | None = scratch.get("inference")
+    context: ImageContext | None = scratch.get("context")
+    merged: KeywordSet | None = scratch.get("merged_keywords")
     outcome = ImageOutcome(
         file=image_file,
         success=success,
@@ -347,6 +391,12 @@ def _emit_outcome(
         output_tokens=inference.output_tokens if inference is not None else 0,
         total_tokens=inference.total_tokens if inference is not None else 0,
         seconds=inference.seconds if inference is not None else 0.0,
+        written_keywords=list(merged.subject) if merged is not None else [],
+        hierarchical_keywords=list(merged.hierarchical) if merged is not None else [],
+        existing_keywords=list(context.existing_keywords.subject) if context is not None else [],
+        camera_info=dict(context.camera_info) if context is not None else {},
+        location_tags=dict(context.location_tags) if context is not None else {},
+        gps_position=context.gps_position if context is not None else None,
     )
     try:
         on_image_result(outcome)

@@ -15,6 +15,7 @@ from photo_tagger.pipeline import (
     ProcessingOptions,
     _BatchContext,
     _emit_outcome,
+    _InferenceScratch,
     _notify_success,
     _UsageAccumulator,
     execute_process,
@@ -742,6 +743,69 @@ def test_emit_outcome_emits_zeros_when_inference_is_absent(tmp_path: Path) -> No
     assert outcome.keywords == []
     assert outcome.input_tokens == 0
     assert outcome.seconds == 0.0
+    # The CSV-report fields fall back to empty too when the scratch is bare.
+    assert outcome.written_keywords == []
+    assert outcome.existing_keywords == []
+    assert outcome.camera_info == {}
+    assert outcome.location_tags == {}
+    assert outcome.gps_position is None
+
+
+def test_emit_outcome_includes_context_and_merged_keywords(tmp_path: Path) -> None:
+    """A populated scratch flows EXIF, existing, and merged keywords into the outcome."""
+    received: list[ImageOutcome] = []
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    scratch: _InferenceScratch = {
+        "inference": InferenceResult(
+            title="T",
+            description="D",
+            keywords=["Beach"],
+            input_tokens=1,
+            output_tokens=2,
+            total_tokens=3,
+            seconds=0.5,
+        ),
+        "from_cache": True,
+        "context": ImageContext(
+            existing_keywords=KeywordSet(subject=["Old"]),
+            location_tags={"XMP-photoshop:City": "Hamburg"},
+            gps_position="53 N, 9 E",
+            camera_info={"EXIF:Model": "Canon EOS R5"},
+        ),
+        "merged_keywords": KeywordSet(subject=["Old", "Beach"], hierarchical=["Nature|Beach"]),
+    }
+
+    _emit_outcome(received.append, image, scratch, success=True, retry=False)
+
+    outcome = received[0]
+    assert outcome.written_keywords == ["Old", "Beach"]
+    assert outcome.hierarchical_keywords == ["Nature|Beach"]
+    assert outcome.existing_keywords == ["Old"]
+    assert outcome.camera_info == {"EXIF:Model": "Canon EOS R5"}
+    assert outcome.location_tags == {"XMP-photoshop:City": "Hamburg"}
+    assert outcome.gps_position == "53 N, 9 E"
+    assert outcome.from_cache is True
+
+
+@pytest.mark.usefixtures("patched_pipeline")
+def test_process_photo_populates_outcome_sink(tmp_path: Path) -> None:
+    """process_photo records context + merged keywords in the scratch for the CSV report."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    rich = ImageContext(
+        existing_keywords=KeywordSet(subject=["Old"]),
+        camera_info={"EXIF:Model": "Canon EOS R5"},
+    )
+    scratch: _InferenceScratch = {}
+    with patch("photo_tagger.pipeline.read_image_context", return_value=rich):
+        process_photo(image, _ctx(), outcome_sink=scratch)
+
+    assert scratch["context"] is rich
+    assert scratch["inference"].title == "Title"
+    merged = scratch["merged_keywords"]
+    assert "Old" in merged.subject
+    assert "Beach" in merged.subject
 
 
 def test_emit_outcome_swallows_callback_errors(tmp_path: Path) -> None:
