@@ -171,6 +171,24 @@ def apply_proposal(item: PhotoItem, proposal: Proposal) -> None:
     item.error = ""
 
 
+def deselect_paths(items: dict[str, PhotoItem], paths: Iterable[Path]) -> int:
+    """
+    Uncheck the items whose path is in *paths*; return how many actually changed.
+
+    This is how the GUI "skips" photos: rather than dropping them from the list like the CLI does,
+    it just deselects them, so the user still sees what was skipped and can re-check any of it.
+    Items already unchecked (or not in the list) are left alone and not counted, so the returned
+    tally is the number of newly-skipped photos.
+    """
+    changed = 0
+    for path in paths:
+        item = items.get(str(path))
+        if item is not None and item.selected:
+            item.selected = False
+            changed += 1
+    return changed
+
+
 @dataclass(slots=True)
 class FolderNode:
     """A folder in the file tree, with its display label, subfolders, and files."""

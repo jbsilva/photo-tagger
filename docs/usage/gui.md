@@ -59,6 +59,21 @@ off the list entirely (rather than just deselect it), select it and click **Remo
 ++delete++ / ++backspace++; **Clear** empties the whole list. The status column shows each photo's
 state: blank (pending), `working...`, `ready`, `saved ✓`, or `failed ✗`.
 
+The **Deselect** row unchecks photos in bulk, mirroring the CLI's skip flags so you do not have to
+hunt through a large list by hand:
+
+- **Already tagged** unchecks every photo that already has a title, description, or keywords (in the
+    image file or its XMP sidecar), set by an earlier run, Lightroom, or another tool. This is the
+    GUI's [`--skip-tagged`](cli-reference.md). It reads the metadata in one pass, so a large folder
+    pauses briefly while it scans.
+- **From file...** lets you pick a plain-text file listing photos to skip, one per line (by bare
+    filename or full path, `#` comments allowed), and unchecks the ones it names. This is the GUI's
+    [`--skip-from`](cli-reference.md), and it pairs with the CLI's `--append-to-skip-file`: point it
+    at the list a CLI run wrote to resume the same work in the window.
+
+Deselecting only unchecks: the photos stay in the list, so you can see what was skipped and re-check
+any of them. The status bar reports how many photos were deselected and how many are still selected.
+
 Selecting a **folder** (rather than a file) shows a **thumbnail grid** of its photos on the right,
 like a contact sheet. Thumbnails load in the background, so a large folder of RAW files stays
 responsive. Click any thumbnail to open that photo's detail (the same as clicking its name in the
@@ -134,8 +149,10 @@ provider, model, URL, and extensions from them. Persisting those in `.photo-tagg
 [Configuration](../getting-started/configuration.md)) means the window opens ready to go.
 
 The form surfaces the most common options. Titles and descriptions are always generated, an ExifTool
-backup is always kept, and inference settings use their defaults. For the full set of flags (custom
-prompts, caching, skip lists, filters, sampling, logging), use the [CLI](cli-reference.md).
+backup is always kept, and inference settings use their defaults. Skip lists are supported through
+the **Deselect** buttons (see [Choose what to process](#2-choose-what-to-process)). For the full set
+of flags (custom prompts, caching, date-range filters, sampling, logging), use the
+[CLI](cli-reference.md).
 
 ## Limitations
 

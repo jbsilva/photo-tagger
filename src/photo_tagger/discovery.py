@@ -162,24 +162,40 @@ def _split_skip_keys(skip_entries: set[str]) -> tuple[set[str], set[str]]:
     return name_keys, path_keys
 
 
+def skip_list_matches(image_files: list[Path], skip_entries: set[str]) -> set[Path]:
+    """
+    Return the images in *image_files* named by *skip_entries*.
+
+    An entry matches either by bare filename or by full path, both compared case-insensitively (the
+    rule the CLI's ``--skip-from`` uses). Shared by the CLI's list-filtering and the GUI's "deselect
+    from a file" action so both honour one rule.
+    """
+    if not skip_entries:
+        return set()
+    name_keys, path_keys = _split_skip_keys(skip_entries)
+    return {
+        path
+        for path in image_files
+        if path.name.casefold() in name_keys or str(path).casefold() in path_keys
+    }
+
+
 def filter_skipped_files(
     image_files: list[Path],
     skip_entries: set[str],
 ) -> tuple[list[Path], int]:
     """Return (kept, skipped_count) after applying the skip list."""
-    if not skip_entries:
+    matched = skip_list_matches(image_files, skip_entries)
+    if not matched:
         return image_files, 0
 
-    name_keys, path_keys = _split_skip_keys(skip_entries)
-    filtered: list[Path] = []
-    skipped = 0
+    kept: list[Path] = []
     for path in image_files:
-        if path.name.casefold() in name_keys or str(path).casefold() in path_keys:
+        if path in matched:
             logger.debug("skipping_file_from_list", file=str(path))
-            skipped += 1
-            continue
-        filtered.append(path)
-    return filtered, skipped
+        else:
+            kept.append(path)
+    return kept, len(matched)
 
 
 def apply_skip_file(image_files: list[Path], skip_file: Path | None) -> list[Path]:
@@ -227,9 +243,9 @@ def apply_date_filter(
     """
     Keep only files whose mtime falls within the (newer_than, older_than) window.
 
-    Both bounds are optional; either, both, or neither may be set. The comparison
-    uses file mtime (which most cameras preserve through copy) because reading
-    EXIF DateTimeOriginal off every image would mean another exiftool pass.
+    Both bounds are optional; either, both, or neither may be set. The comparison uses file mtime
+    (which most cameras preserve through copy) because reading EXIF DateTimeOriginal off every image
+    would mean another exiftool pass.
 
     Args:
         image_files: Files resolved by ``resolve_image_files``.
@@ -299,13 +315,13 @@ def make_skip_list_appender(skip_file: Path | None) -> Callable[[Path], None] | 
     """
     Build a callback that appends a filename to *skip_file* on each successful process.
 
-    Existing entries are preserved; duplicates are not appended a second time. The file is
-    created if it does not exist yet, so the same path can also be passed to
-    ``--skip-from`` on later runs to short-circuit work that already completed.
+    Existing entries are preserved; duplicates are not appended a second time. The file is created
+    if it does not exist yet, so the same path can also be passed to ``--skip-from`` on later runs
+    to short-circuit work that already completed.
 
-    The returned callback is safe to invoke from worker threads: a per-callback lock
-    serializes the membership check, the file write, and the seen-set update so we
-    never get interleaved writes or duplicate lines under ``--workers > 1``.
+    The returned callback is safe to invoke from worker threads: a per-callback lock serializes the
+    membership check, the file write, and the seen-set update so we never get interleaved writes or
+    duplicate lines under ``--workers > 1``.
     """
     if skip_file is None:
         return None

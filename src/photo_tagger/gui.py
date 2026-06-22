@@ -60,7 +60,8 @@ from photo_tagger.ai import analyze_image_with_ai, create_agent
 from photo_tagger.cli_options import load_defaults
 from photo_tagger.config import DEFAULT_USER_PROMPT
 from photo_tagger.diagnostics import run_checks
-from photo_tagger.errors import PhotoTaggerError, ProviderError
+from photo_tagger.discovery import load_skip_list, skip_list_matches
+from photo_tagger.errors import DiscoveryError, PhotoTaggerError, ProviderError
 from photo_tagger.gui_state import (
     ADDED,
     DEFAULT_GUI_EXTENSIONS,
@@ -76,6 +77,7 @@ from photo_tagger.gui_state import (
     Proposal,
     apply_proposal,
     build_tree,
+    deselect_paths,
     expand_inputs,
     format_existing_keywords,
     hierarchy_preview,
@@ -92,6 +94,7 @@ from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.metadata import (
     build_contextual_prompt,
+    find_tagged_images,
     read_caption,
     read_image_context,
     read_metadata_sources,
@@ -444,6 +447,7 @@ class MainWindow(QMainWindow):
         options.addWidget(self._extensions, stretch=1)
         options.addWidget(self._recursive)
         box.addLayout(options)
+        box.addLayout(self._build_skip_controls())
 
         self._tree = QTreeWidget()
         self._tree.setHeaderLabels(["Photos", "Status"])
@@ -475,6 +479,31 @@ class MainWindow(QMainWindow):
             ("Add folder...", "Add a folder of photos.", self._choose_folder),
             ("Remove", "Remove the selected folder or photo from the list.", self._remove_selected),
             ("Clear", "Remove every photo from the list.", self._clear),
+        ):
+            button = QPushButton(label)
+            button.setToolTip(tip)
+            button.clicked.connect(slot)
+            controls.addWidget(button)
+        controls.addStretch(1)
+        return controls
+
+    def _build_skip_controls(self) -> QHBoxLayout:
+        """One-click filters that uncheck photos in bulk, mirroring the CLI's skip flags."""
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Deselect"))
+        for label, tip, slot in (
+            (
+                "Already tagged",
+                "Uncheck photos that already have a title, description, or keywords (in the "
+                "image or its XMP sidecar), like the CLI's --skip-tagged.",
+                self._deselect_tagged,
+            ),
+            (
+                "From file...",
+                "Uncheck photos whose filename or full path is listed in a text file (one "
+                "per line), like the CLI's --skip-from.",
+                self._deselect_from_file,
+            ),
         ):
             button = QPushButton(label)
             button.setToolTip(tip)
@@ -705,6 +734,65 @@ class MainWindow(QMainWindow):
         self._show_detail(enabled=False)
         self._right.setCurrentIndex(_PAGE_DETAIL)
         self._status.setText("Drag photos or folders here to begin.")
+
+    def _deselect(self, paths: set[Path]) -> int:
+        """Uncheck the matched photos and refresh the tree; return how many changed."""
+        changed = deselect_paths(self._items, paths)
+        if changed:
+            self._rebuild_tree()
+        return changed
+
+    def _deselect_tagged(self) -> None:
+        """Uncheck photos that already carry a title, description, or keywords."""
+        if not self._items:
+            self._status.setText("Add photos before deselecting.")
+            return
+        # One batched exiftool read, like the CLI's --skip-tagged. A wait cursor covers the
+        # brief pause, the same way opening a photo's metadata does.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            tagged = find_tagged_images([item.path for item in self._items.values()])
+        finally:
+            QApplication.restoreOverrideCursor()
+        changed = self._deselect(tagged)
+        if changed:
+            self._status.setText(
+                f"Deselected {changed} already-tagged photo(s); "
+                f"{self._selected_count()} still selected.",
+            )
+        else:
+            self._status.setText("No checked photos were already tagged.")
+
+    def _deselect_from_file(self) -> None:
+        """Pick a skip-list file and uncheck the photos it names."""
+        if not self._items:
+            self._status.setText("Add photos before deselecting.")
+            return
+        chosen, _ = QFileDialog.getOpenFileName(self, "Choose a skip-list file")
+        if chosen:
+            self._apply_skip_file(Path(chosen))
+
+    def _apply_skip_file(self, skip_file: Path) -> None:
+        """Uncheck every photo whose name or path is listed in *skip_file*."""
+        try:
+            entries = load_skip_list(skip_file)
+        except DiscoveryError as exc:
+            QMessageBox.warning(self, "Could not read the skip list", str(exc))
+            return
+        if not entries:
+            # The file read fine but had nothing usable (empty, blank lines, or only comments).
+            # Say so, rather than the ambiguous "Deselected 0" a real no-match would also show.
+            self._status.setText("That skip list had no usable entries (empty or only comments).")
+            return
+        matched = skip_list_matches([item.path for item in self._items.values()], entries)
+        changed = self._deselect(matched)
+        if changed:
+            self._status.setText(
+                f"Deselected {changed} photo(s) from the skip list; "
+                f"{self._selected_count()} still selected.",
+            )
+        else:
+            self._status.setText("No photos in the list matched the skip list.")
 
     def _rebuild_tree(self) -> None:
         self._syncing = True
@@ -1156,6 +1244,10 @@ class MainWindow(QMainWindow):
                 return item
             iterator += 1
         return None
+
+    def _selected_count(self) -> int:
+        """How many photos are currently checked (used in deselect feedback)."""
+        return sum(1 for item in self._items.values() if item.selected)
 
     def _update_status(self) -> None:
         if self._items:

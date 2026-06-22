@@ -16,6 +16,7 @@ from photo_tagger.gui_state import (
     apply_proposal,
     build_tree,
     descendant_files,
+    deselect_paths,
     expand_inputs,
     format_existing_keywords,
     group_by_parent,
@@ -246,6 +247,28 @@ def test_folder_node_is_constructible() -> None:
     """FolderNode is a plain dataclass usable directly in tests and rendering."""
     node = FolderNode(path=Path("/x"), label="/x", folders=[], files=[Path("/x/a.jpg")])
     assert node.label == "/x"
+
+
+def test_deselect_paths_unchecks_matches_and_counts_only_changes() -> None:
+    """Only listed, still-selected items flip; the count is the newly-skipped tally."""
+    a, b, c = Path("/a.jpg"), Path("/b.jpg"), Path("/c.jpg")
+    items = {str(p): PhotoItem(path=p) for p in (a, b, c)}
+    items[str(b)].selected = False  # already off: it must not count again
+
+    changed = deselect_paths(items, [a, b])
+
+    assert changed == 1
+    assert items[str(a)].selected is False
+    assert items[str(b)].selected is False
+    assert items[str(c)].selected is True  # untouched
+
+
+def test_deselect_paths_ignores_unknown_paths() -> None:
+    """A path not in the list deselects nothing and counts zero."""
+    a = Path("/a.jpg")
+    items = {str(a): PhotoItem(path=a)}
+    assert deselect_paths(items, [Path("/missing.jpg")]) == 0
+    assert items[str(a)].selected is True
 
 
 def test_status_summary_counts_states() -> None:

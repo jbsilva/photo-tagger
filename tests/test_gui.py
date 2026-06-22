@@ -84,6 +84,13 @@ def _select(window: gui.MainWindow, item: QTreeWidgetItem | None) -> None:
     window._tree.setCurrentItem(item)  # noqa: SLF001
 
 
+def _check_state(window: gui.MainWindow, path: Path) -> Qt.CheckState:
+    """Return the rendered checkbox state of *path*'s tree leaf (asserting it exists)."""
+    leaf = window._leaf_for(path)  # noqa: SLF001
+    assert leaf is not None
+    return leaf.checkState(0)
+
+
 # ---------------------------------------------------------------------------
 # Toolbar
 # ---------------------------------------------------------------------------
@@ -255,6 +262,131 @@ def test_clear_empties_everything(window: gui.MainWindow, tmp_path: Path) -> Non
     window._clear()  # noqa: SLF001
     assert window._items == {}  # noqa: SLF001
     assert window._tree.topLevelItemCount() == 0  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# Deselect: skip already-tagged, skip from a list (CLI --skip-tagged/--skip-from)
+# ---------------------------------------------------------------------------
+
+
+def test_deselect_tagged_unchecks_only_tagged_photos(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deselect 'Already tagged' unchecks the photos exiftool reports as tagged."""
+    a = _jpeg(tmp_path / "a.jpg")
+    b = _jpeg(tmp_path / "b.jpg")
+    _add_dir(window, {"a": a, "b": b})
+    # Return the same path objects the window passed in, so the lookup matches regardless
+    # of how tmp_path resolves on the host.
+    monkeypatch.setattr(
+        gui,
+        "find_tagged_images",
+        lambda paths: {p for p in paths if p.name == "a.jpg"},
+    )
+
+    window._deselect_tagged()  # noqa: SLF001
+
+    assert window._items[str(a)].selected is False  # noqa: SLF001
+    assert window._items[str(b)].selected is True  # noqa: SLF001
+    # The rendered tree checkbox, not just the model flag, must reflect the deselection.
+    assert _check_state(window, a) == Qt.CheckState.Unchecked
+    assert _check_state(window, b) == Qt.CheckState.Checked
+    assert "Deselected 1" in window._status.text()  # noqa: SLF001
+
+
+def test_deselect_tagged_reports_when_nothing_is_tagged(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When no checked photo is tagged, the action says so instead of 'Deselected 0'."""
+    a = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": a})
+    monkeypatch.setattr(gui, "find_tagged_images", lambda _paths: set())
+
+    window._deselect_tagged()  # noqa: SLF001
+
+    assert window._items[str(a)].selected is True  # noqa: SLF001
+    assert "No checked photos" in window._status.text()  # noqa: SLF001
+
+
+def test_deselect_tagged_with_no_photos_nags(window: gui.MainWindow) -> None:
+    """With nothing added, the action reports it instead of calling exiftool."""
+    window._deselect_tagged()  # noqa: SLF001
+    assert "Add photos" in window._status.text()  # noqa: SLF001
+
+
+def test_apply_skip_file_unchecks_listed_photos(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """A skip-list file deselects every photo it names, by bare filename or full path."""
+    a = _jpeg(tmp_path / "a.jpg")
+    b = _jpeg(tmp_path / "b.jpg")
+    c = _jpeg(tmp_path / "c.jpg")
+    _add_dir(window, {"a": a, "b": b, "c": c})
+    skip = tmp_path / "skip.txt"
+    skip.write_text(f"a.jpg\n{c}\n", encoding="utf-8")
+
+    window._apply_skip_file(skip)  # noqa: SLF001
+
+    assert window._items[str(a)].selected is False  # noqa: SLF001
+    assert window._items[str(b)].selected is True  # noqa: SLF001
+    assert window._items[str(c)].selected is False  # noqa: SLF001
+    # The rendered tree must repaint: a and c unchecked, b still checked.
+    assert _check_state(window, a) == Qt.CheckState.Unchecked
+    assert _check_state(window, b) == Qt.CheckState.Checked
+    assert _check_state(window, c) == Qt.CheckState.Unchecked
+    assert "Deselected 2" in window._status.text()  # noqa: SLF001
+
+
+def test_apply_skip_file_reports_empty_list(window: gui.MainWindow, tmp_path: Path) -> None:
+    """A comment-only (no usable entries) file says so rather than 'Deselected 0'."""
+    a = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": a})
+    skip = tmp_path / "empty.txt"
+    skip.write_text("# only a comment\n\n", encoding="utf-8")
+
+    window._apply_skip_file(skip)  # noqa: SLF001
+
+    assert window._items[str(a)].selected is True  # noqa: SLF001
+    assert "no usable entries" in window._status.text()  # noqa: SLF001
+
+
+def test_apply_skip_file_reports_no_matches(window: gui.MainWindow, tmp_path: Path) -> None:
+    """A non-empty list that matches nothing reports it, leaving every photo checked."""
+    a = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": a})
+    skip = tmp_path / "skip.txt"
+    skip.write_text("nonexistent.jpg\n", encoding="utf-8")
+
+    window._apply_skip_file(skip)  # noqa: SLF001
+
+    assert window._items[str(a)].selected is True  # noqa: SLF001
+    assert "matched" in window._status.text().lower()  # noqa: SLF001
+
+
+def test_apply_skip_file_warns_on_unreadable_file(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreadable skip list pops a warning and changes no selection."""
+    a = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": a})
+    warned: list[str] = []
+    monkeypatch.setattr(
+        gui,
+        "QMessageBox",
+        SimpleNamespace(warning=lambda *args, **_k: warned.append(str(args[-1]))),
+    )
+
+    window._apply_skip_file(tmp_path / "missing.txt")  # noqa: SLF001
+
+    assert warned  # a warning dialog was shown
+    assert window._items[str(a)].selected is True  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------

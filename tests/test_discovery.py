@@ -18,6 +18,7 @@ from photo_tagger.discovery import (
     parse_extensions,
     resolve_image_batch,
     resolve_image_files,
+    skip_list_matches,
 )
 from photo_tagger.errors import DiscoveryError
 
@@ -159,6 +160,20 @@ def test_filter_skipped_files_passthrough_when_empty(tmp_path: Path) -> None:
     kept, skipped = filter_skipped_files([a], set())
     assert kept == [a]
     assert skipped == 0
+
+
+def test_skip_list_matches_returns_matched_paths(tmp_path: Path) -> None:
+    """The matched set covers both bare-filename and full-path entries, ignoring case."""
+    a = tmp_path / "a.cr3"
+    b = tmp_path / "b.cr3"
+    c = tmp_path / "c.cr3"
+    matched = skip_list_matches([a, b, c], {"A.CR3", str(b)})
+    assert matched == {a, b}
+
+
+def test_skip_list_matches_empty_set_matches_nothing(tmp_path: Path) -> None:
+    """An empty skip set yields an empty match set rather than every file."""
+    assert skip_list_matches([tmp_path / "a.cr3"], set()) == set()
 
 
 def test_apply_skip_file_returns_input_when_no_skip_file(tmp_path: Path) -> None:
