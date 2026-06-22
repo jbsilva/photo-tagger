@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from loguru import logger
-from PySide6.QtCore import QObject, QSize, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
+from PySide6.QtCore import QObject, QSize, Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -89,6 +89,7 @@ from photo_tagger.gui_state import (
     status_summary,
 )
 from photo_tagger.image_io import prepare_image_for_agent
+from photo_tagger.logging_setup import setup_logging
 from photo_tagger.metadata import (
     build_contextual_prompt,
     read_caption,
@@ -107,6 +108,10 @@ if TYPE_CHECKING:
 
 
 _RESOURCES = Path(__file__).parent / "resources"
+# A stable, cwd-independent place for the GUI's logs. The CLI defaults to ./logs, but a windowed
+# app has no meaningful working directory (it may be launched from Finder with cwd "/"), so the
+# logs live under the user's home where the "Open logs" button can always find them.
+_LOG_FOLDER = Path.home() / ".photo-tagger" / "logs"
 _PREVIEW_MAX = 640
 _THUMB_MAX = 200  # pixels for the grid thumbnails the model never sees
 _THUMB_SIZE = 160  # icon box in the grid
@@ -153,6 +158,10 @@ QTreeWidget::item { padding: 2px; }
 QLabel#preview { background: #1f1f24; border-radius: 8px; color: #9a9aa5; }
 QLabel#hint, QLabel#status { color: #8a8a8a; }
 QLabel#section { font-weight: 600; }
+QLabel#error {
+    background: rgba(248, 81, 73, 18%); color: #f85149;
+    border: 1px solid rgba(248, 81, 73, 45%); border-radius: 6px; padding: 8px;
+}
 """
 
 
@@ -323,9 +332,15 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 3)
         layout.addWidget(splitter, stretch=1)
 
+        status_row = QHBoxLayout()
         self._status = QLabel("Drag photos or folders here to begin.")
         self._status.setObjectName("status")
-        layout.addWidget(self._status)
+        logs_button = QPushButton("Open logs")
+        logs_button.setToolTip(f"Open the log folder ({_LOG_FOLDER}) in your file browser.")
+        logs_button.clicked.connect(self._open_logs)
+        status_row.addWidget(self._status, stretch=1)
+        status_row.addWidget(logs_button)
+        layout.addLayout(status_row)
         self._show_detail(enabled=False)
 
     # --- construction ----------------------------------------------------------------------
@@ -361,6 +376,9 @@ class MainWindow(QMainWindow):
         self._test_button = QPushButton("Test connection")
         self._test_button.setToolTip("Check ExifTool and that the provider serves the model.")
         self._test_button.clicked.connect(self._test_connection)
+        self._retry_button = QPushButton("Retry failed")
+        self._retry_button.setToolTip("Re-run the model on every photo that failed to generate.")
+        self._retry_button.clicked.connect(self._retry_failed)
         self._generate_button = QPushButton("Generate selected")
         self._generate_button.setObjectName("primary")
         self._generate_button.setToolTip("Run the model on the checked photos.")
@@ -374,6 +392,7 @@ class MainWindow(QMainWindow):
         row.addWidget(QLabel("URL"))
         row.addWidget(self._url, stretch=1)
         row.addWidget(self._test_button)
+        row.addWidget(self._retry_button)
         row.addWidget(self._generate_button)
         return row
 
@@ -458,6 +477,14 @@ class MainWindow(QMainWindow):
     def _build_detail_panel(self) -> QWidget:
         content = QWidget()
         box = QVBoxLayout(content)
+        # Shown only when the selected photo failed to generate: carries the reason and a hint
+        # that "Open logs" has the full traceback. Hidden for healthy photos.
+        self._error_banner = QLabel()
+        self._error_banner.setObjectName("error")
+        self._error_banner.setWordWrap(True)
+        self._error_banner.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._error_banner.hide()
+        box.addWidget(self._error_banner)
         self._preview = QLabel("Select a photo to preview it.")
         self._preview.setObjectName("preview")
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -804,7 +831,19 @@ class MainWindow(QMainWindow):
         self._description.setPlainText(item.description)
         self._keywords.setPlainText(keywords_to_text(item.keywords))
         self._show_detail(enabled=True)
+        self._update_error_banner(item)
         self._refresh_derived()
+
+    def _update_error_banner(self, item: PhotoItem) -> None:
+        """Show the failure reason for a failed photo; hide the banner otherwise."""
+        if item.status == FAILED and item.error:
+            self._error_banner.setText(
+                f"Generation failed: {item.error}\n"
+                "Use 'Retry failed' to try again, or 'Open logs' for the full traceback.",
+            )
+            self._error_banner.show()
+        else:
+            self._error_banner.hide()
 
     def _ensure_loaded(self, item: PhotoItem) -> None:
         if item.loaded:
@@ -878,6 +917,8 @@ class MainWindow(QMainWindow):
             self._generate_one_button,
         ):
             widget.setEnabled(enabled)
+        if not enabled:
+            self._error_banner.hide()
 
     def _commit_current(self) -> None:
         """Copy the visible editable fields back onto the selected item."""
@@ -940,12 +981,23 @@ class MainWindow(QMainWindow):
             return
         self._run_generation([self._current])
 
+    def _retry_failed(self) -> None:
+        failed = [item for item in self._items.values() if item.status == FAILED]
+        if not failed:
+            self._status.setText("No failed photos to retry.")
+            return
+        self._run_generation(failed)
+
     def _run_generation(self, items: list[PhotoItem]) -> None:
         if self._thread is not None or not items:
             return
         for item in items:
             item.status = WORKING
             self._refresh_status_cell(item)
+        current = self._current
+        if current is not None and current in items:
+            # Clear a stale failure banner the moment its photo is re-queued.
+            self._update_error_banner(current)
         self._set_running(running=True)
         self._status.setText(f"Generating {len(items)} photo(s)...")
 
@@ -980,6 +1032,8 @@ class MainWindow(QMainWindow):
         item.status = FAILED
         item.error = message
         self._refresh_status_cell(item)
+        if self._current is item:
+            self._update_error_banner(item)
         self._update_status()
 
     def _on_generate_finished(self) -> None:
@@ -989,6 +1043,7 @@ class MainWindow(QMainWindow):
     def _set_running(self, *, running: bool) -> None:
         self._generate_button.setEnabled(not running)
         self._generate_one_button.setEnabled(not running)
+        self._retry_button.setEnabled(not running)
         self._test_button.setEnabled(not running)
 
     def _teardown_thread(self) -> None:
@@ -1038,6 +1093,11 @@ class MainWindow(QMainWindow):
         box.setIcon(QMessageBox.Icon.Information if all_ok else QMessageBox.Icon.Warning)
         box.exec()
 
+    def _open_logs(self) -> None:
+        """Reveal the log folder in the OS file browser so the user can read the run logs."""
+        _LOG_FOLDER.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(_LOG_FOLDER)))
+
     # --- helpers ---------------------------------------------------------------------------
 
     def _provider_name(self) -> ProviderName:
@@ -1048,6 +1108,9 @@ class MainWindow(QMainWindow):
         leaf = self._leaf_for(item.path)
         if leaf is not None:
             leaf.setText(1, _STATUS_LABEL[item.status])
+            # Surface the failure reason on hover so it is discoverable straight from the tree.
+            tip = item.error if item.status == FAILED else ""
+            leaf.setToolTip(1, tip)
 
     def _leaf_for(self, path: Path) -> QTreeWidgetItem | None:
         target = str(path)
@@ -1105,7 +1168,9 @@ def _diff_html(existing: KeywordSet, edited_keywords: list[str], *, overwrite: b
 
 def launch(argv: list[str] | None = None) -> int:
     """Create the application, show the main window, and run the event loop."""
-    logger.remove()  # keep the terminal quiet; the window carries the status.
+    # File-only logging: the window carries the live status, so the terminal stays quiet, but a
+    # durable log (with full tracebacks for failed photos) is written for the "Open logs" button.
+    setup_logging(file_log_level="DEBUG", console_log_level="OFF", log_folder=_LOG_FOLDER)
     app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("Photo Tagger")
     app.setApplicationDisplayName("Photo Tagger")

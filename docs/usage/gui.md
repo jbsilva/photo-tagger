@@ -74,7 +74,8 @@ location, GPS, camera). Results stream in and the tree status updates per photo.
 
 To regenerate a single photo without touching your selection, open it and press **Generate this
 photo** in the detail pane: it runs the model on just that photo, regardless of which photos are
-checked (the counterpart to **Save this photo**).
+checked (the counterpart to **Save this photo**). If some photos ended up `failed ✗`, **Retry
+failed** in the toolbar re-runs the model on every failed photo at once.
 
 ### 4. Review, edit, and save
 
@@ -104,6 +105,22 @@ proposal first: the editable fields then start from the existing values.
     The window has no API-key field on purpose. Keys are read from the environment (`OPENAI_API_KEY`,
     `LM_STUDIO_API_KEY`, `OLLAMA_API_KEY`), so a secret never lands in the GUI state. Set the variable
     before launching, for example `OPENAI_API_KEY=sk-... photo-tagger gui`.
+
+### 5. When a photo fails
+
+A photo that the model could not process is marked `failed ✗` in the status column. To find out why:
+
+- **Hover** the `failed ✗` cell for a tooltip with the error, or
+- **open** the photo: a red banner above the preview shows the reason (for example
+    `model unreachable` or a decode error).
+
+Once you have addressed the cause (start the model server, fix the URL, free up memory), click
+**Retry failed** to re-run every failed photo, or open one and press **Generate this photo** to
+retry just that one. A successful retry clears the banner and flips the status back to `ready`.
+
+For the full traceback behind a failure, click **Open logs** (next to the status bar). The GUI
+writes a timestamped, rotating log file to `~/.photo-tagger/logs/` on every run and the button opens
+that folder in your file browser.
 
 ## Configuration
 

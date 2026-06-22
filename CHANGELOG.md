@@ -17,6 +17,12 @@ All notable changes to this project are documented here. The format is based on
   the provider for available models (vision-likely first), and the columns are resizable. The
   command imports PySide6 lazily, so the base CLI never depends on Qt and prints an install hint if
   the extra is missing. Ships with a custom app icon.
+- GUI failure handling and logs. A photo that fails to generate now shows why: hover its `failed ✗`
+  status for the reason, or open it to see a red banner above the preview. **Retry failed** re-runs
+  the model on every failed photo (or use **Generate this photo** to retry just one); a successful
+  retry clears the banner. The GUI now writes a rotating log file to `~/.photo-tagger/logs/` (with
+  full tracebacks) instead of silencing logging, and an **Open logs** button reveals that folder in
+  the file browser.
 - New `openai` provider for any hosted OpenAI-compatible endpoint (the real OpenAI API or a drop-in
   gateway). It fails fast with a clear message when no API key is configured. Set the endpoint with
   `OPENAI_BASE_URL` / `--url` and the key with `OPENAI_API_KEY` / `--api-key`.

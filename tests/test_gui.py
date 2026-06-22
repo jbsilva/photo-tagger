@@ -30,7 +30,7 @@ from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 
 from photo_tagger import gui
 from photo_tagger.errors import ProviderError
-from photo_tagger.gui_state import FAILED, PROVIDER_LABELS, READY, SAVED, Proposal
+from photo_tagger.gui_state import FAILED, PROVIDER_LABELS, READY, SAVED, WORKING, Proposal
 from photo_tagger.metadata import ImageContext
 from photo_tagger.models import InferenceResult, KeywordSet
 from photo_tagger.providers import PROVIDER_NAMES
@@ -302,6 +302,125 @@ def test_save_marks_failed_when_write_fails(
     _select(window, window._leaf_for(img))  # noqa: SLF001
     window._save_current()  # noqa: SLF001
     assert window._items[str(img)].status == FAILED  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# Logs and failure reporting
+# ---------------------------------------------------------------------------
+
+
+def test_file_failure_surfaces_reason_on_the_open_photo(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed photo records its reason, shows the error banner, and tooltips the tree cell."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001 - open the photo
+
+    window._on_file_failed(str(img), "model unreachable")  # noqa: SLF001
+
+    item = window._items[str(img)]  # noqa: SLF001
+    assert item.status == FAILED
+    assert item.error == "model unreachable"
+    assert not window._error_banner.isHidden()  # noqa: SLF001
+    assert "model unreachable" in window._error_banner.text()  # noqa: SLF001
+    leaf = window._leaf_for(img)  # noqa: SLF001
+    assert leaf is not None
+    assert leaf.toolTip(1) == "model unreachable"
+
+
+def test_opening_a_healthy_photo_hides_the_error_banner(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The banner only shows for the failed photo; opening a healthy one clears it."""
+    a = _jpeg(tmp_path / "a.jpg")
+    b = _jpeg(tmp_path / "b.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": a, "b": b})
+    _select(window, window._leaf_for(a))  # noqa: SLF001
+    window._on_file_failed(str(a), "boom")  # noqa: SLF001
+    assert not window._error_banner.isHidden()  # noqa: SLF001
+
+    _select(window, window._leaf_for(b))  # noqa: SLF001 - healthy photo
+    assert window._error_banner.isHidden()  # noqa: SLF001
+
+
+def test_retry_failed_targets_only_failed_photos(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retry failed re-runs every failed photo and leaves the rest alone."""
+    a = _jpeg(tmp_path / "a.jpg")
+    b = _jpeg(tmp_path / "b.jpg")
+    _add_dir(window, {"a": a, "b": b})
+    window._items[str(a)].status = FAILED  # noqa: SLF001
+    window._items[str(b)].status = READY  # noqa: SLF001
+
+    captured: list[list[Path]] = []
+    monkeypatch.setattr(
+        window,
+        "_run_generation",
+        lambda items: captured.append([i.path for i in items]),
+    )
+    window._retry_failed()  # noqa: SLF001
+
+    assert captured == [[a]]
+
+
+def test_retry_failed_with_nothing_failed_nags(window: gui.MainWindow, tmp_path: Path) -> None:
+    """With no failures, Retry failed reports it instead of starting a run."""
+    _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
+    window._retry_failed()  # noqa: SLF001
+    assert window._thread is None  # noqa: SLF001
+    assert "No failed photos" in window._status.text()  # noqa: SLF001
+
+
+def test_retrying_the_open_photo_clears_its_banner(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-queuing the open failed photo hides the stale banner and marks it working."""
+    img = _jpeg(tmp_path / "a.jpg")
+    # Stub the whole generation path so the background worker does no real I/O.
+    _stub_generation(monkeypatch)
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    window._on_file_failed(str(img), "boom")  # noqa: SLF001
+    assert not window._error_banner.isHidden()  # noqa: SLF001
+
+    window._run_generation([window._items[str(img)]])  # noqa: SLF001
+
+    # Checked synchronously, before the worker thread's queued signals are processed: the
+    # pre-run bookkeeping marks the photo working and clears its stale failure banner.
+    assert window._items[str(img)].status == WORKING  # noqa: SLF001
+    assert window._error_banner.isHidden()  # noqa: SLF001
+    window._teardown_thread()  # noqa: SLF001 - join the worker thread the run started
+
+
+def test_open_logs_creates_the_folder_and_reveals_it(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Open logs makes sure the folder exists and hands it to the OS file browser."""
+    folder = tmp_path / "logs"
+    monkeypatch.setattr(gui, "_LOG_FOLDER", folder)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        gui,
+        "QDesktopServices",
+        SimpleNamespace(openUrl=lambda url: opened.append(url.toLocalFile()) or True),
+    )
+    window._open_logs()  # noqa: SLF001
+    assert folder.is_dir()
+    assert opened == [str(folder)]
 
 
 # ---------------------------------------------------------------------------
