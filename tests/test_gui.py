@@ -1,9 +1,14 @@
+# mypy: ignore-errors
 """
 Headless tests for the PySide6 desktop GUI.
 
 Skipped entirely when PySide6 is absent (CLI-only setups and CI, which do not install the optional
 ``[gui]`` extra). When present, Qt's ``offscreen`` platform builds real widgets without a display
 server, so the tree, the detail pane, and the generation worker can be exercised for real.
+
+The ``# mypy: ignore-errors`` header opts this file out of the zuban type check, for the same reason
+gui.py does: PySide6 ships no stubs and is not installed in the lint job, so a strict run would only
+see an unresolved-import error here.
 """
 
 import os
