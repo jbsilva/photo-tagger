@@ -131,11 +131,17 @@ def analyze_image_with_ai(  # noqa: PLR0913 - each kwarg is a distinct sampling 
         title=result.output.title,
         description=result.output.description,
         keywords=result.output.keywords,
+        hierarchies=result.output.hierarchies,
     )
+    # Fold the dedicated hierarchy chains into the keyword list. Downstream (merge_keywords,
+    # the writer, the GUI) already parses the '<' form, so everything else stays unchanged; the
+    # chains just need to reach it. A chain is kept only when not already present verbatim.
+    keywords = list(result.output.keywords)
+    keywords += [chain for chain in result.output.hierarchies if chain not in keywords]
     return InferenceResult(
         title=result.output.title,
         description=result.output.description,
-        keywords=list(result.output.keywords),
+        keywords=keywords,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,

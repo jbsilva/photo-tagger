@@ -52,8 +52,10 @@ flowchart LR
 
 ## Hierarchical keywords
 
-The model emits hierarchical keywords leaf-first, joined with `<`, for example `Duck<Bird<Animal`.
-Lightroom expects the inverse: a root-to-leaf path joined with pipes, `Animal|Bird|Duck`.
+The model returns taxonomy chains in a dedicated `hierarchies` field, leaf-first and joined with
+`<`, for example `Duck<Bird<Animal`. `analyze_image_with_ai()` folds those chains into the keyword
+list, so from here on a hierarchical keyword is just a keyword that contains `<`. Lightroom expects
+the inverse of that leaf-first form: a root-to-leaf path joined with pipes, `Animal|Bird|Duck`.
 `parse_hierarchical_keyword()` does the conversion and also returns each level as a flat keyword:
 
 ```python

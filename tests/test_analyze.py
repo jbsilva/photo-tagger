@@ -134,3 +134,22 @@ def test_analyze_image_with_ai_handles_missing_usage() -> None:
     assert result.input_tokens == 0
     assert result.output_tokens == 0
     assert result.total_tokens == 0
+
+
+def test_analyze_image_with_ai_folds_hierarchies_into_keywords() -> None:
+    """Hierarchy chains from the dedicated field are folded into the returned keyword list."""
+    payload = json.dumps(
+        {
+            "title": "Tabby Cat",
+            "description": "A tabby cat grooms itself on a green blanket.",
+            "keywords": ["Cat", "Grooming"],
+            "hierarchies": ["Domestic Cat<Cat<Mammal<Animal"],
+        },
+    )
+    agent = StubAgent(payload)
+    image_bytes = BinaryContent(data=b"\xff\xd8stubjpeg", media_type="image/jpeg")
+
+    result = analyze_image_with_ai(image_bytes, agent)  # type: ignore[arg-type]
+
+    assert "Cat" in result.keywords
+    assert "Domestic Cat<Cat<Mammal<Animal" in result.keywords

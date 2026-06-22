@@ -96,7 +96,15 @@ and decodes the response into `GeneratedMetadata`, defined in
 
 - `title`: a short title (length-capped).
 - `description`: a short description (length-capped).
-- `keywords`: a list of hierarchical keywords (count-capped).
+- `keywords`: a list of flat keywords (count-capped).
+- `hierarchies`: a separate list of taxonomy chains, written specific-to-general with `<` separators
+    (for example `Golden Eagle<Bird of Prey<Animal`), also count-capped.
+
+The taxonomy lives in its own field because, constrained to the schema, the model otherwise emits
+only flat keywords and the hierarchy is lost. `analyze_image_with_ai()` folds each chain back into
+the keyword list before returning, so the rest of the pipeline sees one keyword list (with `<`
+chains) exactly as it did before. See [Metadata and keywords](metadata.md) for how those chains are
+parsed and written.
 
 If the model returns something that fails schema validation (a malformed payload, an over-long
 field), pydantic-ai retries the call. The number of attempts is controlled by `--retries` (env var

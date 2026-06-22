@@ -43,3 +43,25 @@ def test_generated_metadata_rejects_blank_keyword() -> None:
     """Empty strings inside the keyword list are useless and break downstream merging."""
     with pytest.raises(ValidationError):
         GeneratedMetadata(title="t", description="d", keywords=["ok", ""])
+
+
+def test_generated_metadata_accepts_hierarchies() -> None:
+    """The dedicated hierarchies field holds specific-to-general '<' chains; default is empty."""
+    meta = GeneratedMetadata(
+        title="t",
+        description="d",
+        keywords=["Cat"],
+        hierarchies=["Domestic Cat<Cat<Mammal<Animal"],
+    )
+    assert meta.hierarchies == ["Domestic Cat<Cat<Mammal<Animal"]
+    assert GeneratedMetadata(title="t", description="d", keywords=[]).hierarchies == []
+
+
+def test_generated_metadata_truncates_too_many_hierarchies() -> None:
+    """A runaway hierarchy list is capped rather than rejected, like keywords."""
+    meta = GeneratedMetadata(
+        title="t",
+        description="d",
+        hierarchies=[f"Leaf{i}<Branch<Root" for i in range(40)],
+    )
+    assert len(meta.hierarchies) == 20  # noqa: PLR2004 - matches _MAX_HIERARCHIES

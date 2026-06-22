@@ -27,6 +27,16 @@ All notable changes to this project are documented here. The format is based on
 - CLI option groups moved out of `main.py` into `photo_tagger.cli_options`, separating the CLI
   schema from the orchestration logic.
 
+### Fixed
+
+- Hierarchical keywords are generated reliably again. The model schema now has a dedicated
+  `hierarchies` field, so the vision model is given an explicit place to put taxonomy chains
+  (`Golden Eagle<Bird of Prey<Animal`) instead of being expected to embed `<` inside the flat
+  `keywords` list, which it had stopped doing. The chains are folded back into the keyword list and
+  written to `XMP-lr:HierarchicalSubject` as before. (The CLI's `--cache-file`, if used, is keyed on
+  the user prompt and sampling only, not the system prompt, so delete a stale cache to pick up
+  hierarchies on already-processed photos; the GUI never caches and is unaffected.)
+
 ## [0.2.2] - 2026-05-30
 
 ### Added
