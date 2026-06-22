@@ -62,6 +62,25 @@ _TAGGED_INDICATOR_TAGS: tuple[str, ...] = (
     *_TITLE_TAGS,
 )
 
+# Names of the three metadata fields a caller can ask about individually (vs the coarse
+# "any indicator" check above). Stable identifiers the GUI's field-aware deselect uses.
+FIELD_TITLE = "title"
+FIELD_DESCRIPTION = "description"
+FIELD_KEYWORDS = "keywords"
+
+# The exiftool tags that mark each field as populated. A field counts as present when any of
+# its tags carries content, on either the image or its XMP sidecar.
+_FIELD_PRESENCE_TAGS: dict[str, tuple[str, ...]] = {
+    FIELD_TITLE: _TITLE_TAGS,
+    FIELD_DESCRIPTION: _DESCRIPTION_TAGS,
+    FIELD_KEYWORDS: (
+        TAG_XMP_SUBJECT,
+        TAG_XMP_HIERARCHICAL_SUBJECT,
+        TAG_XMP_WEIGHTED_FLAT_SUBJECT,
+        TAG_IPTC_KEYWORDS,
+    ),
+}
+
 # Tags read from a photo when collecting "existing" keywords, paired with the
 # KeywordSet field they feed. Applied in order, so XMP entries arrive before the
 # IPTC fall-back.
@@ -226,6 +245,17 @@ def _block_has_indicator(blocks: list[dict[str, Any]]) -> bool:
     return False
 
 
+def _build_target_index(paths: list[Path]) -> tuple[list[str], dict[str, Path]]:
+    """Flatten every image's metadata targets and map each target back to its image."""
+    all_targets: list[str] = []
+    target_to_image: dict[str, Path] = {}
+    for image_path in paths:
+        for target in metadata_targets(image_path):
+            all_targets.append(target)
+            target_to_image[target] = image_path
+    return all_targets, target_to_image
+
+
 def find_tagged_images(
     image_paths: Iterable[Path],
     *,
@@ -243,14 +273,7 @@ def find_tagged_images(
     if not paths:
         return set()
 
-    # Build one flat list of targets and remember which image each target belongs to.
-    all_targets: list[str] = []
-    target_to_image: dict[str, Path] = {}
-    for image_path in paths:
-        for target in metadata_targets(image_path):
-            all_targets.append(target)
-            target_to_image[target] = image_path
-
+    all_targets, target_to_image = _build_target_index(paths)
     if not all_targets:
         return set()
 
@@ -271,6 +294,50 @@ def find_tagged_images(
     if tagged:
         logger.debug("tagged_images_detected", count=len(tagged))
     return tagged
+
+
+def find_field_presence(
+    image_paths: Iterable[Path],
+    *,
+    et: ExifToolHelper | None = None,
+) -> dict[Path, set[str]]:
+    """
+    Report which of title/description/keywords each image already carries.
+
+    Returns a mapping from every input path to the set of present field names (:data:`FIELD_TITLE`,
+    :data:`FIELD_DESCRIPTION`, :data:`FIELD_KEYWORDS`); an empty set means none are set. A field
+    counts as present when any of its tags is populated on the image *or* its XMP sidecar, so
+    presence accumulates across both. Like :func:`find_tagged_images`, this is one batched exiftool
+    call rather than one per image.
+
+    This is the per-field counterpart the GUI uses to deselect, say, photos that already have a
+    title and description while leaving keyword-only photos selected.
+    """
+    paths = list(image_paths)
+    presence: dict[Path, set[str]] = {path: set() for path in paths}
+    if not paths:
+        return presence
+
+    all_targets, target_to_image = _build_target_index(paths)
+    if not all_targets:
+        return presence
+
+    all_tags = sorted({tag for tags in _FIELD_PRESENCE_TAGS.values() for tag in tags})
+    try:
+        with managed_helper(et) as helper:
+            blocks = helper.get_tags(files=all_targets, tags=all_tags)
+    except _EXIFTOOL_ERRORS as exc:
+        logger.exception("failed_to_open_exiftool_for_field_presence", error=str(exc))
+        return presence
+
+    for block in blocks:
+        image_path = target_to_image.get(str(block.get("SourceFile", "")))
+        if image_path is None:
+            continue
+        for field_name, tags in _FIELD_PRESENCE_TAGS.items():
+            if any(_value_is_present(block.get(tag)) for tag in tags):
+                presence[image_path].add(field_name)
+    return presence
 
 
 def read_location_tags(

@@ -171,6 +171,30 @@ def apply_proposal(item: PhotoItem, proposal: Proposal) -> None:
     item.error = ""
 
 
+def paths_matching_fields(
+    presence: dict[Path, set[str]],
+    required: set[str],
+    *,
+    match_all: bool,
+) -> set[Path]:
+    """
+    Pick the paths whose present fields satisfy *required*.
+
+    With *match_all* (AND), a path matches only when it has every required field, so ``{title,
+    description}`` selects photos that already carry both. Without it (OR), having any one required
+    field is enough, which is how the broad "any metadata" criterion works. An empty *required* set
+    matches nothing, so a caller cannot accidentally select every photo by passing no fields.
+    """
+    if not required:
+        return set()
+    matched: set[Path] = set()
+    for path, present in presence.items():
+        overlap = present & required
+        if (overlap == required) if match_all else bool(overlap):
+            matched.add(path)
+    return matched
+
+
 def deselect_paths(items: dict[str, PhotoItem], paths: Iterable[Path]) -> int:
     """
     Uncheck the items whose path is in *paths*; return how many actually changed.

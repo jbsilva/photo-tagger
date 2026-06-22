@@ -449,6 +449,7 @@ def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
         preserve_keywords=options.preserve_existing_kw,
         write_description=options.write_description,
         write_title=options.write_title,
+        write_keywords=options.write_keywords,
         backup_xmp=options.backup_xmp,
         use_sidecar=options.use_sidecar,
         dry_run=options.dry_run,

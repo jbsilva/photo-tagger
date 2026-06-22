@@ -31,7 +31,7 @@ from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 from photo_tagger import gui
 from photo_tagger.errors import ProviderError
 from photo_tagger.gui_state import FAILED, PROVIDER_LABELS, READY, SAVED, WORKING, Proposal
-from photo_tagger.metadata import ImageContext
+from photo_tagger.metadata import FIELD_DESCRIPTION, FIELD_KEYWORDS, FIELD_TITLE, ImageContext
 from photo_tagger.models import InferenceResult, KeywordSet
 from photo_tagger.providers import PROVIDER_NAMES
 
@@ -269,24 +269,34 @@ def test_clear_empties_everything(window: gui.MainWindow, tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_deselect_tagged_unchecks_only_tagged_photos(
+def _stub_field_presence(monkeypatch: pytest.MonkeyPatch, by_name: dict[str, set[str]]) -> None:
+    """Patch find_field_presence to report fields per filename, on the passed-in path objects."""
+    monkeypatch.setattr(
+        gui,
+        "find_field_presence",
+        lambda paths: {p: set(by_name.get(p.name, set())) for p in paths},
+    )
+
+
+def test_deselect_tagged_field_aware_keeps_keyword_only_photos(
     window: gui.MainWindow,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Deselect 'Already tagged' unchecks the photos exiftool reports as tagged."""
-    a = _jpeg(tmp_path / "a.jpg")
-    b = _jpeg(tmp_path / "b.jpg")
+    """'Title and description' skips photos that have both, keeping keyword-only ones selected."""
+    a = _jpeg(tmp_path / "a.jpg")  # already has a title and a description
+    b = _jpeg(tmp_path / "b.jpg")  # only keywords -> must stay selected for description generation
     _add_dir(window, {"a": a, "b": b})
-    # Return the same path objects the window passed in, so the lookup matches regardless
-    # of how tmp_path resolves on the host.
-    monkeypatch.setattr(
-        gui,
-        "find_tagged_images",
-        lambda paths: {p for p in paths if p.name == "a.jpg"},
+    _stub_field_presence(
+        monkeypatch,
+        {"a.jpg": {FIELD_TITLE, FIELD_DESCRIPTION}, "b.jpg": {FIELD_KEYWORDS}},
     )
 
-    window._deselect_tagged()  # noqa: SLF001
+    window._deselect_tagged(  # noqa: SLF001
+        frozenset({FIELD_TITLE, FIELD_DESCRIPTION}),
+        match_all=True,
+        phrase="a title and a description",
+    )
 
     assert window._items[str(a)].selected is False  # noqa: SLF001
     assert window._items[str(b)].selected is True  # noqa: SLF001
@@ -294,28 +304,97 @@ def test_deselect_tagged_unchecks_only_tagged_photos(
     assert _check_state(window, a) == Qt.CheckState.Unchecked
     assert _check_state(window, b) == Qt.CheckState.Checked
     assert "Deselected 1" in window._status.text()  # noqa: SLF001
+    assert "a title and a description" in window._status.text()  # noqa: SLF001
 
 
-def test_deselect_tagged_reports_when_nothing_is_tagged(
+def test_deselect_tagged_any_metadata_uses_or_semantics(
     window: gui.MainWindow,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When no checked photo is tagged, the action says so instead of 'Deselected 0'."""
+    """The 'any metadata' criterion deselects a photo that has even one indicator field."""
+    a = _jpeg(tmp_path / "a.jpg")  # keywords only
+    b = _jpeg(tmp_path / "b.jpg")  # nothing
+    _add_dir(window, {"a": a, "b": b})
+    _stub_field_presence(monkeypatch, {"a.jpg": {FIELD_KEYWORDS}})
+
+    window._deselect_tagged(  # noqa: SLF001
+        frozenset({FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS}),
+        match_all=False,
+        phrase="any metadata",
+    )
+
+    assert window._items[str(a)].selected is False  # noqa: SLF001
+    assert window._items[str(b)].selected is True  # noqa: SLF001
+
+
+def test_deselect_tagged_reports_when_none_match(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When no checked photo has the field, the action says so instead of 'Deselected 0'."""
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
-    monkeypatch.setattr(gui, "find_tagged_images", lambda _paths: set())
+    _stub_field_presence(monkeypatch, {})  # no photo has any field
 
-    window._deselect_tagged()  # noqa: SLF001
+    window._deselect_tagged(  # noqa: SLF001
+        frozenset({FIELD_DESCRIPTION}),
+        match_all=True,
+        phrase="a description",
+    )
 
     assert window._items[str(a)].selected is True  # noqa: SLF001
-    assert "No checked photos" in window._status.text()  # noqa: SLF001
+    assert "No checked photos have a description" in window._status.text()  # noqa: SLF001
+
+
+def test_tagged_presets_all_run_without_error(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every menu preset is wired to a real criterion the deselect handler accepts."""
+    a = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": a})
+    _stub_field_presence(monkeypatch, {})
+    for _label, required, match_all, phrase in gui._TAGGED_PRESETS:  # noqa: SLF001
+        window._deselect_tagged(required, match_all=match_all, phrase=phrase)  # noqa: SLF001
+        assert phrase in window._status.text()  # noqa: SLF001
 
 
 def test_deselect_tagged_with_no_photos_nags(window: gui.MainWindow) -> None:
     """With nothing added, the action reports it instead of calling exiftool."""
-    window._deselect_tagged()  # noqa: SLF001
+    window._deselect_tagged(  # noqa: SLF001
+        frozenset({FIELD_TITLE}),
+        match_all=True,
+        phrase="a title",
+    )
     assert "Add photos" in window._status.text()  # noqa: SLF001
+
+
+def test_already_tagged_menu_actions_route_to_each_preset(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each menu entry triggers _deselect_tagged with its own preset (no late-binding bug)."""
+    from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
+
+    # The "Already tagged" button is the only one carrying a popup menu.
+    menu_buttons = [b for b in window.findChildren(QPushButton) if b.menu() is not None]
+    assert len(menu_buttons) == 1
+    actions = menu_buttons[0].menu().actions()
+    assert len(actions) == len(gui._TAGGED_PRESETS)  # noqa: SLF001
+
+    captured: list[tuple[frozenset[str], bool, str]] = []
+    monkeypatch.setattr(
+        window,
+        "_deselect_tagged",
+        lambda req, *, match_all, phrase: captured.append((req, match_all, phrase)),
+    )
+    for action in actions:
+        action.trigger()
+
+    assert captured == [(r, m, p) for _label, r, m, p in gui._TAGGED_PRESETS]  # noqa: SLF001
 
 
 def test_apply_skip_file_unchecks_listed_photos(
@@ -509,6 +588,106 @@ def test_save_marks_failed_when_write_fails(
     _select(window, window._leaf_for(img))  # noqa: SLF001
     window._save_current()  # noqa: SLF001
     assert window._items[str(img)].status == FAILED  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# Per-field write toggles (Title / Description / Keywords)
+# ---------------------------------------------------------------------------
+
+
+def _capture_write(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Patch write_metadata to record its positional keywords and keyword arguments."""
+    captured: dict[str, object] = {}
+
+    def fake_write(path: Path, keywords: object, **kwargs: object) -> bool:
+        captured["path"] = path
+        captured["keywords"] = keywords
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(gui, "write_metadata", fake_write)
+    return captured
+
+
+def test_save_writes_only_title_and_description_when_keywords_unchecked(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchecking 'Keywords' writes title + description and hands write_metadata no keywords."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=["Beach"])
+    captured = _capture_write(monkeypatch)
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    window._title.setText("New Title")  # noqa: SLF001
+    window._description.setPlainText("New description.")  # noqa: SLF001
+    window._keywords.setPlainText("Eagle")  # noqa: SLF001
+    window._write_keywords.setChecked(False)  # noqa: SLF001
+
+    window._save_current()  # noqa: SLF001
+
+    assert captured["title"] == "New Title"
+    assert captured["description"] == "New description."
+    # An empty KeywordSet means write_metadata emits no keyword tags, so existing ones survive.
+    assert captured["keywords"].subject == []  # type: ignore[attr-defined]
+
+
+def test_save_skips_title_when_title_unchecked(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchecking 'Title' nulls the title kwarg while keywords and description still write."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    captured = _capture_write(monkeypatch)
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    window._title.setText("New Title")  # noqa: SLF001
+    window._write_title.setChecked(False)  # noqa: SLF001
+
+    window._save_current()  # noqa: SLF001
+
+    assert captured["title"] is None
+
+
+def test_save_with_no_write_fields_nags_and_writes_nothing(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With every write toggle off, Save reports it and never touches the file."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    wrote: list[int] = []
+    monkeypatch.setattr(gui, "write_metadata", lambda *_a, **_k: wrote.append(1) or True)
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    for checkbox in (window._write_title, window._write_description, window._write_keywords):  # noqa: SLF001
+        checkbox.setChecked(False)
+
+    window._save_current()  # noqa: SLF001
+
+    assert wrote == []
+    assert "at least one field" in window._status.text()  # noqa: SLF001
+
+
+def test_unchecking_write_keywords_disables_overwrite_and_blanks_diff(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Turning keywords off grays out Overwrite and shows the diff is moot."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=["Beach"])
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+
+    window._write_keywords.setChecked(False)  # noqa: SLF001 - fires _on_write_keywords_toggled
+
+    assert not window._overwrite.isEnabled()  # noqa: SLF001
+    assert "keywords will not be written" in window._diff.toPlainText().lower()  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------

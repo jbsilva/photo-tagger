@@ -26,6 +26,7 @@ from photo_tagger.gui_state import (
     keywords_to_text,
     new_paths,
     parse_keyword_lines,
+    paths_matching_fields,
     paths_under,
     rank_vision_models,
     status_summary,
@@ -269,6 +270,34 @@ def test_deselect_paths_ignores_unknown_paths() -> None:
     items = {str(a): PhotoItem(path=a)}
     assert deselect_paths(items, [Path("/missing.jpg")]) == 0
     assert items[str(a)].selected is True
+
+
+def test_paths_matching_fields_all_requires_every_field() -> None:
+    """match_all selects only photos that carry every required field."""
+    a, b, c = Path("/a.jpg"), Path("/b.jpg"), Path("/c.jpg")
+    presence = {a: {"title", "description"}, b: {"keywords"}, c: {"title"}}
+    # A title-and-description criterion skips a, but keeps the keyword-only b and title-only c.
+    matched = paths_matching_fields(presence, {"title", "description"}, match_all=True)
+    assert matched == {a}
+
+
+def test_paths_matching_fields_any_requires_one_field() -> None:
+    """Without match_all, having any one required field is enough (the 'any metadata' rule)."""
+    a, b = Path("/a.jpg"), Path("/b.jpg")
+    presence = {a: {"keywords"}, b: set()}
+    matched = paths_matching_fields(
+        presence,
+        {"title", "description", "keywords"},
+        match_all=False,
+    )
+    assert matched == {a}
+
+
+def test_paths_matching_fields_empty_required_matches_nothing() -> None:
+    """An empty required set never matches, so it cannot deselect every photo by accident."""
+    presence = {Path("/a.jpg"): {"title"}}
+    assert paths_matching_fields(presence, set(), match_all=True) == set()
+    assert paths_matching_fields(presence, set(), match_all=False) == set()
 
 
 def test_status_summary_counts_states() -> None:

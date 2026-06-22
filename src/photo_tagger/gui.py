@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -86,6 +87,7 @@ from photo_tagger.gui_state import (
     keywords_to_text,
     new_paths,
     parse_keyword_lines,
+    paths_matching_fields,
     paths_under,
     rank_vision_models,
     status_summary,
@@ -93,21 +95,23 @@ from photo_tagger.gui_state import (
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.metadata import (
+    FIELD_DESCRIPTION,
+    FIELD_KEYWORDS,
+    FIELD_TITLE,
     build_contextual_prompt,
-    find_tagged_images,
+    find_field_presence,
     read_caption,
     read_image_context,
     read_metadata_sources,
     write_metadata,
 )
+from photo_tagger.models import KeywordSet
 from photo_tagger.providers import PROVIDER_NAMES, ProviderName, get_backend
 
 
 if TYPE_CHECKING:
     # Annotation-only on Python 3.14 (lazy), so no runtime import is needed.
     from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent
-
-    from photo_tagger.models import KeywordSet
 
 
 _RESOURCES = Path(__file__).parent / "resources"
@@ -134,6 +138,29 @@ _STATUS_LABEL = {
     SAVED: "saved ✓",
     FAILED: "failed ✗",
 }
+
+# The field-aware "deselect already-tagged" menu, mirroring the CLI's --skip-tagged but letting
+# the user pick which fields count as "done". Each entry is (menu label, required fields, whether
+# ALL must be present, status-bar phrase). "Any metadata" is the broad OR criterion (the original
+# skip-tagged); the rest require all of their fields, so a keyword-only photo survives "a title and
+# a description" and stays selected for title/description generation.
+_TAGGED_PRESETS: tuple[tuple[str, frozenset[str], bool, str], ...] = (
+    (
+        "Has any metadata",
+        frozenset({FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS}),
+        False,
+        "any metadata",
+    ),
+    ("Has a title", frozenset({FIELD_TITLE}), True, "a title"),
+    ("Has a description", frozenset({FIELD_DESCRIPTION}), True, "a description"),
+    (
+        "Has a title and a description",
+        frozenset({FIELD_TITLE, FIELD_DESCRIPTION}),
+        True,
+        "a title and a description",
+    ),
+    ("Has keywords", frozenset({FIELD_KEYWORDS}), True, "keywords"),
+)
 
 # Theme-agnostic polish: only spacing/rounding plus the brand accent on primary actions and
 # the preview area. Colors for text and input backgrounds are left to the OS palette, so the
@@ -491,24 +518,36 @@ class MainWindow(QMainWindow):
         """One-click filters that uncheck photos in bulk, mirroring the CLI's skip flags."""
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Deselect"))
-        for label, tip, slot in (
-            (
-                "Already tagged",
-                "Uncheck photos that already have a title, description, or keywords (in the "
-                "image or its XMP sidecar), like the CLI's --skip-tagged.",
-                self._deselect_tagged,
-            ),
-            (
-                "From file...",
-                "Uncheck photos whose filename or full path is listed in a text file (one "
-                "per line), like the CLI's --skip-from.",
-                self._deselect_from_file,
-            ),
-        ):
-            button = QPushButton(label)
-            button.setToolTip(tip)
-            button.clicked.connect(slot)
-            controls.addWidget(button)
+
+        tagged = QPushButton("Already tagged")
+        tagged.setToolTip(
+            "Uncheck photos that already have the chosen metadata (in the image or its XMP "
+            "sidecar). Pick which fields count from the menu, e.g. 'a title and a description' "
+            "to skip those while keeping keyword-only photos. Mirrors the CLI's --skip-tagged.",
+        )
+        menu = QMenu(tagged)
+        for text, required, match_all, phrase in _TAGGED_PRESETS:
+            action = menu.addAction(text)
+            action.triggered.connect(
+                lambda _checked=False, req=required, all_=match_all, ph=phrase: (
+                    self._deselect_tagged(
+                        req,
+                        match_all=all_,
+                        phrase=ph,
+                    )
+                ),
+            )
+        tagged.setMenu(menu)
+        controls.addWidget(tagged)
+
+        from_file = QPushButton("From file...")
+        from_file.setToolTip(
+            "Uncheck photos whose filename or full path is listed in a text file (one per "
+            "line), like the CLI's --skip-from.",
+        )
+        from_file.clicked.connect(self._deselect_from_file)
+        controls.addWidget(from_file)
+
         controls.addStretch(1)
         return controls
 
@@ -623,8 +662,34 @@ class MainWindow(QMainWindow):
         form.addRow("Hierarchy", self._hierarchy)
         return form
 
+    def _build_write_fields_row(self) -> QHBoxLayout:
+        """Checkboxes choosing which fields a save writes, like the CLI's --no-write-* flags."""
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Write"))
+        self._write_title = QCheckBox("Title")
+        self._write_title.setToolTip("Write the title. Uncheck to leave the existing title as is.")
+        self._write_description = QCheckBox("Description")
+        self._write_description.setToolTip(
+            "Write the description. Uncheck to leave the existing description as is.",
+        )
+        self._write_keywords = QCheckBox("Keywords")
+        self._write_keywords.setToolTip(
+            "Write keywords. Uncheck to leave existing keywords untouched, e.g. to refresh only "
+            "the title and description.",
+        )
+        for checkbox in (self._write_title, self._write_description, self._write_keywords):
+            checkbox.setChecked(True)
+            row.addWidget(checkbox)
+        # Connect only after setChecked above, so building the row does not fire the handler
+        # before _overwrite (which it toggles) has been created further down.
+        self._write_keywords.toggled.connect(self._on_write_keywords_toggled)
+        row.addStretch(1)
+        return row
+
     def _build_save_row(self) -> QVBoxLayout:
         box = QVBoxLayout()
+        box.addLayout(self._build_write_fields_row())
+
         toggles = QHBoxLayout()
         self._overwrite = QCheckBox("Overwrite existing keywords")
         self._overwrite.setToolTip("Replace existing keywords instead of merging the new ones in.")
@@ -643,7 +708,7 @@ class MainWindow(QMainWindow):
         )
         self._generate_one_button.clicked.connect(self._generate_current)
         self._save_button = QPushButton("Save this photo")
-        self._save_button.setToolTip("Write the title, description, and keywords to this photo.")
+        self._save_button.setToolTip("Write the checked fields (see the Write row) to this photo.")
         self._save_button.clicked.connect(self._save_current)
         self._save_selected_button = QPushButton("Save selected")
         self._save_selected_button.setObjectName("primary")
@@ -742,8 +807,8 @@ class MainWindow(QMainWindow):
             self._rebuild_tree()
         return changed
 
-    def _deselect_tagged(self) -> None:
-        """Uncheck photos that already carry a title, description, or keywords."""
+    def _deselect_tagged(self, required: frozenset[str], *, match_all: bool, phrase: str) -> None:
+        """Uncheck photos that already carry the chosen field(s); *phrase* names the criterion."""
         if not self._items:
             self._status.setText("Add photos before deselecting.")
             return
@@ -751,17 +816,18 @@ class MainWindow(QMainWindow):
         # brief pause, the same way opening a photo's metadata does.
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            tagged = find_tagged_images([item.path for item in self._items.values()])
+            presence = find_field_presence([item.path for item in self._items.values()])
         finally:
             QApplication.restoreOverrideCursor()
-        changed = self._deselect(tagged)
+        matched = paths_matching_fields(presence, set(required), match_all=match_all)
+        changed = self._deselect(matched)
         if changed:
             self._status.setText(
-                f"Deselected {changed} already-tagged photo(s); "
+                f"Deselected {changed} photo(s) with {phrase}; "
                 f"{self._selected_count()} still selected.",
             )
         else:
-            self._status.setText("No checked photos were already tagged.")
+            self._status.setText(f"No checked photos have {phrase}.")
 
     def _deselect_from_file(self) -> None:
         """Pick a skip-list file and uncheck the photos it names."""
@@ -1013,9 +1079,19 @@ class MainWindow(QMainWindow):
         self._preview_cache[key] = pixmap
         return pixmap
 
+    def _on_write_keywords_toggled(self) -> None:
+        """Overwrite-vs-merge only matters when keywords are written; gray it out otherwise."""
+        self._overwrite.setEnabled(self._write_keywords.isChecked())
+        self._refresh_derived()
+
     def _refresh_derived(self) -> None:
         """Recompute the keyword-change diff and hierarchy preview from the edited fields."""
         if self._current is None:
+            return
+        if not self._write_keywords.isChecked():
+            # Keywords are not being written, so the diff and hierarchy do not apply.
+            self._diff.setHtml("(keywords will not be written)")
+            self._hierarchy.setPlainText(_NONE)
             return
         edited = parse_keyword_lines(self._keywords.toPlainText())
         overwrite = self._overwrite.isChecked()
@@ -1047,18 +1123,34 @@ class MainWindow(QMainWindow):
         item.description = self._description.toPlainText().strip()
         item.keywords = parse_keyword_lines(self._keywords.toPlainText())
 
+    def _write_fields_chosen(self) -> bool:
+        """Report whether at least one write toggle (Title/Description/Keywords) is on."""
+        return (
+            self._write_title.isChecked()
+            or self._write_description.isChecked()
+            or self._write_keywords.isChecked()
+        )
+
     def _write_item(self, item: PhotoItem) -> bool:
-        """Write one item's title/description/keywords to disk; return success."""
-        merged = keywords_to_save(
-            item.existing_keywords,
-            item.keywords,
-            overwrite=self._overwrite.isChecked(),
+        """
+        Write the item's checked fields to disk; return success.
+
+        Unchecked fields stay as is.
+        """
+        keywords = (
+            keywords_to_save(
+                item.existing_keywords,
+                item.keywords,
+                overwrite=self._overwrite.isChecked(),
+            )
+            if self._write_keywords.isChecked()
+            else KeywordSet()
         )
         ok = write_metadata(
             item.path,
-            merged,
-            description=item.description or None,
-            title=item.title or None,
+            keywords,
+            description=(item.description or None) if self._write_description.isChecked() else None,
+            title=(item.title or None) if self._write_title.isChecked() else None,
             use_sidecar=not self._embed.isChecked(),
         )
         item.status = SAVED if ok else FAILED
@@ -1068,6 +1160,11 @@ class MainWindow(QMainWindow):
     def _save_current(self) -> None:
         if self._current is None:
             return
+        if not self._write_fields_chosen():
+            self._status.setText(
+                "Pick at least one field to write (Title, Description, or Keywords).",
+            )
+            return
         self._commit_current()
         ok = self._write_item(self._current)
         name = self._current.path.name
@@ -1075,6 +1172,11 @@ class MainWindow(QMainWindow):
         self._update_status()
 
     def _save_selected(self) -> None:
+        if not self._write_fields_chosen():
+            self._status.setText(
+                "Pick at least one field to write (Title, Description, or Keywords).",
+            )
+            return
         self._commit_current()
         targets = [item for item in self._items.values() if item.selected and item.has_proposal]
         if not targets:

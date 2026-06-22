@@ -4,6 +4,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from photo_tagger.metadata import (
+    FIELD_DESCRIPTION,
+    FIELD_KEYWORDS,
+    FIELD_TITLE,
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
     _block_has_indicator,
@@ -12,6 +15,7 @@ from photo_tagger.metadata import (
     _dedup_preserving_first_case,
     _value_is_present,
     build_contextual_prompt,
+    find_field_presence,
     find_tagged_images,
     format_metadata_value,
     managed_helper,
@@ -177,6 +181,101 @@ def test_find_tagged_images_returns_empty_for_empty_input() -> None:
     with patch("photo_tagger.metadata.ExifToolHelper") as helper:
         assert find_tagged_images([]) == set()
     helper.assert_not_called()
+
+
+def test_find_field_presence_classifies_each_field(tmp_path: Path) -> None:
+    """Each image reports exactly the fields whose tags are populated, across its targets."""
+    a = tmp_path / "a.cr3"  # title + description, no keywords
+    b = tmp_path / "b.cr3"  # keywords only
+    c = tmp_path / "c.cr3"  # nothing
+    for path in (a, b, c):
+        path.write_text("x")
+
+    fake_helper = _fake_helper(
+        [
+            {"SourceFile": str(a), "XMP:Title": "T", "XMP:Description": "D"},
+            {"SourceFile": str(b), "IPTC:Keywords": ["Beach"]},
+            {"SourceFile": str(c), "File:FileSize": 100},
+        ],
+    )
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        presence = find_field_presence([a, b, c])
+
+    assert presence[a] == {FIELD_TITLE, FIELD_DESCRIPTION}
+    assert presence[b] == {FIELD_KEYWORDS}
+    assert presence[c] == set()
+
+
+def test_find_field_presence_unions_image_and_sidecar(tmp_path: Path) -> None:
+    """A field on the image and another on the sidecar both count for the same photo."""
+    image = tmp_path / "a.cr3"
+    sidecar = tmp_path / "a.xmp"
+    image.write_text("x")
+    sidecar.write_text("x")
+
+    fake_helper = _fake_helper(
+        [
+            {"SourceFile": str(image), "XMP:Title": "T"},
+            {"SourceFile": str(sidecar), "XMP:Subject": ["Beach"]},
+        ],
+    )
+    with (
+        patch(
+            "photo_tagger.metadata.metadata_targets",
+            side_effect=lambda _p: [str(image), str(sidecar)],
+        ),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        presence = find_field_presence([image])
+
+    assert presence[image] == {FIELD_TITLE, FIELD_KEYWORDS}
+
+
+def test_find_field_presence_empty_input_skips_exiftool() -> None:
+    """An empty input list returns an empty map without invoking exiftool."""
+    with patch("photo_tagger.metadata.ExifToolHelper") as helper:
+        assert find_field_presence([]) == {}
+    helper.assert_not_called()
+
+
+def test_find_field_presence_degrades_on_exiftool_error(tmp_path: Path) -> None:
+    """An exiftool failure yields empty sets for every path rather than raising."""
+    img = tmp_path / "a.cr3"
+    img.write_text("x")
+    helper = _fake_helper()
+    helper.get_tags.side_effect = ValueError("boom")
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert find_field_presence([img]) == {img: set()}
+
+
+def test_find_field_presence_skips_paths_with_no_targets(tmp_path: Path) -> None:
+    """A path with no readable file or sidecar maps to an empty set and never calls exiftool."""
+    ghost = tmp_path / "missing.cr3"  # never created
+    helper = _fake_helper()
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert find_field_presence([ghost]) == {ghost: set()}
+    helper.get_tags.assert_not_called()
+
+
+def test_find_field_presence_ignores_unrecognized_source_file(tmp_path: Path) -> None:
+    """A result block whose SourceFile maps to no input path is ignored, not crashed on."""
+    img = tmp_path / "a.cr3"
+    img.write_text("x")
+    helper = _fake_helper([{"SourceFile": "/elsewhere/other.cr3", "XMP:Title": "T"}])
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        assert find_field_presence([img]) == {img: set()}
 
 
 def test_find_tagged_images_skips_paths_with_no_targets(tmp_path: Path) -> None:

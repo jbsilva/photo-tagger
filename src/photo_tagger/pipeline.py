@@ -99,6 +99,7 @@ class ProcessingOptions:
     preserve_existing_kw: bool = True
     write_description: bool = True
     write_title: bool = True
+    write_keywords: bool = True
     backup_xmp: bool = True
     use_sidecar: bool = True
     dry_run: bool = False
@@ -340,7 +341,9 @@ def process_photo(
             keywords = keywords[: options.max_new_keywords]
 
         base = existing_keywords_full if options.preserve_existing_kw else KeywordSet()
-        merged_keywords = merge_keywords(base, keywords)
+        # An empty set when keywords are disabled, so write_metadata emits no keyword tags and
+        # leaves whatever is already on the file untouched (e.g. refresh only title/description).
+        merged_keywords = merge_keywords(base, keywords) if options.write_keywords else KeywordSet()
         _record_scratch(outcome_sink, merged_keywords=merged_keywords)
 
         if options.dry_run:
@@ -536,11 +539,11 @@ def _run_pass_concurrent(
     workers: int,
 ) -> tuple[int, list[Path], bool]:
     """
-    Run *image_files* across a thread pool.
+    Run *image_files* across a thread pool, giving each task its own ExifToolHelper.
 
-    Each task gets its own ExifToolHelper.     pyexiftool's -stay_open subprocess uses one
-    stdin/stdout pipe per helper, so a     helper cannot be shared across threads safely. Each task
-    receives et=None and     process_photo opens a short-lived helper for the duration of one photo.
+    pyexiftool's -stay_open subprocess uses one stdin/stdout pipe per helper, so a helper cannot be
+    shared across threads safely. Each task receives et=None and process_photo opens a short-lived
+    helper for the duration of one photo.
 
     A ``KeyboardInterrupt`` during the as_completed loop cancels pending futures and returns
     ``(successes, still-pending, interrupted=True)``. Already in-flight workers cannot be
@@ -654,20 +657,20 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
     """
     Run the initial pass plus a single retry pass and return summary totals.
 
-    When workers == 1 a single ExifToolHelper is opened for the whole batch so every
-    metadata read and write reuses one long-running exiftool subprocess. When workers
-    > 1 the tasks run on a ThreadPoolExecutor and each task opens its own short-lived
-    helper (pyexiftool's -stay_open pipe is not safe to share across threads).
+    When workers == 1 a single ExifToolHelper is opened for the whole batch so every metadata read
+    and write reuses one long-running exiftool subprocess. When workers > 1 the tasks run on a
+    ThreadPoolExecutor and each task opens its own short-lived helper (pyexiftool's -stay_open pipe
+    is not safe to share across threads).
 
-    The optional *on_success* callback fires once per image that completes successfully
-    (whether on the first pass or after a retry). It receives the image path. The CLI
-    uses this to append filenames to a skip list as work progresses, so a killed run can
-    be resumed without redoing finished photos.
+    The optional *on_success* callback fires once per image that completes successfully (whether on
+    the first pass or after a retry). It receives the image path. The CLI uses this to append
+    filenames to a skip list as work progresses, so a killed run can be resumed without redoing
+    finished photos.
 
-    The optional *progress* callback fires exactly once per image when the pipeline
-    is finally done with it: either on first-pass success, or on retry-pass success
-    or failure. First-pass failures are silent because they're still pending retry;
-    this guarantees the bar reaches 100% without overshooting on flaky files.
+    The optional *progress* callback fires exactly once per image when the pipeline is finally done
+    with it: either on first-pass success, or on retry-pass success or failure. First-pass failures
+    are silent because they're still pending retry; this guarantees the bar reaches 100% without
+    overshooting on flaky files.
     """
     usage = _UsageAccumulator()
     successful_files: list[Path] = []

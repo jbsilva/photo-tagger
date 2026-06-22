@@ -144,6 +144,18 @@ class OutputConfig:
             help="Also generate and write a title (XMP-dc:Title / IPTC:ObjectName)",
         ),
     ] = True
+    write_keywords: Annotated[
+        bool,
+        Parameter(
+            name=("--write-keywords",),
+            negative="--no-write-keywords",
+            help=(
+                "Write keywords (merged with existing ones per --preserve-keywords). Pass "
+                "--no-write-keywords to leave existing keywords untouched, e.g. to refresh only "
+                "the title and description"
+            ),
+        ),
+    ] = True
     backup_xmp: Annotated[
         bool,
         Parameter(
@@ -340,6 +352,7 @@ def to_processing_options(output: OutputConfig, inference: InferenceConfig) -> P
         preserve_existing_kw=output.preserve_keywords,
         write_description=output.write_description,
         write_title=output.write_title,
+        write_keywords=output.write_keywords,
         backup_xmp=output.backup_xmp,
         use_sidecar=output.use_sidecar,
         dry_run=output.dry_run,

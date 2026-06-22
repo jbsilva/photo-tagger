@@ -87,6 +87,7 @@ sidecar next to each image and leaves the original untouched.
 | `--preserve-keywords` / `--overwrite-keywords`   | preserve (`true`) | `-`     | Merge with existing keywords vs replace them.                                                       |
 | `--write-title` / `--no-write-title`             | write (`true`)    | `-`     | Generate and write a title.                                                                         |
 | `--write-description` / `--no-write-description` | write (`true`)    | `-`     | Generate and write a description.                                                                   |
+| `--write-keywords` / `--no-write-keywords`       | write (`true`)    | `-`     | Write keywords (merged per `--preserve-keywords`); `--no-write-keywords` leaves existing ones.      |
 | `--write-sidecar` / `--embed-in-photo`           | sidecar (`true`)  | `-`     | Write an XMP sidecar (default) vs embed metadata into the image file.                               |
 | `--backup-xmp` / `--no-backup-xmp`               | backup (`true`)   | `-`     | Keep ExifTool's `*_original` backup before writing; `--no-backup-xmp` passes `-overwrite_original`. |
 | `--max-keywords` N                               | none (keep all)   | `-`     | Cap AI-generated keywords kept per photo before merging.                                            |

@@ -62,10 +62,15 @@ state: blank (pending), `working...`, `ready`, `saved ✓`, or `failed ✗`.
 The **Deselect** row unchecks photos in bulk, mirroring the CLI's skip flags so you do not have to
 hunt through a large list by hand:
 
-- **Already tagged** unchecks every photo that already has a title, description, or keywords (in the
-    image file or its XMP sidecar), set by an earlier run, Lightroom, or another tool. This is the
-    GUI's [`--skip-tagged`](cli-reference.md). It reads the metadata in one pass, so a large folder
-    pauses briefly while it scans.
+- **Already tagged** opens a menu of criteria for what counts as "already done", the GUI's
+    field-aware [`--skip-tagged`](cli-reference.md). It reads the metadata in one pass (so a large
+    folder pauses briefly) and unchecks the matching photos:
+    - **Has any metadata** unchecks any photo that has a title, description, *or* keywords (the broad,
+        original behavior).
+    - **Has a title**, **Has a description**, **Has keywords**, or **Has a title and a description**
+        target specific fields. The combined criteria require *all* of their fields, so a photo that
+        only has keywords survives **Has a title and a description** and stays selected, which is what
+        you want when filling in the title and description on photos that are missing them.
 - **From file...** lets you pick a plain-text file listing photos to skip, one per line (by bare
     filename or full path, `#` comments allowed), and unchecks the ones it names. This is the GUI's
     [`--skip-from`](cli-reference.md), and it pairs with the CLI's `--append-to-skip-file`: point it
@@ -111,11 +116,17 @@ Click a photo to open it on the right. The detail pane is **side-by-side** for e
 Keywords support hierarchy with `<` (specific to general), for example `Eagle<Bird<Animal`; the diff
 and hierarchy update live as you edit. Adjust anything, then press **Save this photo** to write just
 the open one, or **Save selected** to write the **checked** photos that have a proposal. The save
-scope matches *Generate selected* (the same checkboxes), so check everything to save everything. By
-default photo-tagger writes an XMP sidecar and merges the keywords with the existing ones, just like
-the CLI. Toggle **Embed in photo** to write into the image instead, or **Overwrite existing
-keywords** to replace rather than merge. You can edit and save a photo even without generating a
-proposal first: the editable fields then start from the existing values.
+scope matches *Generate selected* (the same checkboxes), so check everything to save everything.
+
+The **Write** row chooses which fields a save touches: **Title**, **Description**, and **Keywords**
+(all on by default), the GUI's equivalent of the CLI's `--no-write-title` / `--no-write-description`
+/ `--no-write-keywords`. Uncheck one to leave that field on the photo untouched, for example uncheck
+**Keywords** to refresh only the title and description while keeping a curated Lightroom keyword
+list as is (turning **Keywords** off also disables **Overwrite existing keywords**, since there is
+nothing to write). By default photo-tagger writes an XMP sidecar and merges the keywords with the
+existing ones, just like the CLI. Toggle **Embed in photo** to write into the image instead, or
+**Overwrite existing keywords** to replace rather than merge. You can edit and save a photo even
+without generating a proposal first: the editable fields then start from the existing values.
 
 !!! tip "API keys: field or environment"
 
@@ -148,11 +159,11 @@ The GUI reads the same TOML config file and environment variables as the CLI and
 provider, model, URL, and extensions from them. Persisting those in `.photo-tagger.toml` (see
 [Configuration](../getting-started/configuration.md)) means the window opens ready to go.
 
-The form surfaces the most common options. Titles and descriptions are always generated, an ExifTool
-backup is always kept, and inference settings use their defaults. Skip lists are supported through
-the **Deselect** buttons (see [Choose what to process](#2-choose-what-to-process)). For the full set
-of flags (custom prompts, caching, date-range filters, sampling, logging), use the
-[CLI](cli-reference.md).
+The form surfaces the most common options. Which fields are written is chosen with the **Write**
+checkboxes (see [Review, edit, and save](#4-review-edit-and-save)), skip lists through the
+**Deselect** buttons (see [Choose what to process](#2-choose-what-to-process)). An ExifTool backup
+is always kept and inference settings use their defaults. For the full set of flags (custom prompts,
+caching, date-range filters, sampling, logging), use the [CLI](cli-reference.md).
 
 ## Limitations
 

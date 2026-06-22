@@ -133,6 +133,26 @@ def test_process_photo_skips_optional_fields_when_disabled(
     assert kwargs["title"] is None
 
 
+def test_process_photo_writes_no_keywords_when_disabled(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """write_keywords=False hands write_metadata an empty KeywordSet, keeping existing tags."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    options = ProcessingOptions(write_keywords=False)
+
+    process_photo(image, _ctx(options=options))
+
+    write_call = patched_pipeline["write"].call_args
+    written_keywords = write_call.args[1]
+    assert written_keywords.subject == []
+    assert written_keywords.hierarchical == []
+    # Title and description still flow through, so only keywords are suppressed.
+    assert write_call.kwargs["title"] == "Title"
+    assert write_call.kwargs["description"] == "Description."
+
+
 def test_process_photo_returns_false_when_write_fails(
     tmp_path: Path,
     patched_pipeline: dict[str, Any],
@@ -305,7 +325,7 @@ _CONCURRENT_BATCH_SIZE = 4
 
 
 def test_run_batch_concurrent_processes_all_files(tmp_path: Path) -> None:
-    """Workers>1 dispatches to a thread pool and reports the same totals as serial."""
+    """``workers>1`` dispatches to a thread pool and reports the same totals as serial."""
     files = [tmp_path / f"img{i}.cr3" for i in range(_CONCURRENT_BATCH_SIZE)]
     for f in files:
         f.write_text("x")
@@ -344,7 +364,7 @@ def test_run_batch_concurrent_calls_on_success_per_image(tmp_path: Path) -> None
 
 
 def test_run_batch_progress_callback_fires_per_image(tmp_path: Path) -> None:
-    """Progress=callable fires once per image with (path, ok) for both serial and concurrent."""
+    """``progress=callable`` fires once per image with ``(path, ok)`` for serial and concurrent."""
     image = tmp_path / "img.cr3"
     image.write_text("x")
     received: list[tuple[str, bool]] = []

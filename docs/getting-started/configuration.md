@@ -89,6 +89,7 @@ jpeg_quality = 80        # JPEG quality (1-100) of the image sent to the model.
 preserve_keywords = true  # Merge with existing keywords (false replaces them).
 write_title = true        # Generate and write a title.
 write_description = true  # Generate and write a description.
+write_keywords = true     # Write keywords (false leaves existing keywords untouched).
 backup_xmp = true         # Keep ExifTool's *_original backup before writing.
 use_sidecar = true        # Write an XMP sidecar (false embeds into the image file).
 dry_run = false           # Run the model and log results, but write nothing.
