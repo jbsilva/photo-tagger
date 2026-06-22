@@ -199,6 +199,7 @@ class GenerateWorker(QObject):
         model: str,
         api_base_url: str | None,
         paths: list[Path],
+        api_key: str | None = None,
     ) -> None:
         """Store the run parameters; nothing happens until :meth:`run`."""
         super().__init__()
@@ -206,6 +207,7 @@ class GenerateWorker(QObject):
         self._model = model
         self._api_base_url = api_base_url
         self._paths = paths
+        self._api_key = api_key
 
     def run(self) -> None:
         """Build the agent once, then generate a proposal per photo."""
@@ -214,7 +216,7 @@ class GenerateWorker(QObject):
                 self._provider,
                 self._model,
                 api_base_url=self._api_base_url,
-                api_key=None,
+                api_key=self._api_key,
                 retries=_GENERATE_RETRIES,
             )
         except PhotoTaggerError as exc:
@@ -345,9 +347,15 @@ class MainWindow(QMainWindow):
 
     # --- construction ----------------------------------------------------------------------
 
-    def _build_toolbar(self) -> QHBoxLayout:
+    def _build_toolbar(self) -> QVBoxLayout:
+        # Two rows: connection settings on top, actions below, so neither gets cramped.
+        bar = QVBoxLayout()
+        bar.addLayout(self._build_connection_row())
+        bar.addLayout(self._build_action_row())
+        return bar
+
+    def _build_connection_row(self) -> QHBoxLayout:
         provider = self._defaults.provider
-        row = QHBoxLayout()
 
         self._provider = QComboBox()
         for name in PROVIDER_NAMES:
@@ -373,6 +381,33 @@ class MainWindow(QMainWindow):
         self._url.setPlaceholderText("(provider default URL)")
         self._url.setToolTip("Provider API base URL. Leave blank to use the provider's default.")
 
+        # Pre-filled from a config-file key if one is set, never from an environment variable: an
+        # env key stays in the environment and is resolved at call time, so it never lands in the
+        # widget. A typed key is masked, used only for this session, and never written to disk.
+        self._api_key = QLineEdit(provider.api_key or "")
+        self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._api_key.setClearButtonEnabled(True)
+        self._api_key.setMinimumWidth(170)
+        self._api_key.setPlaceholderText("(uses provider env var)")
+        self._api_key.setToolTip(
+            "API key for the provider. Leave blank to use the provider's environment variable "
+            "(OPENAI_API_KEY, LM_STUDIO_API_KEY, or OLLAMA_API_KEY). Required for OpenAI. A typed "
+            "key is used for this session only and is never written to disk.",
+        )
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Provider"))
+        row.addWidget(self._provider)
+        row.addWidget(QLabel("Model"))
+        row.addWidget(self._model)
+        row.addWidget(refresh)
+        row.addWidget(QLabel("URL"))
+        row.addWidget(self._url, stretch=1)
+        row.addWidget(QLabel("API key"))
+        row.addWidget(self._api_key)
+        return row
+
+    def _build_action_row(self) -> QHBoxLayout:
         self._test_button = QPushButton("Test connection")
         self._test_button.setToolTip("Check ExifTool and that the provider serves the model.")
         self._test_button.clicked.connect(self._test_connection)
@@ -384,15 +419,10 @@ class MainWindow(QMainWindow):
         self._generate_button.setToolTip("Run the model on the checked photos.")
         self._generate_button.clicked.connect(self._generate)
 
-        row.addWidget(QLabel("Provider"))
-        row.addWidget(self._provider)
-        row.addWidget(QLabel("Model"))
-        row.addWidget(self._model)
-        row.addWidget(refresh)
-        row.addWidget(QLabel("URL"))
-        row.addWidget(self._url, stretch=1)
+        row = QHBoxLayout()
         row.addWidget(self._test_button)
         row.addWidget(self._retry_button)
+        row.addStretch(1)
         row.addWidget(self._generate_button)
         return row
 
@@ -1007,6 +1037,7 @@ class MainWindow(QMainWindow):
             self._model.currentText().strip(),
             self._url.text().strip() or None,
             [item.path for item in items],
+            api_key=self._api_key_value(),
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -1061,7 +1092,7 @@ class MainWindow(QMainWindow):
         base_url = self._url.text().strip() or backend.default_base_url
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            models = backend.list_models(base_url, backend.resolve_api_key(None))
+            models = backend.list_models(base_url, backend.resolve_api_key(self._api_key_value()))
         except ProviderError as exc:
             QApplication.restoreOverrideCursor()
             QMessageBox.warning(self, "Could not list models", str(exc))
@@ -1081,7 +1112,7 @@ class MainWindow(QMainWindow):
                 self._provider_name(),
                 self._model.currentText().strip(),
                 api_base_url=self._url.text().strip() or None,
-                api_key=None,
+                api_key=self._api_key_value(),
             )
         finally:
             QApplication.restoreOverrideCursor()
@@ -1103,6 +1134,10 @@ class MainWindow(QMainWindow):
     def _provider_name(self) -> ProviderName:
         """Return the selected provider; the combo carries the internal name as item data."""
         return cast("ProviderName", self._provider.currentData())
+
+    def _api_key_value(self) -> str | None:
+        """Return the typed API key, or None to fall back to the provider's env var/default."""
+        return self._api_key.text().strip() or None
 
     def _refresh_status_cell(self, item: PhotoItem) -> None:
         leaf = self._leaf_for(item.path)

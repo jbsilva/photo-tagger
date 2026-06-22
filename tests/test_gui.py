@@ -124,6 +124,81 @@ def test_refresh_models_populates_combo_vision_first(
 
 
 # ---------------------------------------------------------------------------
+# API key field
+# ---------------------------------------------------------------------------
+
+
+def test_api_key_value_strips_and_blank_is_none(window: gui.MainWindow) -> None:
+    """A typed key is trimmed; a blank field means "use the env var" (None)."""
+    window._api_key.setText("  sk-typed  ")  # noqa: SLF001
+    assert window._api_key_value() == "sk-typed"  # noqa: SLF001
+    window._api_key.setText("   ")  # noqa: SLF001
+    assert window._api_key_value() is None  # noqa: SLF001
+
+
+def test_api_key_field_is_masked(window: gui.MainWindow) -> None:
+    """The key field hides its contents so a shoulder-surfer cannot read it."""
+    from PySide6.QtWidgets import QLineEdit  # noqa: PLC0415
+
+    assert window._api_key.echoMode() == QLineEdit.EchoMode.Password  # noqa: SLF001
+
+
+def test_refresh_models_passes_typed_api_key(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A key typed into the field is handed to the backend's key resolution."""
+    window._api_key.setText("sk-refresh")  # noqa: SLF001
+    seen: dict[str, str | None] = {}
+    fake = SimpleNamespace(
+        default_base_url="http://localhost/v1",
+        resolve_api_key=lambda key: seen.setdefault("key", key),
+        list_models=lambda _base, _key: ["m"],
+    )
+    monkeypatch.setattr(gui, "get_backend", lambda _name: fake)
+    window._refresh_models()  # noqa: SLF001
+    assert seen["key"] == "sk-refresh"
+
+
+def test_worker_passes_typed_api_key_to_create_agent(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The generate worker forwards its api_key to create_agent."""
+    captured: dict[str, object] = {}
+
+    def fake_create_agent(*_a: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        msg = "stop before per-photo work"
+        raise ProviderError(msg)
+
+    monkeypatch.setattr(gui, "create_agent", fake_create_agent)
+    worker = gui.GenerateWorker("openai", "m", None, [Path("/a.jpg")], api_key="sk-worker")
+    worker.file_failed.connect(lambda *_a: None)
+    worker.run()
+    assert captured["api_key"] == "sk-worker"
+
+
+def test_run_generation_builds_worker_with_typed_api_key(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Starting a run hands the typed key to the worker it spawns."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_generation(monkeypatch)  # so the background worker does no real I/O
+    _add_dir(window, {"a": img})
+    window._api_key.setText("sk-run")  # noqa: SLF001
+
+    window._run_generation([window._items[str(img)]])  # noqa: SLF001
+
+    worker = window._worker  # noqa: SLF001
+    assert worker is not None
+    assert worker._api_key == "sk-run"  # noqa: SLF001
+    window._teardown_thread()  # noqa: SLF001 - join the worker thread the run started
+
+
+# ---------------------------------------------------------------------------
 # Tree: nesting, selection, removal
 # ---------------------------------------------------------------------------
 

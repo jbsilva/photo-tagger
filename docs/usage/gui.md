@@ -68,9 +68,11 @@ tree).
 
 Pick a **Provider** (Ollama, LM Studio, or OpenAI) and a **Model**. Press **Refresh** to query the
 provider for the models it currently serves and pick from the dropdown instead of typing; likely
-vision-capable models are listed first. **Generate selected** then runs the model on the checked
-photos on a background thread, building the same contextual prompt as the CLI (existing keywords,
-location, GPS, camera). Results stream in and the tree status updates per photo.
+vision-capable models are listed first. Set a custom **URL** or **API key** in the same toolbar if
+your provider needs them: the key field is masked, and leaving it blank falls back to the provider's
+environment variable. **Generate selected** then runs the model on the checked photos on a
+background thread, building the same contextual prompt as the CLI (existing keywords, location, GPS,
+camera). Results stream in and the tree status updates per photo.
 
 To regenerate a single photo without touching your selection, open it and press **Generate this
 photo** in the detail pane: it runs the model on just that photo, regardless of which photos are
@@ -100,11 +102,14 @@ the CLI. Toggle **Embed in photo** to write into the image instead, or **Overwri
 keywords** to replace rather than merge. You can edit and save a photo even without generating a
 proposal first: the editable fields then start from the existing values.
 
-!!! tip "API keys come from the environment"
+!!! tip "API keys: field or environment"
 
-    The window has no API-key field on purpose. Keys are read from the environment (`OPENAI_API_KEY`,
-    `LM_STUDIO_API_KEY`, `OLLAMA_API_KEY`), so a secret never lands in the GUI state. Set the variable
-    before launching, for example `OPENAI_API_KEY=sk-... photo-tagger gui`.
+    The toolbar has a masked **API key** field. Leave it blank to use the provider's environment
+    variable (`OPENAI_API_KEY`, `LM_STUDIO_API_KEY`, or `OLLAMA_API_KEY`), which keeps the secret out of
+    the app entirely; or type a key to use it for this session only. A typed key is held in memory for
+    the run and is never written to disk. OpenAI requires a key; local Ollama and LM Studio servers
+    usually do not. To set it from the environment instead, launch with, for example,
+    `OPENAI_API_KEY=sk-... photo-tagger gui`.
 
 ### 5. When a photo fails
 

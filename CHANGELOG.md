@@ -23,6 +23,10 @@ All notable changes to this project are documented here. The format is based on
   retry clears the banner. The GUI now writes a rotating log file to `~/.photo-tagger/logs/` (with
   full tracebacks) instead of silencing logging, and an **Open logs** button reveals that folder in
   the file browser.
+- GUI **API key** field. The toolbar now has a masked key field alongside the provider, model, and
+  URL, so a key can be typed straight into the window. Leaving it blank falls back to the provider's
+  environment variable (the previous behavior); a typed key is used for that session only and is
+  never written to disk.
 - New `openai` provider for any hosted OpenAI-compatible endpoint (the real OpenAI API or a drop-in
   gateway). It fails fast with a clear message when no API key is configured. Set the endpoint with
   `OPENAI_BASE_URL` / `--url` and the key with `OPENAI_API_KEY` / `--api-key`.
