@@ -11,12 +11,12 @@ repos:
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.11.17
+    rev: 0.11.23
     hooks:
       - id: uv-lock
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.15
+    rev: v0.15.18
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -36,7 +36,7 @@ repos:
         args: [--py314-plus]
 
   - repo: https://github.com/streetsidesoftware/cspell-cli
-    rev: v10.0.0
+    rev: v10.0.1
     hooks:
       - id: cspell # Spell check changed files
       - id: cspell # Spell check the commit message
@@ -51,7 +51,7 @@ repos:
         always_run: true
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.47.0
+    rev: v1.47.2
     hooks:
       - id: typos
 

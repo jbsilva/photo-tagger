@@ -28,12 +28,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Recognition",
 ]
 dependencies = [
-    "cyclopts>=4.16.1",
-    "filelock>=3.29.1",
+    "cyclopts>=4.18.0",
+    "filelock>=3.29.4",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
     "pillow>=12.2.0",
-    "pydantic-ai>=1.105.0",
+    "pydantic-ai>=1.107.0",
     "pydantic>=2.13.4",
     "pyexiftool>=0.5.6",
     "rawpy>=0.27.0",
@@ -44,15 +44,15 @@ dependencies = [
 dev = [
     "bandit>=1.9.4",
     "pycroscope>=0.4.0",
-    "ruff>=0.15.15",
-    "zuban>=0.8.0",
+    "ruff>=0.15.18",
+    "zuban>=0.8.2",
 ]
 test = [
-    "inline-snapshot>=0.34.0",
+    "inline-snapshot>=0.34.2",
     "pytest-cov>=7.1.0",
     "pytest-random-order>=1.2.0",
     "pytest-xdist[psutil]>=3.8.0",
-    "pytest>=9.0.3",
+    "pytest>=9.1.1",
 ]
 
 [project.urls]
