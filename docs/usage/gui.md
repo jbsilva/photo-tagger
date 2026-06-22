@@ -163,6 +163,21 @@ For the full traceback behind a failure, click **Open logs** (next to the status
 writes a timestamped, rotating log file to `~/.photo-tagger/logs/` on every run and the button opens
 that folder in your file browser.
 
+### Export a CSV report
+
+**Export CSV...** (in the tree controls, next to **Clear**) writes a spreadsheet with **one row per
+photo in the list**, the same report the CLI's [`--csv-file`](cli-reference.md#csv-report) produces.
+Each row gathers everything the GUI knows about a photo: its status, the working
+title/description/keywords (the keywords as a save would write them, honoring the **Overwrite**
+toggle), the title/description/keywords already on the file, the camera/location EXIF read when it
+was generated, and the per-photo token usage and timing. Photos you have not generated yet still get
+a row, with the generated and usage columns left blank.
+
+Any unsaved edits in the open photo are folded into its row first, so the export reflects exactly
+what you see. Pick a destination in the save dialog (a `.csv` suffix is added if you omit one); the
+status bar confirms how many photos were written. This is handy for reviewing a batch in a
+spreadsheet or sharing the results without opening every photo.
+
 ## Configuration
 
 The GUI reads the same TOML config file and environment variables as the CLI and pre-fills the

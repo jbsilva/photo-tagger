@@ -11,10 +11,10 @@ A review-before-write workflow over the same pipeline the CLI uses:
 3. Click a photo to see its preview, its existing title/description/keywords, and the
    proposed values in editable fields, then *Save* writes them with ExifTool.
 
-Requires the optional ``[gui]`` extra (``pip install 'photo-tagger[gui]'``). The
-``photo-tagger gui`` command imports this module lazily, so the base CLI never depends
-on Qt. The Qt-free logic lives in :mod:`photo_tagger.gui_state`; this file is the widget
-and event-loop shell and is excluded from coverage and the static analyzers.
+Requires the optional ``[gui]`` extra (``pip install 'photo-tagger[gui]'``). The ``photo-tagger
+gui`` command imports this module lazily, so the base CLI never depends on Qt. The Qt-free logic
+lives in :mod:`photo_tagger.gui_state`; this file is the widget and event-loop shell and is excluded
+from coverage and the static analyzers.
 """
 
 import html
@@ -60,6 +60,7 @@ from photo_tagger import __version__
 from photo_tagger.ai import analyze_image_with_ai, create_agent
 from photo_tagger.cli_options import load_defaults
 from photo_tagger.config import DEFAULT_USER_PROMPT
+from photo_tagger.csv_report import write_report
 from photo_tagger.diagnostics import run_checks
 from photo_tagger.discovery import load_skip_list, skip_list_matches
 from photo_tagger.errors import DiscoveryError, PhotoTaggerError, ProviderError
@@ -89,6 +90,7 @@ from photo_tagger.gui_state import (
     parse_keyword_lines,
     paths_matching_fields,
     paths_under,
+    photo_item_to_report_row,
     rank_vision_models,
     status_sort_rank,
     status_summary,
@@ -303,6 +305,13 @@ class GenerateWorker(QObject):
             title=inference.title,
             description=inference.description,
             keywords=list(inference.keywords),
+            camera_info=dict(context.camera_info),
+            location_tags=dict(context.location_tags),
+            gps_position=context.gps_position,
+            input_tokens=inference.input_tokens,
+            output_tokens=inference.output_tokens,
+            total_tokens=inference.total_tokens,
+            seconds=inference.seconds,
         )
 
 
@@ -567,6 +576,12 @@ class MainWindow(QMainWindow):
             ("Add folder...", "Add a folder of photos.", self._choose_folder),
             ("Remove", "Remove the selected folder or photo from the list.", self._remove_selected),
             ("Clear", "Remove every photo from the list.", self._clear),
+            (
+                "Export CSV...",
+                "Save a CSV report of every photo: generated and existing metadata, EXIF, and "
+                "token usage.",
+                self._export_csv,
+            ),
         ):
             button = QPushButton(label)
             button.setToolTip(tip)
@@ -920,6 +935,35 @@ class MainWindow(QMainWindow):
             )
         else:
             self._status.setText("No photos in the list matched the skip list.")
+
+    def _export_csv(self) -> None:
+        """Write a CSV report of every photo in the list to a chosen path."""
+        if not self._items:
+            self._status.setText("Add photos before exporting a CSV.")
+            return
+        chosen, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export CSV report",
+            "photo-tagger-report.csv",
+            "CSV files (*.csv)",
+        )
+        if not chosen:
+            return
+        target = Path(chosen)
+        if target.suffix.lower() != ".csv":
+            target = target.with_suffix(".csv")
+        # Fold any unsaved edits in the open photo into its row before exporting.
+        self._commit_current()
+        overwrite = self._overwrite.isChecked()
+        rows = [
+            photo_item_to_report_row(item, overwrite=overwrite) for item in self._items.values()
+        ]
+        try:
+            write_report(target, rows)
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not write the CSV", str(exc))
+            return
+        self._status.setText(f"Exported {len(rows)} photo(s) to {target.name}.")
 
     def _rebuild_tree(self) -> None:
         self._syncing = True

@@ -617,6 +617,111 @@ def test_selecting_shows_metadata_source(
     assert window._existing_source.text() == "XMP sidecar"  # noqa: SLF001
 
 
+# ---------------------------------------------------------------------------
+# Export CSV
+# ---------------------------------------------------------------------------
+
+
+def _patch_save_dialog(monkeypatch: pytest.MonkeyPatch, path: Path | str) -> None:
+    """Replace the save-file dialog so it returns *path* without opening a real dialog."""
+    monkeypatch.setattr(
+        gui,
+        "QFileDialog",
+        SimpleNamespace(getSaveFileName=lambda *_a, **_k: (str(path), "CSV files (*.csv)")),
+    )
+
+
+def test_export_csv_without_items_shows_hint(window: gui.MainWindow) -> None:
+    """Exporting with an empty list nudges the user instead of writing a file."""
+    window._export_csv()  # noqa: SLF001
+    assert "Add photos" in window._status.text()  # noqa: SLF001
+
+
+def test_export_csv_writes_report(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Export writes one CSV row per photo, folding in the edited working fields."""
+    import csv as csv_module  # noqa: PLC0415 - test-local parser.
+
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=["Beach"])
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    window._title.setText("New Title")  # noqa: SLF001
+    window._keywords.setPlainText("Eagle\nSky")  # noqa: SLF001
+
+    target = tmp_path / "report.csv"
+    _patch_save_dialog(monkeypatch, target)
+    window._export_csv()  # noqa: SLF001
+
+    with target.open(encoding="utf-8", newline="") as fh:
+        rows = list(csv_module.DictReader(fh))
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "a.jpg"
+    assert rows[0]["title"] == "New Title"
+    assert "Eagle" in rows[0]["keywords"]
+    assert "Beach" in rows[0]["keywords"]  # merged with the existing keyword
+    assert rows[0]["existing_keywords"] == "Beach"
+    assert "Exported 1" in window._status.text()  # noqa: SLF001
+
+
+def test_export_csv_appends_missing_suffix(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A chosen path without a .csv suffix gets one so the file is unambiguous."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    _patch_save_dialog(monkeypatch, tmp_path / "report")  # no extension
+    window._export_csv()  # noqa: SLF001
+    assert (tmp_path / "report.csv").exists()
+
+
+def test_export_csv_cancel_writes_nothing(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelling the dialog (empty path) leaves the filesystem untouched."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    _patch_save_dialog(monkeypatch, "")
+    window._export_csv()  # noqa: SLF001
+    assert list(tmp_path.glob("*.csv")) == []
+
+
+def test_export_csv_reports_write_error(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A write failure surfaces a warning dialog rather than crashing the GUI."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    _patch_save_dialog(monkeypatch, tmp_path / "report.csv")
+
+    def boom(*_a: object, **_k: object) -> None:
+        msg = "disk full"
+        raise OSError(msg)
+
+    monkeypatch.setattr(gui, "write_report", boom)
+    messages: list[str] = []
+    monkeypatch.setattr(
+        gui,
+        "QMessageBox",
+        SimpleNamespace(warning=lambda _parent, _title, text, *_a, **_k: messages.append(text)),
+    )
+    window._export_csv()  # noqa: SLF001
+    assert messages
+    assert "disk full" in messages[0]
+
+
 def test_save_selected_writes_only_checked_generated_items(
     window: gui.MainWindow,
     tmp_path: Path,

@@ -32,6 +32,7 @@ from photo_tagger.gui_state import (
     parse_keyword_lines,
     paths_matching_fields,
     paths_under,
+    photo_item_to_report_row,
     rank_vision_models,
     status_sort_rank,
     status_summary,
@@ -118,6 +119,11 @@ def test_apply_proposal_seeds_the_editable_copy() -> None:
         title="Golden Eagle",
         description="An eagle soars.",
         keywords=["Eagle", "Sky"],
+        camera_info={"EXIF:Model": "Canon EOS R5"},
+        gps_position="53 N, 9 E",
+        input_tokens=10,
+        total_tokens=15,
+        seconds=0.4,
     )
     apply_proposal(item, proposal)
     assert item.status == READY
@@ -127,9 +133,68 @@ def test_apply_proposal_seeds_the_editable_copy() -> None:
     assert item.existing_keywords.subject == ["Beach"]
     assert item.title == "Golden Eagle"
     assert item.keywords == ["Eagle", "Sky"]
+    # The read context and usage carried by the proposal land on the item for the CSV export.
+    assert item.camera_info == {"EXIF:Model": "Canon EOS R5"}
+    assert item.gps_position == "53 N, 9 E"
+    assert item.total_tokens == 15  # noqa: PLR2004 - fixture value
     # The editable copy is independent of the proposal's list.
     item.keywords.append("Extra")
     assert proposal.keywords == ["Eagle", "Sky"]
+
+
+def test_photo_item_to_report_row_merges_keywords_and_reads_context() -> None:
+    """The GUI row reflects a Save (merged keywords) plus existing metadata and EXIF."""
+    item = PhotoItem(
+        path=Path("/photos/a.jpg"),
+        status=READY,
+        title="Golden Eagle",
+        description="An eagle soars.",
+        keywords=["Eagle", "Bird<Animal"],
+        existing_title="Old",
+        existing_description="Old caption.",
+        existing_keywords=KeywordSet(subject=["Beach"]),
+        camera_info={"EXIF:Model": "Canon EOS R5", "EXIF:LensModel": "RF 100mm"},
+        location_tags={"IPTC:City": "Berlin", "IPTC:Country-PrimaryLocationName": "Germany"},
+        gps_position="53 N, 9 E",
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        seconds=0.4,
+    )
+
+    row = photo_item_to_report_row(item, overwrite=False).as_dict()
+
+    assert row["filename"] == "a.jpg"
+    assert row["status"] == READY
+    assert row["title"] == "Golden Eagle"
+    # Merge (not overwrite): the existing "Beach" survives alongside the new flat keyword.
+    assert "Beach" in row["keywords"]
+    assert "Eagle" in row["keywords"]
+    # The "Bird<Animal" entry becomes a Lightroom hierarchy path, not a flat keyword.
+    assert "Animal|Bird" in row["hierarchical_keywords"]
+    assert row["existing_keywords"] == "Beach"
+    assert row["existing_title"] == "Old"
+    assert row["camera_model"] == "Canon EOS R5"
+    assert row["lens_model"] == "RF 100mm"
+    assert row["city"] == "Berlin"
+    assert row["country"] == "Germany"
+    assert row["total_tokens"] == "15"
+    # The GUI has no cache or retry pass, so those columns stay blank.
+    assert row["from_cache"] == ""
+    assert row["retry"] == ""
+
+
+def test_photo_item_to_report_row_overwrite_drops_existing_keywords() -> None:
+    """With overwrite, the existing keywords are replaced rather than merged in."""
+    item = PhotoItem(
+        path=Path("/photos/a.jpg"),
+        keywords=["Eagle"],
+        existing_keywords=KeywordSet(subject=["Beach"]),
+    )
+    row = photo_item_to_report_row(item, overwrite=True).as_dict()
+    assert row["keywords"] == "Eagle"
+    # existing_keywords column still reports what was on the file before the (hypothetical) save.
+    assert row["existing_keywords"] == "Beach"
 
 
 def test_build_tree_groups_files_under_their_folder() -> None:

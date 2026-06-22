@@ -11,8 +11,10 @@ Qt.
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from photo_tagger.csv_report import ReportRow
 from photo_tagger.discovery import parse_extensions, resolve_image_files
 from photo_tagger.keywords import merge_keywords
+from photo_tagger.metadata import select_camera_fields, select_location
 from photo_tagger.models import KeywordSet
 
 
@@ -61,6 +63,10 @@ class PhotoItem:
     editable working copy that :func:`keywords_to_save` and the Save action write. The working copy
     is seeded from a :class:`Proposal` (or from the existing values when the user opens a file
     without generating).
+
+    The trailing read-context fields (``camera_info``/``location_tags``/``gps_position``) and the
+    token/timing counters are captured when a proposal is generated and feed the CSV export; they
+    stay empty for photos that were never generated.
     """
 
     path: Path
@@ -77,11 +83,18 @@ class PhotoItem:
     title: str = ""
     description: str = ""
     keywords: list[str] = field(default_factory=list)
+    camera_info: dict[str, str] = field(default_factory=dict)
+    location_tags: dict[str, str] = field(default_factory=dict)
+    gps_position: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
 class Proposal:
-    """One file's AI proposal plus the existing metadata read alongside it."""
+    """One file's AI proposal plus the existing metadata and read context alongside it."""
 
     path: Path
     existing_title: str | None
@@ -90,6 +103,13 @@ class Proposal:
     title: str
     description: str
     keywords: list[str]
+    camera_info: dict[str, str] = field(default_factory=dict)
+    location_tags: dict[str, str] = field(default_factory=dict)
+    gps_position: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    seconds: float = 0.0
 
 
 def expand_inputs(
@@ -166,9 +186,53 @@ def apply_proposal(item: PhotoItem, proposal: Proposal) -> None:
     item.title = proposal.title
     item.description = proposal.description
     item.keywords = list(proposal.keywords)
+    item.camera_info = proposal.camera_info
+    item.location_tags = proposal.location_tags
+    item.gps_position = proposal.gps_position
+    item.input_tokens = proposal.input_tokens
+    item.output_tokens = proposal.output_tokens
+    item.total_tokens = proposal.total_tokens
+    item.seconds = proposal.seconds
     item.has_proposal = True
     item.status = READY
     item.error = ""
+
+
+def photo_item_to_report_row(item: PhotoItem, *, overwrite: bool) -> ReportRow:
+    """
+    Flatten a GUI :class:`PhotoItem` into a CSV :class:`ReportRow`.
+
+    The keyword columns reflect what a Save would write: the working keywords merged with (or, when
+    *overwrite*, replacing) the existing ones, exactly as :func:`keywords_to_save` computes for the
+    Save action. The EXIF and token columns are whatever was captured at generation time, and stay
+    blank for a photo that was added but never generated.
+    """
+    to_write = keywords_to_save(item.existing_keywords, item.keywords, overwrite=overwrite)
+    model, lens, captured = select_camera_fields(item.camera_info)
+    city, country = select_location(item.location_tags)
+    return ReportRow(
+        file=str(item.path),
+        filename=item.path.name,
+        status=item.status,
+        error=item.error,
+        title=item.title,
+        description=item.description,
+        keywords=list(to_write.subject),
+        hierarchical_keywords=list(to_write.hierarchical),
+        existing_keywords=list(item.existing_keywords.subject),
+        existing_title=item.existing_title or "",
+        existing_description=item.existing_description or "",
+        camera_model=model or "",
+        lens_model=lens or "",
+        capture_date=captured or "",
+        gps_position=item.gps_position or "",
+        city=city or "",
+        country=country or "",
+        input_tokens=item.input_tokens,
+        output_tokens=item.output_tokens,
+        total_tokens=item.total_tokens,
+        seconds=item.seconds,
+    )
 
 
 def paths_matching_fields(
