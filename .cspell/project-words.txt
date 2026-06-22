@@ -30,6 +30,7 @@ Exiftool
 filelock
 fontawesome
 fromarray
+frontends
 frontmatter
 fstrings
 ftruncate

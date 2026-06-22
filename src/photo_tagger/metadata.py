@@ -419,14 +419,24 @@ def _first_present(values: dict[str, str], *tags: str) -> str | None:
     return None
 
 
-def _format_location(location_tags: dict[str, str]) -> str | None:
-    """
-    Build a "City, Country" hint, falling back to whichever single field is set.
+def select_camera_fields(
+    camera_info: dict[str, str],
+) -> tuple[str | None, str | None, str | None]:
+    """Return ``(model, lens, capture_date)`` from a :data:`CAMERA_TAGS` mapping."""
+    return (
+        camera_info.get("EXIF:Model"),
+        camera_info.get("EXIF:LensModel"),
+        camera_info.get("EXIF:DateTimeOriginal"),
+    )
 
-    XMP-photoshop and IPTC each define their own city/country fields, so this helper picks the first
-    present in each category and joins them. Returning both means the model gets the full place name
-    (e.g. "Barcelona, Spain") instead of silently losing the city under the older "first hit wins"
-    logic.
+
+def select_location(location_tags: dict[str, str]) -> tuple[str | None, str | None]:
+    """
+    Return ``(city, country)`` from a :data:`LOCATION_TAGS` mapping.
+
+    XMP-photoshop and IPTC each define their own city/country fields, so this picks the first
+    present in each category, the same fallback order :func:`_format_location` uses for the prompt
+    hint and the CSV report uses for its columns.
     """
     city = _first_present(location_tags, "XMP-photoshop:City", "IPTC:City")
     country = _first_present(
@@ -434,6 +444,17 @@ def _format_location(location_tags: dict[str, str]) -> str | None:
         "XMP-photoshop:Country",
         "IPTC:Country-PrimaryLocationName",
     )
+    return city, country
+
+
+def _format_location(location_tags: dict[str, str]) -> str | None:
+    """
+    Build a "City, Country" hint, falling back to whichever single field is set.
+
+    Returning both means the model gets the full place name (e.g. "Barcelona, Spain") instead of
+    silently losing the city under the older "first hit wins" logic.
+    """
+    city, country = select_location(location_tags)
     if city and country:
         return f"{city}, {country}"
     return city or country

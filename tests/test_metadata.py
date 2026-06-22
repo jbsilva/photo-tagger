@@ -505,3 +505,38 @@ def test_camera_lines_renders_partial_info() -> None:
 
     lines_empty = _camera_lines({})
     assert lines_empty == []
+
+
+def test_select_camera_fields_extracts_model_lens_date() -> None:
+    """The camera selector pulls model/lens/date, returning None for any that are absent."""
+    from photo_tagger.metadata import select_camera_fields  # noqa: PLC0415
+
+    info = {
+        "EXIF:Model": "Canon EOS R5",
+        "EXIF:LensModel": "RF 100mm Macro",
+        "EXIF:DateTimeOriginal": "2024:05:01 10:00:00",
+    }
+    assert select_camera_fields(info) == (
+        "Canon EOS R5",
+        "RF 100mm Macro",
+        "2024:05:01 10:00:00",
+    )
+    assert select_camera_fields({"EXIF:Model": "Canon EOS R5"}) == (
+        "Canon EOS R5",
+        None,
+        None,
+    )
+    assert select_camera_fields({}) == (None, None, None)
+
+
+def test_select_location_prefers_xmp_then_falls_back_to_iptc() -> None:
+    """City/country come from XMP-photoshop first, then the IPTC variants."""
+    from photo_tagger.metadata import select_location  # noqa: PLC0415
+
+    xmp = {"XMP-photoshop:City": "Hamburg", "XMP-photoshop:Country": "Germany"}
+    assert select_location(xmp) == ("Hamburg", "Germany")
+
+    iptc = {"IPTC:City": "Berlin", "IPTC:Country-PrimaryLocationName": "Germany"}
+    assert select_location(iptc) == ("Berlin", "Germany")
+
+    assert select_location({}) == (None, None)
