@@ -24,6 +24,24 @@ exclude-newer = "1 day"
 Brand-new releases are invisible to `uv lock` until they have aged past that window, which avoids
 locking onto an artifact that was just published and may still be yanked or repaired.
 
+## Optional extras and dependency groups
+
+The project splits its non-core dependencies two ways, and the distinction matters:
+
+- **`[project.optional-dependencies]`** are user-facing **extras** shipped with the package. The
+    only one is `gui` (PySide6), installed on demand with `pip install 'photo-tagger[gui]'` or
+    `uv tool install 'photo-tagger[gui]'`. Keeping the GUI here means the base install stays
+    Qt-free.
+- **`[dependency-groups]`** (`dev`, `test`, `docs`) are contributor tooling and are **not**
+    published to end users. They are synced with `uv sync --group dev --group test` and are how CI
+    installs the linters, type checker, test runner, and docs builder.
+
+To work on the GUI locally, sync the extra alongside the dev groups:
+
+```bash
+uv sync --extra gui --group dev --group test
+```
+
 ## Renovate
 
 [`renovate.json5`](https://github.com/jbsilva/photo-tagger/blob/main/renovate.json5) drives

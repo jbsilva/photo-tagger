@@ -30,6 +30,7 @@ directly into each photo with `--embed-in-photo`.
 - Merges with existing metadata unless you opt-in to overwrite
 - Works with Ollama, LM Studio, and any hosted OpenAI-compatible API
 - Ships a `doctor` command that pre-flights ExifTool and your model provider
+- Optional desktop GUI (`photo-tagger gui`) for a point-and-click workflow
 - Converts images to compact JPEG bytes to minimize token usage
 - Generates detailed log files for easy debugging and auditing
 - Highly configurable via CLI flags and environment variables
@@ -48,6 +49,12 @@ For end-users, the recommended installation method is via
 
 ```bash
 uv tool install photo-tagger
+```
+
+To include the optional desktop GUI, install the `gui` extra:
+
+```bash
+uv tool install 'photo-tagger[gui]'
 ```
 
 For development (tests, linting):
@@ -259,6 +266,24 @@ Refuse to start if another run is already in flight on this folder:
 photo-tagger -i ~/Pictures/Camera --lock-file /tmp/photo-tagger.lock
 ```
 
+## Desktop GUI
+
+Prefer a point-and-click workflow? Install the optional `gui` extra and launch the desktop app:
+
+```bash
+uv tool install 'photo-tagger[gui]'
+photo-tagger gui
+```
+
+The GUI is a review-before-write frontend over the same building blocks as the CLI. Drag in photos
+or folders, pick what to process from a checkable tree, choose a provider and model (hit **Test
+connection** to run the same checks as `doctor`), then **Generate selected** to run the model on a
+background thread. Each photo's proposed title, description, and keywords appear next to the
+existing values in a side-by-side detail pane, where you can edit any field before you **Save**. A
+photo that fails shows why and can be retried, and **Open logs** opens the run log folder. It reads
+the same config file and environment variables as the CLI. PySide6 is only pulled in by the `gui`
+extra, so the plain CLI install stays lightweight.
+
 ## Logging
 
 Logs are written to stderr and to a timestamped file (for example `20260101...-photo_tagger.log`).
@@ -270,7 +295,15 @@ value to `OFF`.
 Run the unit tests with:
 
 ```bash
-pytest
+uv run pytest
 ```
 
-If you plan to contribute, also run `ruff check` for linting before opening a PR.
+The GUI tests are skipped automatically unless the `gui` extra is installed. To exercise them, sync
+the extra and run headless via Qt's offscreen platform:
+
+```bash
+uv sync --extra gui --group test
+QT_QPA_PLATFORM=offscreen uv run pytest tests/test_gui.py
+```
+
+If you plan to contribute, also run `uv run ruff check` for linting before opening a PR.

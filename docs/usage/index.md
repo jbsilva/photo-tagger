@@ -76,7 +76,14 @@ because `--json` was not passed.
     Add `--dry-run` to run the model and log the proposed metadata without writing anything. It is the
     safest way to preview results before committing to a real run.
 
+!!! tip "Prefer a window?"
+
+    photo-tagger ships an optional [desktop GUI](gui.md) (`photo-tagger gui`) for a review-before-write
+    workflow: drag in photos, generate proposals, then review and edit each title, description, and
+    keyword set before saving. Install it with the `gui` extra.
+
 ## Next steps
 
 - [CLI reference](cli-reference.md): every flag, its default, and the matching environment variable.
+- [Desktop GUI](gui.md): the optional point-and-click frontend.
 - [Recipes](recipes.md): ready-made command lines for common workflows.

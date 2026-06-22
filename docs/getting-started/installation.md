@@ -22,6 +22,19 @@ Upgrade to the latest release the same way:
 uv tool upgrade photo-tagger
 ```
 
+### Optional desktop GUI
+
+photo-tagger ships an optional [desktop GUI](../usage/gui.md) behind the `gui` extra. It is kept out
+of the base install so the plain CLI stays lightweight (no Qt dependency). Add the extra to pull in
+PySide6:
+
+```bash
+uv tool install 'photo-tagger[gui]'
+```
+
+Then launch it with `photo-tagger gui`. Everything else on this page applies unchanged; the GUI uses
+the same ExifTool, model server, and configuration as the CLI.
+
 ### pipx
 
 If you already use [pipx](https://pipx.pypa.io/), install from PyPI with:

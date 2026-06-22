@@ -23,6 +23,9 @@ module owns one slice of that pipeline:
   `KeywordSet` (the typed value object that replaced the old `dict[str, list[str]]`).
 - `cache.py`, `locking.py`, `image_io.py`, `discovery.py`, `progress.py`, `logging_setup.py`,
   `diagnostics.py` - focused single-purpose helpers; `errors.py` - the domain exception hierarchy.
+- `gui.py` - optional PySide6 desktop frontend (the `photo-tagger gui` command), a thin shell over
+  `run_batch`; `gui_state.py` - its Qt-free, unit-tested logic. The GUI is additive: no pipeline
+  code is Qt-aware. PySide6 lives behind the `[gui]` extra and is imported lazily.
 
 The version is single-sourced: `photo_tagger.__version__` reads installed distribution metadata, so
 `pyproject.toml`'s `[project].version` is the only code-side source. Do not reintroduce a hardcoded
@@ -44,6 +47,16 @@ version string. `scripts/check_version_sync.py` guards the hand-maintained docs 
   to test), refactor before adding more to it. Extract helpers, split responsibilities.
 - SonarQube has many false positives. Silence with `# NOSONAR` (and a one-line reason) only when the
   finding clearly does not apply. Default is to fix, not silence.
+- **GUI code is special.** Put testable GUI logic in `gui_state.py` (plain Python, covered
+  normally). `gui.py` is the Qt shell: it is excluded from coverage (`[tool.coverage.run].omit` plus
+  `sonar.coverage.exclusions`, so SonarQube does not count its untested-in-CI lines against new-code
+  coverage), from zuban via its `# mypy: ignore-errors` header, and from pycroscope via a module
+  override (shiboken generates Qt attributes at runtime, so static tools see false
+  `undefined_attribute` errors). `tests/test_gui.py` carries the same `# mypy: ignore-errors`
+  header: it imports PySide6, which has no stubs and is not installed in the lint job, so zuban
+  would otherwise only report an unresolved import. Test it with `uv sync --extra gui --group test`
+  then `QT_QPA_PLATFORM=offscreen uv run pytest tests/test_gui.py`; those tests `importorskip`
+  PySide6 so the suite stays green without the extra.
 
 ## Before committing
 

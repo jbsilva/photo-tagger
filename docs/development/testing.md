@@ -80,6 +80,31 @@ uv run pytest -m integration
     `exiftool` binary), which is why they are kept out of the default run. See
     [Installation](../getting-started/installation.md) for the required tools.
 
+## GUI tests
+
+The optional desktop GUI is tested in two layers so the suite stays green whether or not the `gui`
+extra is installed:
+
+- `tests/test_gui_state.py` covers the Qt-free logic in `gui_state.py`. It imports no PySide6, so it
+    always runs and counts toward coverage like any other module.
+- `tests/test_gui.py` exercises the real window and worker. It calls
+    `pytest.importorskip("PySide6")`, so it is **skipped entirely** when the extra is absent (the
+    default CI run), and uses Qt's `offscreen` platform to build widgets without a display server.
+
+To run the GUI tests, sync the extra and point Qt at the offscreen platform:
+
+```bash
+uv sync --extra gui --group test
+QT_QPA_PLATFORM=offscreen uv run pytest tests/test_gui.py
+```
+
+`gui.py` itself is the Qt event-loop shell. The offscreen GUI tests do drive its widgets and
+workers, but the event loop cannot be measured for coverage and `shiboken`'s runtime attributes
+confuse the static tools, so the whole module is excluded from coverage via
+`[tool.coverage.run].omit` in `pyproject.toml`. Keep testable logic in `gui_state.py` (covered)
+rather than `gui.py` (omitted). See [Code quality](code-quality.md) for why `gui.py` is also
+excluded from the type checker and static analyzer.
+
 ## Coverage target
 
 Aim for 90%+ coverage. Add or update tests whenever you change behavior so the suite keeps tracking

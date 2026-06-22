@@ -39,3 +39,8 @@ Continue with the two pages in this section:
     a source checkout for development.
 - [Configuration](configuration.md): choose a provider, set the model URL and API key, and manage
     defaults through environment variables or a TOML config file.
+
+!!! tip
+
+    Prefer a window to a terminal? photo-tagger has an optional [desktop GUI](../usage/gui.md)
+    (`photo-tagger gui`) installed via the `gui` extra. It uses the same configuration described here.

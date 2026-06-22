@@ -47,6 +47,17 @@ uv run pycroscope --config-file pyproject.toml
     invoking it directly, otherwise it runs with the wrong settings. The pre-commit hook already passes
     this flag for you.
 
+!!! note "The GUI module is a static-analysis exception"
+
+    `src/photo_tagger/gui.py` is the one file excluded from the type checker, the analyzer, and
+    coverage. PySide6 builds its widget attributes at runtime through `shiboken`, so the static tools
+    report false `undefined_attribute` errors on every `.addWidget`, `.clicked`, and the like. It is
+    therefore excluded from `zuban` (via a `# mypy: ignore-errors` header), from `pycroscope` (a
+    `[[tool.pycroscope.overrides]]` entry), and from coverage (`[tool.coverage.run].omit`). The
+    testable, Qt-free logic lives in `gui_state.py`, which is checked and covered normally. This is the
+    documented exception to "fix, do not silence" below: a Qt event-loop shell cannot be modeled
+    statically or run headlessly. See [Testing](testing.md#gui-tests) for how it is verified instead.
+
 ### bandit
 
 `bandit` scans the source for common security problems (for example, unsafe subprocess use or hard

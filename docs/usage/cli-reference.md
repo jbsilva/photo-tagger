@@ -15,12 +15,13 @@ precedence rules and TOML layout.
 
 ## Commands
 
-Running `photo-tagger` with image inputs tags them (the default command). One subcommand exists:
+Running `photo-tagger` with image inputs tags them (the default command). Two subcommands exist:
 
 | Command               | Description                                                                                         |
 | --------------------- | --------------------------------------------------------------------------------------------------- |
 | `photo-tagger`        | Tag the given images (default). Documented by the option groups below.                              |
 | `photo-tagger doctor` | Pre-flight check: verifies ExifTool is on `PATH` and the provider serves the model, then exits 0/1. |
+| `photo-tagger gui`    | Launch the optional desktop GUI. Requires the `gui` extra; see [Desktop GUI](gui.md).               |
 
 `doctor` accepts `--provider`, `-m/--model`, `-u/--url`, and `-k/--api-key` (same meanings as below)
 and honors the same config file and environment variables. Run it first when a tagging run will not

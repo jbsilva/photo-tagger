@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- Optional desktop GUI (`photo-tagger gui`), installed via the `gui` extra
+  (`pip install 'photo-tagger[gui]'`). A PySide6 frontend with a review-before-write workflow: drag
+  in photos or folders, pick what to process from a checkable, nested tree (remove entries with the
+  button or ++delete++), generate proposals with the model, then review each photo's preview
+  alongside its existing and proposed title, description, and keywords, edit any field with a live
+  Lightroom-hierarchy preview, and save. The provider list is capitalized, the model field can query
+  the provider for available models (vision-likely first), and the columns are resizable. The
+  command imports PySide6 lazily, so the base CLI never depends on Qt and prints an install hint if
+  the extra is missing. Ships with a custom app icon.
 - New `openai` provider for any hosted OpenAI-compatible endpoint (the real OpenAI API or a drop-in
   gateway). It fails fast with a clear message when no API key is configured. Set the endpoint with
   `OPENAI_BASE_URL` / `--url` and the key with `OPENAI_API_KEY` / `--api-key`.
