@@ -13,6 +13,15 @@ Install photo-tagger with the tool manager you prefer. [uv](https://docs.astral.
 [pixi](https://pixi.sh/) are the recommended options: each puts the `photo-tagger` command on your
 `PATH` in its own isolated environment.
 
+!!! note
+
+    New releases land on PyPI (uv, pipx) first; the conda-forge packages (conda, pixi) usually follow
+    within a day. If a fresh version is not on conda-forge yet, that lag is why.
+
+The conda-forge packages (conda, pixi) also pull in ExifTool for you, so you can skip the
+[manual ExifTool install](#system-requirements). The PyPI installs (uv, pipx) cannot, since pip has
+no way to ship the non-Python `exiftool` binary, so install it separately.
+
 === "uv"
 
     ```bash
@@ -114,7 +123,9 @@ checks to run before committing.
 photo-tagger needs Python 3.14 or newer plus two external libraries that are not Python packages.
 
 [ExifTool](https://exiftool.org/) does the actual metadata reading and writing; photo-tagger drives
-the `exiftool` binary through pyexiftool. Install it with your system package manager:
+the `exiftool` binary through pyexiftool. The conda-forge packages (conda, pixi) already pull it in
+as a dependency, so this step is only needed for the PyPI installs (uv, pipx). Install it with your
+system package manager:
 
 === "Debian / Ubuntu"
 
