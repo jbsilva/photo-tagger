@@ -1,0 +1,5 @@
+/* Keep module filenames in the first table column on one line. Browsers treat
+   `_` and `.` as break points, so `gui_state.py` would otherwise wrap mid-name. */
+.md-typeset table:not([class]) td:first-child code {
+  white-space: nowrap;
+}

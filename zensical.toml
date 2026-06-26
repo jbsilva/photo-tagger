@@ -21,6 +21,9 @@ copyright = """
 Copyright &copy; Julio Batista Silva and contributors. MIT license.
 """
 
+# Custom styles layered on top of the theme.
+extra_css = ["stylesheets/extra.css"]
+
 nav = [
   { "Home" = "index.md" },
   { "Getting started" = [
