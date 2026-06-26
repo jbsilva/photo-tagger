@@ -67,11 +67,13 @@ mkdocs
 moondream
 mtimes
 mypy
+nixpkgs
 NOSONAR
 numprocesses
 ollama
 Ollama
 OLLAMA
+pacman
 pinentry
 pipx
 pixmap

@@ -9,61 +9,85 @@ make sure ExifTool is on your `PATH`, and you are ready to start tagging photos.
 
 ## End-user install
 
-For most people the simplest option is [uv](https://docs.astral.sh/uv/). It installs photo-tagger
-into an isolated environment and puts the `photo-tagger` command on your `PATH`.
+Install photo-tagger with the tool manager you prefer. [uv](https://docs.astral.sh/uv/) and
+[pixi](https://pixi.sh/) are the recommended options: each puts the `photo-tagger` command on your
+`PATH` in its own isolated environment.
 
-```bash
-uv tool install photo-tagger
-```
+=== "uv"
 
-Upgrade to the latest release the same way:
+    ```bash
+    uv tool install photo-tagger
+    ```
 
-```bash
-uv tool upgrade photo-tagger
-```
+    Upgrade to the latest release the same way:
+
+    ```bash
+    uv tool upgrade photo-tagger
+    ```
+
+=== "pixi"
+
+    pixi installs the conda-forge package as a global tool:
+
+    ```bash
+    pixi global install photo-tagger
+    ```
+
+    Upgrade to the latest release with:
+
+    ```bash
+    pixi global upgrade photo-tagger
+    ```
+
+=== "conda"
+
+    The package is published on conda-forge, so it also installs with conda (or mamba):
+
+    ```bash
+    conda install -c conda-forge photo-tagger
+    ```
+
+=== "pipx"
+
+    If you already use [pipx](https://pipx.pypa.io/), install from PyPI with:
+
+    ```bash
+    pipx install photo-tagger
+    ```
 
 ### Optional desktop GUI
 
 photo-tagger ships an optional [desktop GUI](../usage/gui.md) behind the `gui` extra. It is kept out
-of the base install so the plain CLI stays lightweight (no Qt dependency). Add the extra to pull in
-PySide6:
+of the base install so the plain CLI stays lightweight (no Qt dependency). On PyPI the extra pulls
+in PySide6; on conda-forge the GUI is a separate package, `photo-tagger-gui`, that bundles PySide6
+for you.
 
-```bash
-uv tool install 'photo-tagger[gui]'
-```
+=== "uv"
 
-On conda-forge the GUI is a separate package, `photo-tagger-gui`, which pulls in PySide6 for you
-(see [conda-forge](#conda-forge) below):
+    ```bash
+    uv tool install 'photo-tagger[gui]'
+    ```
 
-```bash
-conda install -c conda-forge photo-tagger-gui
-```
+=== "pixi"
+
+    ```bash
+    pixi global install photo-tagger-gui
+    ```
+
+=== "conda"
+
+    ```bash
+    conda install -c conda-forge photo-tagger-gui
+    ```
+
+=== "pipx"
+
+    ```bash
+    pipx install 'photo-tagger[gui]'
+    ```
 
 Then launch it with `photo-tagger gui`. Everything else on this page applies unchanged; the GUI uses
 the same ExifTool, model server, and configuration as the CLI.
-
-### pipx
-
-If you already use [pipx](https://pipx.pypa.io/), install from PyPI with:
-
-```bash
-pipx install photo-tagger
-```
-
-### conda-forge
-
-The package is published on conda-forge, so it also installs with conda (or with pixi / mamba):
-
-```bash
-conda install -c conda-forge photo-tagger
-```
-
-To get the [desktop GUI](#optional-desktop-gui), install `photo-tagger-gui` instead; it bundles
-photo-tagger together with PySide6:
-
-```bash
-conda install -c conda-forge photo-tagger-gui
-```
 
 ## From source
 
@@ -96,6 +120,24 @@ the `exiftool` binary through pyexiftool. Install it with your system package ma
 
     ```bash
     apt install libimage-exiftool-perl
+    ```
+
+=== "Fedora"
+
+    ```bash
+    dnf install perl-Image-ExifTool
+    ```
+
+=== "Arch"
+
+    ```bash
+    pacman -S perl-image-exiftool
+    ```
+
+=== "Nix"
+
+    ```bash
+    nix profile install nixpkgs#exiftool
     ```
 
 === "macOS"
