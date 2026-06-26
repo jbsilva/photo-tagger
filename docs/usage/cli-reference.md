@@ -129,13 +129,13 @@ The display group controls the progress bar and machine-readable output.
 The artifacts group points at side files: a custom prompt, a run summary, a per-photo CSV report, a
 result cache, and a lock.
 
-| Flag                  | Default | Env var | Description                                                                                                                                  |
-| --------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--prompt-file` PATH  | none    | `-`     | Replace the default user prompt with the contents of PATH; existing photo metadata is still appended automatically.                          |
-| `--summary-file` PATH | none    | `-`     | Write a JSON run summary (success/failure counts, failed files, token usage, wall time) on completion.                                       |
-| `--csv-file` PATH     | none    | `-`     | Write a CSV report with one row per photo (see below). Rows stream as photos finish, so a stopped run still leaves a valid file.             |
-| `--cache-file` PATH   | none    | `-`     | SQLite cache of model outputs; reruns skip the model call when nothing relevant changed. Created if missing; safe to delete.                 |
-| `--lock-file` PATH    | none    | `-`     | Acquire an exclusive file lock before running; refuse to start if another photo-tagger already holds it. Works on Linux, macOS, and Windows. |
+| Flag                  | Default | Env var | Description                                                                                                                                                                                                         |
+| --------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--prompt-file` PATH  | none    | `-`     | Replace the default user prompt with the contents of PATH; existing photo metadata is still appended automatically.                                                                                                 |
+| `--summary-file` PATH | none    | `-`     | Write a JSON run summary (success/failure counts, failed files, token usage, wall time) on completion.                                                                                                              |
+| `--csv-file` PATH     | none    | `-`     | Write a CSV report with one row per photo (see below). Rows stream as photos finish, so a stopped run still leaves a valid file.                                                                                    |
+| `--cache-file` PATH   | none    | `-`     | SQLite cache of model outputs, keyed on an image-data hash that ignores metadata (so it survives `--embed-in-photo`). Reruns skip the model call when nothing relevant changed. Created if missing; safe to delete. |
+| `--lock-file` PATH    | none    | `-`     | Acquire an exclusive file lock before running; refuse to start if another photo-tagger already holds it. Works on Linux, macOS, and Windows.                                                                        |
 
 ### CSV report
 

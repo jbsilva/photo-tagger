@@ -140,8 +140,11 @@ photo-tagger \
   --cache-file ~/.cache/photo-tagger/cache.sqlite
 ```
 
-The cache key combines the image content with the model name and sampling settings, so changing the
-model or temperature invalidates stale entries. The file is created if missing and safe to delete.
+The cache key combines a hash of the image data (ExifTool's `ImageDataHash`, which ignores metadata)
+with the model name and sampling settings, so changing the model or temperature invalidates stale
+entries. Because the hash ignores metadata, a rerun still hits the cache even when the first pass
+embedded tags into the photo with `--embed-in-photo`. The file is created if missing and safe to
+delete.
 
 ## Resume a killed run
 

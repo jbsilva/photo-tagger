@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The `--cache-file` inference cache is now keyed on the image data only (ExifTool's
+  `ImageDataHash`) instead of a hash of the whole file. Writing metadata into a photo no longer
+  changes the key, so a rerun over the same folder hits the cache even after `--embed-in-photo`
+  wrote tags on the first pass. Formats ExifTool cannot hash that way fall back to the whole-file
+  hash. Existing cache files are simply repopulated on the next run.
+
 ## [0.3.0] - 2026-06-22
 
 ### Added

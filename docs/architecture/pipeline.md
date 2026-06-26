@@ -74,10 +74,11 @@ flowchart TD
     GPS, and camera EXIF, returning an `ImageContext`.
 2. **`build_contextual_prompt`** appends that context (existing keywords, location tags, GPS, camera
     info) to the user prompt so the model can reuse and extend what is already there.
-3. **Cache lookup** runs only when `--cache-file` is set. The key is the image content hash plus a
-    namespace digest of the model and sampling settings. A hit replays the stored result and skips
-    the model entirely. Cache I/O failures are logged at warning level and treated as a miss, never
-    raised, so a corrupt SQLite file degrades to "no cache" instead of aborting the photo. See
+3. **Cache lookup** runs only when `--cache-file` is set. The key is a hash of the image data
+    (ExifTool's `ImageDataHash`, which ignores metadata) plus a namespace digest of the model and
+    sampling settings. A hit replays the stored result and skips the model entirely. Cache I/O
+    failures are logged at warning level and treated as a miss, never raised, so a corrupt SQLite
+    file degrades to "no cache" instead of aborting the photo. See
     [Caching and locking](caching.md).
 4. **`prepare_image_for_agent`** (on a miss) loads the image (rawpy for RAW, Pillow otherwise),
     applies EXIF orientation, flattens alpha to white, resizes to `--jpeg-dimensions`, and

@@ -151,7 +151,8 @@ Key options:
 - `--prompt-file PATH` – override the default user prompt with the contents of `PATH`
 - `--summary-file PATH` – write a JSON run summary (token usage, success/failure counts) to `PATH`
   on completion
-- `--cache-file PATH` – persistent SQLite cache of model outputs keyed by image content hash and
+- `--cache-file PATH` – persistent SQLite cache of model outputs keyed by an image-data hash
+  (ExifTool's `ImageDataHash`, which ignores metadata so it survives `--embed-in-photo`) plus
   model+prompt+settings. Reruns skip the model call when nothing relevant has changed
 - `--lock-file PATH` – acquire an exclusive file lock on `PATH` before running and refuse to start
   if another `photo-tagger` already holds it (prevents two runs racing on the same folder). Works on

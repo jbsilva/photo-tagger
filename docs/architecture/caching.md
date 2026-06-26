@@ -19,10 +19,18 @@ entirely, so reruns on an unchanged folder are fast and free.
 
 Each entry is keyed by two parts:
 
-| Part               | What it is                                                             |
-| ------------------ | ---------------------------------------------------------------------- |
-| Image content hash | A BLAKE2b digest of the image bytes, so identical pixels hit the cache |
-| Namespace digest   | A digest of the model name, user prompt, and sampling settings         |
+| Part             | What it is                                                                       |
+| ---------------- | -------------------------------------------------------------------------------- |
+| Image-data hash  | ExifTool's `ImageDataHash` over the image stream only, so identical pixels match |
+| Namespace digest | A digest of the model name, user prompt, and sampling settings                   |
+
+The image-data hash deliberately ignores metadata. ExifTool hashes only the decoded image stream,
+not the EXIF/XMP/IPTC blocks around it, so writing keywords, a title, or a description into a photo
+does **not** change the key. That is what makes the cache survive `--embed-in-photo`: the first run
+tags the file and stores the result, and a later run over the same folder still hits the cache even
+though the file's bytes changed. It is read in the same ExifTool call that already collects existing
+metadata, so a hit costs no extra subprocess. Formats ExifTool cannot hash that way fall back to a
+BLAKE2b digest of the whole file; for those, re-embedding metadata does produce a fresh key.
 
 `build_cache_namespace()` produces the namespace digest from the model name, the user prompt, and
 the sampling settings: `temperature`, `max_tokens`, `frequency_penalty`, `jpeg_dimensions`, and
@@ -37,11 +45,14 @@ entries, with the old ones simply going unused.
 
 ```mermaid
 flowchart TD
-    A[Read image bytes] --> B[BLAKE2b content hash]
-    B --> C[Combine with namespace digest]
-    C --> D{Key in cache?}
-    D -->|Hit| E[Reuse stored metadata, skip model call]
-    D -->|Miss| F[Run AI call, then store result]
+    A[Read metadata + ImageDataHash via ExifTool] --> B{Hash available?}
+    B -->|Yes| C[Use ImageDataHash]
+    B -->|No, unsupported format| D[BLAKE2b of whole file]
+    C --> E[Combine with namespace digest]
+    D --> E
+    E --> F{Key in cache?}
+    F -->|Hit| G[Reuse stored metadata, skip model call]
+    F -->|Miss| H[Run AI call, then store result]
 ```
 
 ### Managing the cache
