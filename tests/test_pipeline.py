@@ -568,6 +568,94 @@ def test_process_photo_writes_to_cache_on_miss(
     assert stored.title == "Title"
 
 
+def test_process_photo_keys_cache_on_content_hash(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """When exiftool supplies an image-data hash, that is the cache key, not the file hash."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    class _StubCache:
+        def __init__(self) -> None:
+            self.put_keys: list[str] = []
+
+        def get(self, _key: str) -> None:
+            return None
+
+        def put(self, key: str, _result: InferenceResult) -> None:
+            self.put_keys.append(key)
+
+    cache = _StubCache()
+    with patch(
+        "photo_tagger.pipeline.read_image_context",
+        return_value=ImageContext(content_hash="img-data-hash"),
+    ):
+        assert process_photo(image, _ctx(cache=cache)) is True
+
+    assert cache.put_keys == ["img-data-hash"]
+
+
+def test_process_photo_cache_hit_survives_metadata_write(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A stable image-data hash lets a second embed run hit the cache and skip the model."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    store: dict[str, InferenceResult] = {}
+
+    class _DictCache:
+        def get(self, key: str) -> InferenceResult | None:
+            return store.get(key)
+
+        def put(self, key: str, result: InferenceResult) -> None:
+            store[key] = result
+
+    options = ProcessingOptions(use_sidecar=False)
+    # Both runs see the same image-data hash even though embedding changed the file bytes.
+    with patch(
+        "photo_tagger.pipeline.read_image_context",
+        return_value=ImageContext(content_hash="stable-hash"),
+    ):
+        assert process_photo(image, _ctx(options=options, cache=_DictCache())) is True
+        assert process_photo(image, _ctx(options=options, cache=_DictCache())) is True
+
+    # The model ran only on the first pass; the second was a cache hit on the same content hash.
+    patched_pipeline["analyze"].assert_called_once()
+
+
+def test_process_photo_reads_content_hash_only_when_caching(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """ImageDataHash is requested only when a cache is configured, to avoid wasted hashing."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    class _StubCache:
+        def get(self, _key: str) -> None:
+            return None
+
+        def put(self, *_a: Any, **_kw: Any) -> None:  # noqa: ANN401
+            return None
+
+    with patch(
+        "photo_tagger.pipeline.read_image_context",
+        return_value=ImageContext(),
+    ) as read_ctx:
+        process_photo(image, _ctx(cache=_StubCache()))
+        assert read_ctx.call_args.kwargs["include_content_hash"] is True
+
+    with patch(
+        "photo_tagger.pipeline.read_image_context",
+        return_value=ImageContext(),
+    ) as read_ctx:
+        process_photo(image, _ctx())
+        assert read_ctx.call_args.kwargs["include_content_hash"] is False
+
+
 def test_process_photo_survives_cache_get_raising(
     tmp_path: Path,
     patched_pipeline: dict[str, Any],

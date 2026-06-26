@@ -164,28 +164,17 @@ class _BatchContext:
     progress: ProgressCallback | None = None
 
 
-def _cache_lookup(
+def _cache_get(
     cache: InferenceCache,
-    image_path: Path,
-) -> tuple[str | None, InferenceResult | None]:
-    """
-    Look up *image_path* in *cache*; return ``(cache_key, hit_or_none)``.
-
-    A failure to hash the source file or read from the cache is logged and treated as a miss, never
-    raised. ``cache_key`` is ``None`` when hashing failed, signaling the caller to skip ``put`` as
-    well.
-    """
+    cache_key: str,
+    file_name: str,
+) -> InferenceResult | None:
+    """Return the cached result for *cache_key*, treating any read error as a miss."""
     try:
-        cache_key = hash_image_file(image_path)
-    except OSError as exc:
-        logger.warning("inference_cache_hash_failed", file=image_path.name, error=str(exc))
-        return None, None
-    try:
-        cached = cache.get(cache_key)
+        return cache.get(cache_key)
     except Exception as exc:  # noqa: BLE001 - sqlite errors must not abort the photo.
-        logger.warning("inference_cache_get_failed", file=image_path.name, error=str(exc))
-        return cache_key, None
-    return cache_key, cached
+        logger.warning("inference_cache_get_failed", file=file_name, error=str(exc))
+        return None
 
 
 def _cache_store(
@@ -202,26 +191,46 @@ def _cache_store(
         logger.warning("inference_cache_put_failed", file=file_name, error=str(exc))
 
 
+def _content_cache_key(image_path: Path, context: ImageContext) -> str | None:
+    """
+    Return the cache key for *image_path*'s pixel content, or None if it cannot be hashed.
+
+    Prefers exiftool's ImageDataHash (read into *context*), which covers the image stream only. That
+    makes the key independent of metadata, so embedding tags does not change it and a later run over
+    the same folder still hits the cache. Formats exiftool cannot hash that way fall back to hashing
+    the whole file; for those, re-embedding metadata does change the key. A hashing failure is
+    logged and the photo then runs without caching.
+    """
+    if context.content_hash is not None:
+        return context.content_hash
+    try:
+        return hash_image_file(image_path)
+    except OSError as exc:
+        logger.warning("inference_cache_hash_failed", file=image_path.name, error=str(exc))
+        return None
+
+
 def _resolve_inference(
     image_path: Path,
     ctx: _BatchContext,
     *,
     contextual_prompt: str,
+    content_key: str | None,
 ) -> tuple[InferenceResult, bool]:
     """
     Return ``(inference, from_cache)`` for *image_path*.
 
-    Hits the on-disk cache when one is provided and the photo's content hash matches a prior entry
-    recorded under the same namespace. On miss, prepares the JPEG bytes, calls the model, and writes
-    the result back to the cache.
+    Hits the on-disk cache when one is provided and *content_key* matches a prior entry recorded
+    under the same namespace. On miss, prepares the JPEG bytes, calls the model, and writes the
+    result back to the cache.
 
     Cache I/O failures are logged at warning level but never raised: a broken SQLite file or full
     disk degrades the run to "no cache" without aborting photos that the model would otherwise
     process successfully.
     """
-    cache_key: str | None = None
-    if ctx.cache is not None:
-        cache_key, cached = _cache_lookup(ctx.cache, image_path)
+    cache = ctx.cache
+    if cache is not None and content_key is not None:
+        cached = _cache_get(cache, content_key, image_path.name)
         if cached is not None:
             logger.info("cache_hit", file=image_path.name)
             ctx.usage.add_cache_hit()
@@ -242,8 +251,8 @@ def _resolve_inference(
         frequency_penalty=ctx.options.frequency_penalty,
     )
     ctx.usage.add(inference)
-    if ctx.cache is not None and cache_key is not None:
-        _cache_store(ctx.cache, cache_key, inference, file_name=image_path.name)
+    if cache is not None and content_key is not None:
+        _cache_store(cache, content_key, inference, file_name=image_path.name)
     return inference, False
 
 
@@ -301,7 +310,12 @@ def process_photo(
     options = ctx.options
 
     with managed_helper(et) as helper:
-        context = read_image_context(image_path, et=helper)
+        # Read the content hash in the same call only when a cache can use it.
+        context = read_image_context(
+            image_path,
+            et=helper,
+            include_content_hash=ctx.cache is not None,
+        )
         existing_keywords_full = context.existing_keywords
         if not existing_keywords_full.is_empty():
             logger.info(
@@ -321,10 +335,12 @@ def process_photo(
             camera_info=context.camera_info,
         )
 
+        content_key = _content_cache_key(image_path, context) if ctx.cache is not None else None
         inference, from_cache = _resolve_inference(
             image_path,
             ctx,
             contextual_prompt=contextual_prompt,
+            content_key=content_key,
         )
         _record_scratch(outcome_sink, inference=inference, from_cache=from_cache)
 

@@ -32,6 +32,12 @@ from photo_tagger.models import KeywordSet
 # Centralized here to avoid seven copies of the same three-element tuple.
 _EXIFTOOL_ERRORS = (ValueError, TypeError, ExifToolExecuteError)
 
+# Tag and api option that make exiftool hash the image data only, skipping metadata. The result
+# comes back under the "File:" group, hence the separate key constant.
+_IMAGE_DATA_HASH_TAG = "ImageDataHash"
+_IMAGE_DATA_HASH_KEY = "File:ImageDataHash"
+_IMAGE_HASH_API = ["-api", "ImageHashType=SHA256"]
+
 
 @contextlib.contextmanager
 def managed_helper(et: ExifToolHelper | None) -> Iterator[ExifToolHelper]:
@@ -486,6 +492,9 @@ class ImageContext:
     location_tags: dict[str, str] = field(default_factory=dict)
     gps_position: str | None = None
     camera_info: dict[str, str] = field(default_factory=dict)
+    # SHA256 of the image data only (exiftool's ImageDataHash), ignoring metadata. None when not
+    # requested or when exiftool cannot hash the format. Used as a metadata-independent cache key.
+    content_hash: str | None = None
 
 
 def _extract_gps(blocks: list[dict[str, Any]]) -> str | None:
@@ -511,10 +520,25 @@ def _extract_named_tags(
     return collected
 
 
+def _extract_content_hash(blocks: list[dict[str, Any]]) -> str | None:
+    """
+    Return the image-data SHA256 from whichever block carries it, else None.
+
+    Only the image file yields ImageDataHash; XMP sidecars have no image data, so a first-present
+    scan across the blocks safely picks the image's hash.
+    """
+    for block in blocks:
+        value = block.get(_IMAGE_DATA_HASH_KEY)
+        if value:
+            return str(value)
+    return None
+
+
 def read_image_context(
     image_path: Path,
     *,
     et: ExifToolHelper | None = None,
+    include_content_hash: bool = False,
 ) -> ImageContext:
     """
     Fetch every read-only tag the pipeline needs in a single exiftool call.
@@ -522,6 +546,10 @@ def read_image_context(
     This is the production path used by ``process_photo``. The older single-purpose helpers
     (``read_existing_keywords``, ``read_location_tags``, ``read_gps_coordinates``) remain available
     for callers that need only one slice (Tests, for example).
+
+    When *include_content_hash* is set, the same call also reads ImageDataHash so callers can key a
+    cache on the image content rather than the whole file. It is off by default because hashing the
+    image data is wasted work when no cache is configured.
     """
     targets = metadata_targets(image_path)
     if not targets:
@@ -530,10 +558,14 @@ def read_image_context(
 
     keyword_tags = [tag for tag, _ in _KEYWORD_TAG_TO_FIELD]
     all_tags = list(dict.fromkeys([*keyword_tags, *LOCATION_TAGS, *CAMERA_TAGS, _GPS_TAG]))
+    params: list[str] = []
+    if include_content_hash:
+        all_tags.append(_IMAGE_DATA_HASH_TAG)
+        params = _IMAGE_HASH_API
 
     try:
         with managed_helper(et) as helper:
-            blocks = helper.get_tags(files=targets, tags=all_tags)
+            blocks = helper.get_tags(files=targets, tags=all_tags, params=params)
     except _EXIFTOOL_ERRORS as exc:
         logger.exception("failed_to_read_image_context", error=str(exc))
         return ImageContext()
@@ -559,6 +591,7 @@ def read_image_context(
         location_tags=location_tags,
         gps_position=gps_position,
         camera_info=camera_info,
+        content_hash=_extract_content_hash(blocks) if include_content_hash else None,
     )
 
 

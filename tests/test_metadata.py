@@ -329,6 +329,73 @@ def test_read_image_context_batches_keywords_location_camera_and_gps(tmp_path: P
     assert fake_helper.get_tags.call_count == 1
 
 
+def test_read_image_context_includes_content_hash_when_requested(tmp_path: Path) -> None:
+    """include_content_hash adds ImageDataHash to the one read and surfaces it on the context."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+
+    fake_helper = MagicMock()
+    fake_helper.__enter__.return_value = fake_helper
+    fake_helper.__exit__.return_value = False
+    fake_helper.get_tags.return_value = [
+        {"SourceFile": str(img), "File:ImageDataHash": "deadbeef"},
+    ]
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        context = read_image_context(img, include_content_hash=True)
+
+    assert context.content_hash == "deadbeef"
+    # The hash tag and api option ride along on the single batched call.
+    kwargs = fake_helper.get_tags.call_args.kwargs
+    assert "ImageDataHash" in kwargs["tags"]
+    assert kwargs["params"] == ["-api", "ImageHashType=SHA256"]
+
+
+def test_read_image_context_omits_content_hash_by_default(tmp_path: Path) -> None:
+    """Without the flag, no ImageDataHash is requested and content_hash stays None."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+
+    fake_helper = MagicMock()
+    fake_helper.__enter__.return_value = fake_helper
+    fake_helper.__exit__.return_value = False
+    fake_helper.get_tags.return_value = [{"XMP:Subject": ["Beach"]}]
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        context = read_image_context(img)
+
+    assert context.content_hash is None
+    kwargs = fake_helper.get_tags.call_args.kwargs
+    assert "ImageDataHash" not in kwargs["tags"]
+    assert kwargs["params"] == []
+
+
+def test_read_image_context_content_hash_none_when_unsupported(tmp_path: Path) -> None:
+    """A format exiftool cannot hash returns no ImageDataHash, so content_hash stays None."""
+    img = tmp_path / "img.cr3"
+    img.write_text("x")
+
+    fake_helper = MagicMock()
+    fake_helper.__enter__.return_value = fake_helper
+    fake_helper.__exit__.return_value = False
+    # The hash was requested, but exiftool returned no ImageDataHash for this format.
+    fake_helper.get_tags.return_value = [{"SourceFile": str(img), "XMP:Subject": ["Beach"]}]
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        context = read_image_context(img, include_content_hash=True)
+
+    assert context.content_hash is None
+
+
 def test_read_image_context_collapses_case_duplicates_across_blocks(tmp_path: Path) -> None:
     """A keyword present in both XMP and IPTC with different casing collapses to one."""
     img = tmp_path / "img.cr3"

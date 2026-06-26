@@ -326,9 +326,11 @@ class ArtifactConfig:
             name=("--cache-file",),
             validator=validators.Path(file_okay=True, dir_okay=False),
             help=(
-                "SQLite cache of model outputs keyed by image content hash and model name. "
-                "Reruns that point at the same photos with the same model skip the model "
-                "call entirely. Created if missing; safe to delete to clear the cache"
+                "SQLite cache of model outputs keyed by image-content hash and model name. "
+                "The hash covers the image data only and ignores metadata, so embedding tags "
+                "does not change it: a second run over the same folder still hits the cache "
+                "instead of calling the model again. Created if missing; safe to delete to "
+                "clear the cache"
             ),
         ),
     ] = None
