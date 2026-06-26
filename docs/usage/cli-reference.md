@@ -29,7 +29,7 @@ start:
 
 ```console
 $ photo-tagger doctor --provider lmstudio --model qwen/qwen3-vl-30b
-photo-tagger 0.3.0 environment check
+photo-tagger 0.4.0 environment check
 
   OK    ExifTool: /usr/bin/exiftool
   OK    Model 'qwen/qwen3-vl-30b' on lmstudio: available at http://localhost:1234/v1
