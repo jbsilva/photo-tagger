@@ -22,7 +22,15 @@ uv tool install 'photo-tagger[gui]'
 photo-tagger gui
 ```
 
-Run without the extra and the command prints an install hint instead of a traceback:
+On conda-forge it is a separate package, `photo-tagger-gui`, that bundles PySide6:
+
+```bash
+conda install -c conda-forge photo-tagger-gui
+photo-tagger gui
+```
+
+Run without the extra (or without the `photo-tagger-gui` package) and the command prints an install
+hint instead of a traceback:
 
 ```console
 $ photo-tagger gui

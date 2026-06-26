@@ -57,6 +57,14 @@ To include the optional desktop GUI, install the `gui` extra:
 uv tool install 'photo-tagger[gui]'
 ```
 
+Or install from [conda-forge](https://anaconda.org/conda-forge/photo-tagger) (works with conda,
+mamba, or pixi). The GUI is a separate package that bundles PySide6:
+
+```bash
+conda install -c conda-forge photo-tagger        # CLI only
+conda install -c conda-forge photo-tagger-gui     # CLI + desktop GUI
+```
+
 For development (tests, linting):
 
 ```bash
@@ -268,10 +276,11 @@ photo-tagger -i ~/Pictures/Camera --lock-file /tmp/photo-tagger.lock
 
 ## Desktop GUI
 
-Prefer a point-and-click workflow? Install the optional `gui` extra and launch the desktop app:
+Prefer a point-and-click workflow? Install the optional `gui` extra (or the `photo-tagger-gui`
+conda-forge package) and launch the desktop app:
 
 ```bash
-uv tool install 'photo-tagger[gui]'
+uv tool install 'photo-tagger[gui]'        # or: conda install -c conda-forge photo-tagger-gui
 photo-tagger gui
 ```
 

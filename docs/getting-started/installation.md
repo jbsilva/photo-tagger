@@ -32,6 +32,13 @@ PySide6:
 uv tool install 'photo-tagger[gui]'
 ```
 
+On conda-forge the GUI is a separate package, `photo-tagger-gui`, which pulls in PySide6 for you
+(see [conda-forge](#conda-forge) below):
+
+```bash
+conda install -c conda-forge photo-tagger-gui
+```
+
 Then launch it with `photo-tagger gui`. Everything else on this page applies unchanged; the GUI uses
 the same ExifTool, model server, and configuration as the CLI.
 
@@ -49,6 +56,13 @@ The package is published on conda-forge, so it also installs with conda (or with
 
 ```bash
 conda install -c conda-forge photo-tagger
+```
+
+To get the [desktop GUI](#optional-desktop-gui), install `photo-tagger-gui` instead; it bundles
+photo-tagger together with PySide6:
+
+```bash
+conda install -c conda-forge photo-tagger-gui
 ```
 
 ## From source
