@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-10 20:13+0200\n"
+"POT-Creation-Date: 2026-10-10 20:16+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -576,34 +576,34 @@ msgstr ""
 msgid "(no vocabulary file)"
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:122
+#: src/photo_tagger/gui/keyword_rules.py:120
 msgid "Clear"
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:124
+#: src/photo_tagger/gui/keyword_rules.py:122
 msgid "Build..."
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:125
+#: src/photo_tagger/gui/keyword_rules.py:123
 msgid "Write one from the keywords your own photos already carry."
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:137
+#: src/photo_tagger/gui/keyword_rules.py:132
 msgid "Write only keywords the vocabulary covers"
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:141
+#: src/photo_tagger/gui/keyword_rules.py:136
 msgid ""
 "Drop generated keywords the vocabulary does not have instead of writing "
 "them as they came. The status bar names what was dropped, so the "
 "vocabulary can grow on purpose rather than by accident."
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:152
+#: src/photo_tagger/gui/keyword_rules.py:147
 msgid "Shoot harmonization"
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:156
+#: src/photo_tagger/gui/keyword_rules.py:151
 msgid ""
 "Group photos into shoots separated by this many idle minutes (by capture "
 "time, falling back to the file date) and make each shoot's keywords agree"
@@ -612,27 +612,27 @@ msgid ""
 "still review before saving."
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:169
+#: src/photo_tagger/gui/keyword_rules.py:164
 msgid " minutes"
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:170
+#: src/photo_tagger/gui/keyword_rules.py:165
 msgid "off"
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:172
+#: src/photo_tagger/gui/keyword_rules.py:167
 msgid "Zero treats every photo on its own, which is the default."
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:176
+#: src/photo_tagger/gui/keyword_rules.py:171
 msgid "Split shoots after"
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:194
+#: src/photo_tagger/gui/keyword_rules.py:189
 msgid "Choose a vocabulary file"
 msgstr ""
 
-#: src/photo_tagger/gui/keyword_rules.py:196
+#: src/photo_tagger/gui/keyword_rules.py:191
 msgid "Keyword files (*.txt *.csv);;All files (*)"
 msgstr ""
 
@@ -837,7 +837,7 @@ msgid "File types"
 msgstr ""
 
 #: src/photo_tagger/gui/main_window.py:783
-#: src/photo_tagger/gui/watch_dialog.py:90
+#: src/photo_tagger/gui/watch_dialog.py:84
 msgid "Include subfolders"
 msgstr ""
 
@@ -1386,7 +1386,7 @@ msgid ""
 "photo has actually failed."
 msgstr ""
 
-#: src/photo_tagger/gui/run_bar.py:98 src/photo_tagger/gui/watch_dialog.py:69
+#: src/photo_tagger/gui/run_bar.py:98 src/photo_tagger/gui/watch_dialog.py:68
 msgid "Cancel"
 msgstr ""
 
@@ -2074,7 +2074,7 @@ msgid ""
 msgstr ""
 
 #: src/photo_tagger/gui/vocabulary_builder.py:130
-#: src/photo_tagger/gui/vocabulary_builder.py:226
+#: src/photo_tagger/gui/vocabulary_builder.py:216
 msgid "(optional)"
 msgstr ""
 
@@ -2084,63 +2084,63 @@ msgid ""
 "this machine. Its counts are occurrences in the keyword tree, not photos."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:142
+#: src/photo_tagger/gui/vocabulary_builder.py:137
 msgid "Keyword export"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:148
+#: src/photo_tagger/gui/vocabulary_builder.py:143
 msgid "Keep a keyword when"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:155
+#: src/photo_tagger/gui/vocabulary_builder.py:150
 msgid ""
 "The most useful knob: in a catalog an AI has been writing to, most "
 "keywords are used once and are one-offs rather than vocabulary."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:159
+#: src/photo_tagger/gui/vocabulary_builder.py:154
 msgid "Used at least this often"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:163
+#: src/photo_tagger/gui/vocabulary_builder.py:158
 msgid "no cap"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:166
+#: src/photo_tagger/gui/vocabulary_builder.py:161
 msgid ""
 "Caps the file, dropping the least used first. The default keeps it under "
 "the 5000 terms above which matching gives up its fuzzy pass."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:170
+#: src/photo_tagger/gui/vocabulary_builder.py:165
 msgid "And the file holds at most"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:171
+#: src/photo_tagger/gui/vocabulary_builder.py:166
 msgid "Keep keywords containing digits"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:174
+#: src/photo_tagger/gui/vocabulary_builder.py:169
 msgid ""
 "Off by default: a keyword with a digit is nearly always a measurement or "
 "a model number ('19.5V', '0 Percent Battery') rather than a subject."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:179
+#: src/photo_tagger/gui/vocabulary_builder.py:174
 msgid "Write bare keywords, without their hierarchies"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:182
+#: src/photo_tagger/gui/vocabulary_builder.py:177
 msgid ""
 "Worth using when the source hierarchy is not trustworthy, since a "
 "vocabulary imposes its own on every photo it matches."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:191
+#: src/photo_tagger/gui/vocabulary_builder.py:186
 msgid "Organize with the model"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:196
+#: src/photo_tagger/gui/vocabulary_builder.py:191
 msgid ""
 "Asks the model for the two things counting cannot settle: which keywords "
 "are synonyms of each other (folded into one, the rest kept so they still "
@@ -2148,76 +2148,76 @@ msgid ""
 " keep, and never invents a keyword. Needs a reachable provider."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:207
+#: src/photo_tagger/gui/vocabulary_builder.py:202
 msgid "Model requests to run at once; the list is sent in chunks."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:209
+#: src/photo_tagger/gui/vocabulary_builder.py:204
 msgid "Requests at once"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:214
+#: src/photo_tagger/gui/vocabulary_builder.py:209
 msgid "Write to"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:223
+#: src/photo_tagger/gui/vocabulary_builder.py:213
 msgid "Vocabulary file"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:229
+#: src/photo_tagger/gui/vocabulary_builder.py:219
 msgid ""
 "A CSV naming every dropped keyword, its count, and the rule that cut it. "
 "This is what makes the thresholds tunable rather than a guess."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:238
+#: src/photo_tagger/gui/vocabulary_builder.py:223
 msgid "Drop report"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:245
+#: src/photo_tagger/gui/vocabulary_builder.py:230
 #, python-brace-format
 msgid "The {n} photo in the list"
 msgid_plural "The {n} photos in the list"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:257
+#: src/photo_tagger/gui/vocabulary_builder.py:242
 msgid "Choose a keyword export"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:259
+#: src/photo_tagger/gui/vocabulary_builder.py:244
 msgid "Keyword exports (*.txt *.csv);;All files (*)"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:268
+#: src/photo_tagger/gui/vocabulary_builder.py:253
 msgid "Write the vocabulary to"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:270
+#: src/photo_tagger/gui/vocabulary_builder.py:255
 msgid "Keyword files (*.txt);;All files (*)"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:279
+#: src/photo_tagger/gui/vocabulary_builder.py:264
 msgid "Write the drop report to"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:281
+#: src/photo_tagger/gui/vocabulary_builder.py:266
 msgid "CSV files (*.csv);;All files (*)"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:299
+#: src/photo_tagger/gui/vocabulary_builder.py:284
 msgid "Pick a source: the photos in the list, a keyword export, or both."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:335
+#: src/photo_tagger/gui/vocabulary_builder.py:320
 msgid "Working..."
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:349
+#: src/photo_tagger/gui/vocabulary_builder.py:334
 msgid "Use this vocabulary?"
 msgstr ""
 
-#: src/photo_tagger/gui/vocabulary_builder.py:350
+#: src/photo_tagger/gui/vocabulary_builder.py:335
 msgid "Snap the keywords of the next generation onto the file you just built?"
 msgstr ""
 
@@ -2241,78 +2241,78 @@ msgstr ""
 msgid "Stopped watching."
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:42
+#: src/photo_tagger/gui/watch_dialog.py:41
 msgid "Watch a folder"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:47
+#: src/photo_tagger/gui/watch_dialog.py:46
 msgid ""
 "Point this at the folder your card reader, tethered capture, or sync "
 "client fills. Photos already there are picked up first, then each new one"
 " as it lands."
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:54
+#: src/photo_tagger/gui/watch_dialog.py:53
 msgid "Generate each new photo"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:57
+#: src/photo_tagger/gui/watch_dialog.py:56
 msgid "Save it too, without reviewing"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:60
+#: src/photo_tagger/gui/watch_dialog.py:59
 msgid ""
 "Off by default: the window is built around reviewing before writing. Turn"
 " it on for an unattended import, where it behaves like the CLI's watch "
 "command."
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:66
+#: src/photo_tagger/gui/watch_dialog.py:65
 msgid "Start Watching"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:82
+#: src/photo_tagger/gui/watch_dialog.py:81
 msgid "(pick a folder)"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:88
+#: src/photo_tagger/gui/watch_dialog.py:82
 msgid "Folder"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:98
-#: src/photo_tagger/gui/watch_dialog.py:111
+#: src/photo_tagger/gui/watch_dialog.py:92
+#: src/photo_tagger/gui/watch_dialog.py:105
 msgid " seconds"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:101
+#: src/photo_tagger/gui/watch_dialog.py:95
 msgid ""
 "How often the folder is listed. Polling behaves the same on every "
 "platform and over network shares."
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:105
+#: src/photo_tagger/gui/watch_dialog.py:99
 msgid "Check every"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:114
+#: src/photo_tagger/gui/watch_dialog.py:108
 msgid ""
 "How long a file must sit unchanged before it is picked up, so a photo "
 "still being copied is left alone until the copy finishes."
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:118
+#: src/photo_tagger/gui/watch_dialog.py:112
 msgid "Settle for"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:125
+#: src/photo_tagger/gui/watch_dialog.py:119
 msgid "Choose a folder to watch"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:157
+#: src/photo_tagger/gui/watch_dialog.py:151
 msgid "Pick a folder"
 msgstr ""
 
-#: src/photo_tagger/gui/watch_dialog.py:157
+#: src/photo_tagger/gui/watch_dialog.py:151
 msgid "Choose the folder to watch first."
 msgstr ""
 

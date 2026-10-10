@@ -17,12 +17,15 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QTreeWidgetItem,
+    QWidget,
 )
 
 from photo_tagger.gui.common import (
+    CHOOSE_LABEL,
     CLOSE_LABEL,
     COL_NAME,
     COL_STATUS,
@@ -74,6 +77,23 @@ def blurb(text: str = "", *, object_name: str = "") -> QLabel:
 def hint_label(text: str) -> QLabel:
     """Return a dimmed note that wraps, the kind a dialog puts under its settings."""
     return blurb(text, object_name="hint")
+
+
+def path_row(field: QLineEdit, choose: Callable[[], None], *extra: QWidget) -> QHBoxLayout:
+    """
+    Return a path field with the button that picks it, and any *extra* buttons after that.
+
+    The picker stays with the caller: one opens a folder, another a file, a third names a file to
+    write, and each fills the field in its own way.
+    """
+    button = QPushButton(_(CHOOSE_LABEL))
+    button.clicked.connect(choose)
+    row = QHBoxLayout()
+    row.addWidget(field, stretch=1)
+    row.addWidget(button)
+    for widget in extra:
+        row.addWidget(widget)
+    return row
 
 
 def close_row(dialog: QDialog) -> QHBoxLayout:

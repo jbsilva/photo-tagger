@@ -22,8 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from photo_tagger.gui.common import CHOOSE_LABEL, SESSION_NOTE
-from photo_tagger.gui.widgets import blurb, close_row, hint_label
+from photo_tagger.gui.common import SESSION_NOTE
+from photo_tagger.gui.widgets import blurb, close_row, hint_label, path_row
 from photo_tagger.gui_state import load_vocabulary_file, tooltip, vocabulary_status
 from photo_tagger.i18n import _
 
@@ -117,19 +117,14 @@ class KeywordRulesDialog(QDialog):
         self._vocabulary_field = QLineEdit(str(self._path or ""))
         self._vocabulary_field.setReadOnly(True)
         self._vocabulary_field.setPlaceholderText(_("(no vocabulary file)"))
-        choose = QPushButton(_(CHOOSE_LABEL))
-        choose.clicked.connect(self._choose_vocabulary)
         clear = QPushButton(_("Clear"))
         clear.clicked.connect(lambda: self.load_vocabulary(None))
         build = QPushButton(_("Build..."))
         build.setToolTip(tooltip("Write one from the keywords your own photos already carry."))
         build.clicked.connect(self.build_requested)
-        row = QHBoxLayout()
-        row.addWidget(self._vocabulary_field, stretch=1)
-        row.addWidget(choose)
-        row.addWidget(clear)
-        row.addWidget(build)
-        layout.addLayout(row)
+        layout.addLayout(
+            path_row(self._vocabulary_field, self._choose_vocabulary, clear, build),
+        )
 
         self._vocabulary_label = hint_label(vocabulary_status(None, None))
         layout.addWidget(self._vocabulary_label)

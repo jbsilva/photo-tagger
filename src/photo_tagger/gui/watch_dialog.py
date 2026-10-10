@@ -20,8 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_tagger.config import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
-from photo_tagger.gui.common import CHOOSE_LABEL
-from photo_tagger.gui.widgets import blurb
+from photo_tagger.gui.widgets import blurb, path_row
 from photo_tagger.gui_state import WatchSettings, tooltip
 from photo_tagger.i18n import _
 
@@ -80,12 +79,7 @@ class WatchDialog(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._folder = QLineEdit()
         self._folder.setPlaceholderText(_("(pick a folder)"))
-        choose = QPushButton(_(CHOOSE_LABEL))
-        choose.clicked.connect(self._choose_folder)
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(self._folder, stretch=1)
-        folder_row.addWidget(choose)
-        form.addRow(_("Folder"), folder_row)
+        form.addRow(_("Folder"), path_row(self._folder, self._choose_folder))
 
         self._recursive = QCheckBox(_("Include subfolders"))
         self._recursive.setChecked(recursive)

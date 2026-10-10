@@ -22,9 +22,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from photo_tagger.gui.common import CHOOSE_LABEL, CLOSE_LABEL, DEFAULT_VOCABULARY_FILE
+from photo_tagger.gui.common import CLOSE_LABEL, DEFAULT_VOCABULARY_FILE
 from photo_tagger.gui.threads import release_thread, start_in_thread
-from photo_tagger.gui.widgets import blurb, hint_label
+from photo_tagger.gui.widgets import blurb, hint_label, path_row
 from photo_tagger.gui.workers import VocabularyBuildWorker
 from photo_tagger.gui_state import tooltip
 from photo_tagger.i18n import _, ngettext
@@ -134,12 +134,7 @@ class VocabularyBuilderDialog(QDialog):
                 "machine. Its counts are occurrences in the keyword tree, not photos.",
             ),
         )
-        choose = QPushButton(_(CHOOSE_LABEL))
-        choose.clicked.connect(self._choose_keyword_export)
-        row = QHBoxLayout()
-        row.addWidget(self._export, stretch=1)
-        row.addWidget(choose)
-        form.addRow(_("Keyword export"), row)
+        form.addRow(_("Keyword export"), path_row(self._export, self._choose_keyword_export))
         return group
 
     def _build_rules_group(self) -> QGroupBox:
@@ -215,12 +210,7 @@ class VocabularyBuilderDialog(QDialog):
         form = QFormLayout(group)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._output = QLineEdit(str(DEFAULT_VOCABULARY_FILE))
-        output_choose = QPushButton(_(CHOOSE_LABEL))
-        output_choose.clicked.connect(self._choose_vocabulary_output)
-        output_row = QHBoxLayout()
-        output_row.addWidget(self._output, stretch=1)
-        output_row.addWidget(output_choose)
-        form.addRow(_("Vocabulary file"), output_row)
+        form.addRow(_("Vocabulary file"), path_row(self._output, self._choose_vocabulary_output))
 
         self._report = QLineEdit()
         self._report.setPlaceholderText(_("(optional)"))
@@ -230,12 +220,7 @@ class VocabularyBuilderDialog(QDialog):
                 "what makes the thresholds tunable rather than a guess.",
             ),
         )
-        report_choose = QPushButton(_(CHOOSE_LABEL))
-        report_choose.clicked.connect(self._choose_drop_report)
-        report_row = QHBoxLayout()
-        report_row.addWidget(self._report, stretch=1)
-        report_row.addWidget(report_choose)
-        form.addRow(_("Drop report"), report_row)
+        form.addRow(_("Drop report"), path_row(self._report, self._choose_drop_report))
         return group
 
     def show_for(self, photo_count: int) -> None:
