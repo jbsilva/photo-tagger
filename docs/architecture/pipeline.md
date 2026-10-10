@@ -74,10 +74,11 @@ flowchart TD
 2. `build_contextual_prompt` appends that context, such as existing keywords, location tags, GPS,
     and camera info, to the user prompt. The model can then reuse and extend what is already there.
 3. If `--cache-file` is set, cache lookup runs. The key is a hash of the image data (ExifTool's
-    `ImageDataHash`, which ignores metadata) plus a namespace digest of the model and sampling
-    settings. A hit replays the stored result and skips the model entirely. Cache I/O failures are
-    logged at warning level and treated as a miss, never raised. A corrupt SQLite file degrades to
-    "no cache" instead of aborting the photo. See [Caching and locking](caching.md).
+    `ImageDataHash`, which ignores metadata) plus a namespace: the model name and a digest of the
+    user prompt, the output language, and the sampling and image settings. The context from step 2
+    is not in the key. A hit replays the stored result and skips the model call. Cache I/O failures
+    are logged at warning level and treated as a miss, never raised. A corrupt SQLite file degrades
+    to "no cache" instead of aborting the photo. See [Caching and locking](caching.md).
 4. `prepare_image_for_agent` loads the image on a miss (rawpy for RAW, Pillow otherwise) and applies
     EXIF orientation. It flattens alpha to white, resizes to `--jpeg-dimensions`, and JPEG-encodes
     the bytes at `--jpeg-quality`.

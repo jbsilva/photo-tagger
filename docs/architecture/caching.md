@@ -13,33 +13,53 @@ opt-in and controlled by a single flag each.
 [`cache.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/cache.py) provides
 `InferenceCache`, a SQLite database opened in WAL (write-ahead logging) mode. Enable it with
 `--cache-file PATH`. If the file does not exist, photo-tagger creates it. A cache hit skips the
-model call entirely, so reruns on an unchanged folder are fast and free.
+model call, so reruns on an unchanged folder are fast and free. The one exception is
+`--repair-language` (see [below](#what-the-key-leaves-out)).
+
+This page is the full description of the cache. Other pages give a short summary and link here.
 
 ### Cache key
 
 Each entry is keyed by two parts:
 
-| Part             | What it is                                                                       |
-| ---------------- | -------------------------------------------------------------------------------- |
-| Image-data hash  | ExifTool's `ImageDataHash` over the image stream only, so identical pixels match |
-| Namespace digest | A digest of the model name, user prompt, and sampling settings                   |
+| Part             | What it is                                                                                     |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| Image-data hash  | ExifTool's `ImageDataHash` over the image stream only, or a hash of the whole file as fallback |
+| Namespace digest | The model name, plus a digest of the user prompt, the output language, and the image settings  |
 
-The image-data hash deliberately ignores metadata. ExifTool hashes only the decoded image stream,
-not the EXIF/XMP/IPTC blocks around it. So writing keywords, a title, or a description into a photo
-does not change the key. That is what makes the cache survive `--embed-in-photo`. The first run tags
-the file and stores the result. A later run over the same folder still hits the cache, even though
-the file's bytes changed. It is read in the same ExifTool call that already collects existing
-metadata, so a hit costs no extra subprocess. Formats ExifTool cannot hash that way fall back to a
-BLAKE2b digest of the whole file. For those, re-embedding metadata does produce a fresh key.
+The image-data hash deliberately ignores metadata. ExifTool hashes only the image stream, not the
+EXIF/XMP/IPTC blocks around it. So writing keywords, a title, or a description into a photo does not
+change the key. That is what makes the cache survive `--embed-in-photo`. The first run tags the file
+and stores the result. A later run over the same folder still hits the cache, even though the bytes
+of the file changed. It is read in the same ExifTool call that already collects existing metadata,
+so a hit costs no extra subprocess. For a format that ExifTool cannot hash that way, photo-tagger
+uses a BLAKE2b digest of the whole file. For those files, embedding metadata does change the key. If
+the file cannot be read for the hash, the photo runs without the cache.
 
-`build_cache_namespace()` produces the namespace digest from the model name, the user prompt, and
-the sampling settings: `temperature`, `max_tokens`, `frequency_penalty`, `jpeg_dimensions`, and
-`jpeg_quality`. The system prompt ships with the code and only changes across a photo-tagger
-upgrade, so the digest intentionally leaves it out.
+`build_cache_namespace()` makes the namespace from these inputs:
 
-When both the image and every input that changes the model's answer stay the same, the split key
-reuses a cached result. Change the model or the prompt, and you naturally get fresh entries. The old
-ones are never looked up again.
+- The model name.
+- The user prompt. This includes `--prompt-file`, `--hint`, and the term list of `--vocabulary`,
+    because all three go into the prompt.
+- `--output-language`.
+- `--temperature` and `--frequency-penalty`.
+- `--jpeg-dimensions` and `--jpeg-quality`.
+
+When the photo and all of these inputs stay the same, the run reuses the cached result. Change any
+of them, and the run writes fresh entries. The old ones are never looked up again.
+
+### What the key leaves out
+
+- `--max-tokens`, on purpose. The cap can only stop an answer: an answer that reaches it fails
+    validation and never goes into the cache. So you can raise or lower the cap (for example, to get
+    out of a model that repeats itself) and keep your cache.
+- The system prompt. It ships with the code and changes only with a photo-tagger upgrade.
+- The context of each photo: its existing keywords, location, GPS, and camera EXIF. The prompt gets
+    them after the namespace is made. So a photo whose keywords changed, but whose pixels did not,
+    still replays the old answer.
+- The repair setting. A cached answer that mixes writing systems is checked again on each replay.
+    With `--repair-language`, photo-tagger sends it to the model again, and a fixed answer replaces
+    it in the cache. See [mixed-language output](../usage/cli-reference.md#mixed-language-output).
 
 ### Lookup flow
 
@@ -56,6 +76,9 @@ flowchart TD
 ```
 
 ### Managing the cache
+
+When the cache opens, photo-tagger deletes the entries that were written more than 180 days ago.
+Every change of settings starts a new namespace, so without this the file would only grow.
 
 The cache file is safe to delete at any time. The next run repopulates it. Deleting it costs you
 only the model calls it skips, and never touches any metadata already written to your photos. When

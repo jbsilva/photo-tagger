@@ -313,10 +313,12 @@ photo-tagger \
 ```
 
 The cache key combines a hash of the image data (ExifTool's `ImageDataHash`, which ignores metadata)
-with the model name and sampling settings. Changing the model or temperature invalidates stale
-entries. When the first pass embeds tags into the photo with `--embed-in-photo`, a rerun still hits
-the cache, because the hash ignores metadata. If the file is missing, photo-tagger creates it. It is
-safe to delete at any time.
+with the model, the prompt, the output language, and the sampling and image settings. Changing the
+model or the temperature starts fresh entries. When the first pass embeds tags into the photo with
+`--embed-in-photo`, a rerun still hits the cache, because the hash ignores metadata. If the file is
+missing, photo-tagger creates it. It is safe to delete at any time. See
+[Caching and locking](../architecture/caching.md#cache-key) for what the key includes and leaves
+out.
 
 ## Tag photos as they are imported
 
