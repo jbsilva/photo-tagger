@@ -42,6 +42,7 @@ from photo_tagger.models import KeywordSet
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -620,6 +621,33 @@ def test_iter_field_presence_stops_reading_when_abandoned(tmp_path: Path) -> Non
 
     assert helper.get_tags.call_count == 1
     helper.__exit__.assert_called_once()  # the shared process is torn down on the way out
+
+
+def test_iter_field_presence_pulls_its_input_one_batch_at_a_time(tmp_path: Path) -> None:
+    """
+    The generator it is fed is consumed batch by batch, not drained up front.
+
+    That is what lets the GUI's scan skip a folder the user removed while the read was running.
+    """
+    paths = _presence_images(tmp_path, 6)
+    pulled: list[Path] = []
+    helper = _fake_helper([])
+
+    def feed() -> Iterator[Path]:
+        for path in paths:
+            pulled.append(path)
+            yield path
+
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        batches = iter_field_presence(feed(), batch_size=2)
+        next(batches)
+        assert pulled == paths[:2]  # only the batch that was read, not the whole list
+        next(batches)
+        assert pulled == paths[:4]
+        batches.close()
 
 
 def test_iter_field_presence_degrades_when_exiftool_cannot_start(tmp_path: Path) -> None:

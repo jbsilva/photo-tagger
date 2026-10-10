@@ -28,6 +28,7 @@ import subprocess  # nosec B404 - only used to reveal a photo in the OS file bro
 import sys
 import time
 from datetime import UTC, datetime
+from itertools import islice
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -293,7 +294,7 @@ from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS,
 
 if TYPE_CHECKING:
     # Annotation-only on Python 3.14 (lazy), so no runtime import is needed.
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable, Iterator
 
     from exiftool import ExifToolHelper
 
@@ -1067,6 +1068,9 @@ class MetadataScanWorker(QObject):
         """Store the paths to scan; nothing runs until :meth:`run`."""
         super().__init__()
         self._paths = paths
+        self._dropped: frozenset[Path] = frozenset()
+        self._position = 0  # how far _live_paths has walked the list
+        self._skipped = 0  # of those, how many had been removed from the list
         self._stop = False
 
     def stop(self) -> None:
@@ -1078,16 +1082,48 @@ class MetadataScanWorker(QObject):
         """
         self._stop = True
 
+    def drop(self, paths: Iterable[Path]) -> None:
+        """
+        Leave these photos unread: they left the list after the scan started.
+
+        The scan works from the list it was handed, so removing a folder of 19000 photos used to
+        read all of them anyway. Rebinding the set instead of mutating it is what makes this safe to
+        call from the UI thread while the scan thread reads it.
+        """
+        self._dropped = self._dropped | frozenset(paths)
+
+    def _live_paths(self) -> Iterator[Path]:
+        """Yield the paths still in the list, re-reading :meth:`drop` between photos."""
+        for position, path in enumerate(self._paths, start=1):
+            self._position = position
+            if path in self._dropped:
+                self._skipped += 1
+            else:
+                yield path
+
+    def _total(self) -> int:
+        """
+        Count the photos this scan will read in all, removals taken out.
+
+        Ahead of the cursor the removed photos have not been walked past yet, so they have to be
+        counted here; otherwise a folder removed early would keep padding the progress bar for the
+        rest of the scan.
+        """
+        if not self._dropped:
+            return len(self._paths)
+        ahead = islice(self._paths, self._position, None)
+        return len(self._paths) - self._skipped - sum(1 for path in ahead if path in self._dropped)
+
     def run(self) -> None:
         """Emit each batch of per-path field sets as it is read, until done or stopped."""
         scanned = 0
         self.progress.emit(scanned, len(self._paths))
         try:
-            for batch in iter_field_presence(self._paths):
+            for batch in iter_field_presence(self._live_paths()):
                 scanned += batch.scanned
                 if batch.presence:
                     self.done.emit({str(p): set(f) for p, f in batch.presence.items()})
-                self.progress.emit(scanned, len(self._paths))
+                self.progress.emit(scanned, self._total())
                 if self._stop:
                     break
         except Exception as exc:  # noqa: BLE001
@@ -3724,6 +3760,22 @@ class MainWindow(QMainWindow):
         """Drop the photos behind *keys* from the list and refresh the tree and grid."""
         if not keys:
             return
+        if self._scan_worker is not None:
+            # Before anything slower: a scan in flight is reading the list as it stood when it
+            # started, and the point of removing a folder is to stop paying for it.
+            self._scan_worker.drop(Path(key) for key in keys)
+        self._forget_items(keys)
+        self._rebuild_tree()
+        self._refresh_grid_after_removal()
+        self._update_status()
+        if self._scan_pending is not None and self._scan_thread is None:
+            # The photos an uncheck was still waiting to have scanned are the ones just removed,
+            # so nothing will finish a scan for it. Settle it now, against what is left, and after
+            # the summary above so its own line is the one that stays up.
+            self._end_scan(stopped=False)
+
+    def _forget_items(self, keys: list[str]) -> None:
+        """Drop each key from the list, from every cache holding its pixels, and from the view."""
         for key in keys:
             self._items.pop(key, None)
             self._preview_cache.pop(key, None)
@@ -3732,21 +3784,21 @@ class MainWindow(QMainWindow):
                 self._viewer_cache = None
             if self._current is not None and str(self._current.path) == key:
                 self._show_empty()
-        self._rebuild_tree()
-        # A visible grid still holds the removed thumbnails: dead items whose clicks and
-        # checkboxes map to nothing. Rebuild it, or close it when its folder emptied out.
-        if self._grid_folder is not None and self._right.currentIndex() == _PAGE_GRID:
-            if paths_under(self._item_paths(), self._grid_folder):
-                self._show_grid(self._grid_folder)
-            else:
-                self._grid_folder = None
-                self._show_empty()
-        self._update_status()
-        if self._scan_pending is not None and self._scan_thread is None:
-            # The photos an uncheck was still waiting to have scanned are the ones just removed,
-            # so nothing will finish a scan for it. Settle it now, against what is left, and after
-            # the summary above so its own line is the one that stays up.
-            self._end_scan(stopped=False)
+
+    def _refresh_grid_after_removal(self) -> None:
+        """
+        Rebuild a visible grid, or close it once its folder has emptied out.
+
+        Left alone, the grid still holds the removed thumbnails: dead items whose clicks and
+        checkboxes map to nothing.
+        """
+        if self._grid_folder is None or self._right.currentIndex() != _PAGE_GRID:
+            return
+        if paths_under(self._item_paths(), self._grid_folder):
+            self._show_grid(self._grid_folder)
+        else:
+            self._grid_folder = None
+            self._show_empty()
 
     def _clear(self) -> None:
         """Empty the list, unless a run is still working through it."""

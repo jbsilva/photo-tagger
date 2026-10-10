@@ -3936,6 +3936,53 @@ def test_metadata_scan_worker_stops_after_the_batch_in_flight(
     assert results == [{"/a.jpg": set()}]
 
 
+def test_metadata_scan_worker_skips_photos_dropped_while_it_reads(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A folder removed mid-scan stops being read, and leaves the progress total behind it.
+
+    Regression test: the scan used to work from the list it was handed, so removing a folder of
+    19000 photos out of 19500 still read all 19500 of them, and the bar still counted to 19500.
+    """
+    keep = [Path("/keep/0.jpg"), Path("/keep/1.jpg")]
+    gone = [Path(f"/gone/{index}.jpg") for index in range(3)]
+    worker = gui.MetadataScanWorker([keep[0], *gone, keep[1]])
+
+    def batches(scanned: Iterator[Path]) -> Iterator[metadata.PresenceBatch]:
+        for path in scanned:
+            if path == keep[0]:
+                worker.drop(gone)  # the UI thread removing that folder from the list
+            yield metadata.PresenceBatch(1, {path: set()})
+
+    monkeypatch.setattr(gui, "iter_field_presence", batches)
+    read: list[str] = []
+    ticks: list[tuple[int, int]] = []
+    worker.done.connect(read.extend)
+    worker.progress.connect(lambda done, total: ticks.append((done, total)))
+
+    worker.run()
+
+    assert read == ["/keep/0.jpg", "/keep/1.jpg"]
+    assert ticks == [(0, 5), (1, 2), (2, 2)]  # the removed folder leaves the total at once
+
+
+def test_remove_items_tells_a_running_scan_to_skip_them(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """Removing photos hands them to the scan in flight, so it stops reading them."""
+    a, b = _jpeg(tmp_path / "a.jpg"), _jpeg(tmp_path / "b.jpg")
+    _add_dir(window, {"a": a, "b": b})
+    worker = gui.MetadataScanWorker([a, b])
+    window._scan_worker = worker  # noqa: SLF001
+
+    window._remove_items([str(a)])  # noqa: SLF001
+
+    assert list(worker._live_paths()) == [b]  # noqa: SLF001
+
+
 class _FakeScanThread:
     """
     Stands in for a QThread without starting one, so tests stay fast and deterministic.

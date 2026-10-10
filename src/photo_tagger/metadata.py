@@ -4,6 +4,7 @@ import contextlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import batched, chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -391,15 +392,20 @@ def iter_field_presence(
     The same read, split up: a caller that would otherwise wait minutes for a whole library gets a
     result every *batch_size* images, so it can paint progress and stop early by abandoning the
     iterator. All batches share one exiftool process, which is what keeps the split cheap.
+
+    *image_paths* is pulled one batch at a time, never all at once, so a caller that passes a
+    generator can still drop images after the read has started (the GUI does this when a folder
+    leaves the list mid-scan).
     """
-    paths = list(image_paths)
-    if not paths:
+    batches = batched(image_paths, batch_size, strict=False)  # a short last batch is normal
+    first = next(batches, None)
+    if first is None:
         return
     tags = sorted({tag for tags in _FIELD_PRESENCE_TAGS.values() for tag in tags})
     try:
         with managed_helper(et) as helper:
-            for start in range(0, len(paths), batch_size):
-                batch = paths[start : start + batch_size]
+            for chunk in chain((first,), batches):
+                batch = list(chunk)
                 yield PresenceBatch(len(batch), _read_field_presence(batch, tags=tags, et=helper))
     except _EXIFTOOL_ERRORS as exc:
         # Opening the shared helper failed (a missing binary, most likely), so no batch can be

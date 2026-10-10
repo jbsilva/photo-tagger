@@ -22,6 +22,8 @@ All notable changes to this project are documented here. The format is based on
 - GUI: the metadata scan behind the **Tagged** column reads in small batches, so the column fills in
   as it goes and a long scan (thousands of photos, or a network share) shows a progress bar with a
   **Stop** button under the list.
+- GUI: removing a folder while that scan is running stops it from reading that folder, and takes
+  those photos out of the progress bar's total.
 
 ## [0.9.0] - 2026-09-18
 
