@@ -3167,6 +3167,27 @@ def test_config_hook_records_the_command_and_the_typed_flags(tmp_path: Path) -> 
     assert invocation.cli_flags == ("--input", "--interval", "--workers")
 
 
+def test_a_typed_embed_in_photo_beats_a_saved_sidecar_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The GUI saves a mode on every save; a shorthand typed on the command line still wins."""
+    config = tmp_path / "config.toml"
+    config.write_text('[output]\nsidecar_mode = "all"\n', encoding="utf-8")
+    monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(config))
+    image = _make_jpeg(tmp_path / "img.jpg")
+    seen: list[str] = []
+
+    def fake_write(*_args: object, **kwargs: Any) -> tuple[bool, list[object]]:  # noqa: ANN401
+        seen.append(kwargs["sidecar_mode"])
+        return True, []
+
+    with patch.object(main_module, "write_metadata_everywhere", side_effect=fake_write):
+        _run_app(["set", "--input", str(image), "--embed-in-photo", "--artist", "Ada"])
+
+    assert seen == ["none"]
+
+
 def test_config_hook_reports_an_alias_by_its_option_name(tmp_path: Path) -> None:
     """``--lang`` and ``--output-language`` are one option, and a negative keeps its "no"."""
     main_module.app.parse_args(["--input", str(tmp_path), "--lang", "German", "--no-backup-xmp"])

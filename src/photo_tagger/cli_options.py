@@ -1065,6 +1065,23 @@ def _typed_flags(arguments: ArgumentCollection) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
+# The two-state shorthand for --sidecar-mode, as typed on the command line.
+_SIDECAR_SHORTHAND = frozenset({"--write-sidecar", "--embed-in-photo"})
+
+
+def _drop_modes_the_shorthand_overrules(overrides: dict[str, Any], typed: tuple[str, ...]) -> None:
+    """
+    Leave the config file's sidecar mode out when the command line typed the shorthand for one.
+
+    An explicit --sidecar-mode wins over --embed-in-photo, which is right when both are typed. The
+    GUI writes a mode whenever it saves its settings as defaults, though, so without this a typed
+    --embed-in-photo would lose to a mode the user never typed at all: what is typed wins over what
+    is saved.
+    """
+    if _SIDECAR_SHORTHAND.intersection(typed) and "--sidecar-mode" not in typed:
+        overrides.pop("sidecar-mode", None)
+
+
 class ConfigFileSource:
     """
     Cyclopts config hook that fills flags the user did not pass from the TOML config file.
@@ -1090,6 +1107,7 @@ class ConfigFileSource:
             cli_flags=_typed_flags(arguments),
         )
         overrides = cli_config_overrides(load_config())
+        _drop_modes_the_shorthand_overrules(overrides, self.invocation.cli_flags)
         if not overrides:
             return
         source = find_config_file()
