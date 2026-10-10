@@ -159,6 +159,7 @@ from photo_tagger.gui_state import (
     BADGE_SIDECAR,
     BADGE_UNSAVED,
     DEFAULT_GUI_EXTENSIONS,
+    EXTRA_PASSES,
     FAILED,
     FILTER_ALL,
     FILTER_FAILED,
@@ -172,6 +173,7 @@ from photo_tagger.gui_state import (
     PENDING,
     READY,
     REMOVED,
+    RERUN_MIXED_SCRIPT,
     SAVED,
     SELECT_CHECK,
     SELECT_ONLY,
@@ -212,6 +214,7 @@ from photo_tagger.gui_state import (
     ensure_path_dirs,
     expand_inputs,
     extension_counts,
+    extra_pass_status,
     failure_summary,
     file_dialog_name_filters,
     file_type_label,
@@ -242,6 +245,7 @@ from photo_tagger.gui_state import (
     paths_under,
     photo_item_to_report_row,
     photo_matches_filter,
+    photos_for_pass,
     photos_to_write,
     progress_timing_text,
     rank_vision_models,
@@ -840,6 +844,7 @@ class GenerateWorker(QObject):
         repair_language: bool = False,
         pacing: PacingPlan | None = None,
         jpeg_dimensions: int = DEFAULT_DIMENSIONS,
+        refresh: bool = False,
     ) -> None:
         """
         Store the run parameters; nothing happens until :meth:`run`.
@@ -847,6 +852,9 @@ class GenerateWorker(QObject):
         *hints* maps a path (as ``str``) to the photographer's note for that photo; paths without
         one need no entry. *vocabulary* is listed in the prompt and snapped onto afterwards, exactly
         as the CLI's ``--vocabulary`` does.
+
+        *refresh* reads past the cache and stores what comes back, for a run whose whole point is
+        that the cached answer is the one it is unhappy with.
 
         *pacing* rests the run between work windows (see :mod:`photo_tagger.pacing`). The plan is
         followed per run: a window starts with this run and is forgotten when it ends, so a quick
@@ -864,6 +872,7 @@ class GenerateWorker(QObject):
         self._vocabulary = vocabulary
         self._vocabulary_strict = vocabulary_strict
         self._repair_language = repair_language
+        self._refresh = refresh
         # The longest edge of the JPEG the model is shown. It keys the cache too, so a window that
         # sends a different size than a CLI run never replays the other one's answers.
         self._jpeg_dimensions = jpeg_dimensions
@@ -1042,7 +1051,15 @@ class GenerateWorker(QObject):
         # later hint-less regeneration of this photo reads from, silently replaying someone else's
         # correction (or last week's) as if it were the model's generic read.
         skip_cache = cache is None or content_key is None or hint
-        cached = None if skip_cache else safe_cache_get(cache, content_key, file_name=path.name)
+        # A refresh run reads past the entry but still writes: the mixed-script pass asks again
+        # precisely because the stored answer is the unusable one, and replaying it would not be
+        # asking at all. What comes back is a plain generic answer for this photo, so it belongs
+        # under the same key, and a later run of this folder stops resurrecting the old one.
+        cached = (
+            None
+            if skip_cache or self._refresh
+            else safe_cache_get(cache, content_key, file_name=path.name)
+        )
         inference = cached
         if inference is None:
             jpeg = prepare_image_for_agent(path, max_size=self._jpeg_dimensions)
@@ -1946,8 +1963,13 @@ class MainWindow(QMainWindow):
         # Keys of the photos the last generation run covered, so a save it chains writes those and
         # leaves every other proposal for review. Emptied once that save has them.
         self._generated_keys: list[str] = []
-        # Whether this batch has already had its one automatic retry of the photos that failed.
-        self._retried = False
+        # Which of EXTRA_PASSES this batch has already had (each is worth one go, no more), and
+        # the one currently waiting out the pause before it starts.
+        self._passes_done: set[str] = set()
+        self._pending_pass: str | None = None
+        self._batch_uses_cache = True
+        # Set by Cancel between the chain's steps, so the next step ends the chain instead.
+        self._chain_cancelled = False
         # What a chained save adds to its closing line: the vocabulary and review counts the
         # generation reported, which nobody read if the run was left alone.
         self._save_note = ""
@@ -3908,8 +3930,9 @@ class MainWindow(QMainWindow):
             tooltip(
                 "Write every photo a run generates as soon as the run finishes, without "
                 "reviewing them. It is the same write the Save buttons make: Save Options, just "
-                "below, decides what goes onto the file, and Cancel stops it. Photos that failed "
-                "are retried once first, the way Retry Failed does.",
+                "below, decides what goes onto the file, and Cancel stops it. First the run has "
+                "one more go at the photos that failed and at the ones whose text came back in "
+                "two writing systems, since a second answer usually settles both.",
             ),
         )
         action.toggled.connect(self._on_autosave_toggled)
@@ -5269,19 +5292,23 @@ class MainWindow(QMainWindow):
         items: list[PhotoItem],
         *,
         use_cache: bool = True,
-        retry: bool = False,
+        extra_pass: bool = False,
+        refresh: bool = False,
     ) -> None:
         if self._busy() or not items:
             return
         # Fold the open photo's visible edits (most importantly a just-typed hint) into its
         # state before the run reads it.
         self._commit_current()
-        if not retry:
-            # A retry pass is the same batch having another go, so it keeps the batch (and its
-            # one retry) the chain is already working through, and adds to that batch's tallies
-            # rather than reporting the closing line off its own handful of photos.
+        if not extra_pass:
+            # An extra pass is the same batch having another go at part of itself, so it keeps
+            # the batch (and the passes still owed) the chain is working through, and adds to
+            # that batch's tallies rather than reporting the closing line off its own handful.
             self._generated_keys = [str(item.path) for item in items]
-            self._retried = False
+            self._passes_done = set()
+            # The extra passes follow the batch's own choice: after Skip Cache, a retry must not
+            # replay the cached answer the user chose to skip.
+            self._batch_uses_cache = use_cache
             self._vocabulary_mapped = 0
             self._vocabulary_dropped = {}
         for item in items:
@@ -5316,6 +5343,7 @@ class MainWindow(QMainWindow):
             repair_language=self._repair_language,
             pacing=self._pacing_plan,
             jpeg_dimensions=self._model_image_size,
+            refresh=refresh,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -5366,6 +5394,12 @@ class MainWindow(QMainWindow):
         """
         worker = self._worker or self._save_worker
         if worker is None:
+            if self._pending_pass is not None or self._harmonize_thread is not None:
+                # Between the chain's steps: nothing to stop mid-photo, so end it at the next step.
+                self._chain_cancelled = True
+                self._cancel_button.setEnabled(False)
+                if self._harmonize_thread is None:
+                    self._end_chain()
             return
         self._cancelling = True
         worker.stop()
@@ -5391,9 +5425,9 @@ class MainWindow(QMainWindow):
         else:
             self._status.setText(self._generation_summary())
             # Only an unattended run is worth an alert: whoever pressed Cancel is already here.
-            # A retry pass or a chained save still to come is part of the same job, so let the
+            # An extra pass or a chained save still to come is part of the same job, so let the
             # end of that job raise the one alert rather than one per step.
-            if not self._retry_pass_due() and not self._chained_save_targets():
+            if self._next_pass() is None and not self._chained_save_targets():
                 self._alert_run_finished(self._status.text())
         cancelled = self._cancelling
         self._cancelling = False
@@ -5421,61 +5455,101 @@ class MainWindow(QMainWindow):
 
     def _after_generation(self) -> None:
         """
-        Retry, harmonize, then save: the steps a finished generation still owes the batch.
+        Ask again, harmonize, then save: the steps a finished generation still owes the batch.
 
         Each one hands back here (or to :meth:`_continue_after_run`) when it ends, so the chain is
         the same whether a step runs or is switched off. Harmonization is what ``--session-gap``
         does inside a CLI run; here it lands on the proposals, before the review and before any save
         that follows, so the keywords you see are the ones a save would write.
         """
-        if self._start_retry_pass():
+        if self._chain_cancelled:
+            self._end_chain()
+            return
+        if self._start_extra_pass():
+            self._hold_for_chain()
             return  # the pass comes back through here when it ends
         if self._start_harmonize(announce=False):
+            self._hold_for_chain()
             return  # _on_harmonize_finished picks the chain back up
         self._continue_after_run()
+
+    def _hold_for_chain(self) -> None:
+        """
+        Keep the window busy while the chain waits (the pause before a pass, or harmonization).
+
+        The action buttons stay off, since _busy() would ignore their clicks, and Cancel stays on to
+        end the chain there.
+        """
+        for button in (
+            self._generate_button,
+            self._generate_one_button,
+            self._save_button,
+            self._save_selected_button,
+            self._retry_button,
+            self._test_button,
+        ):
+            button.setEnabled(False)
+        self._harmonize_action.setEnabled(False)
+        self._cancel_button.setEnabled(True)
+
+    def _end_chain(self) -> None:
+        """Close a chain that Cancel stopped between its steps: no pass, and no chained save."""
+        self._chain_cancelled = False
+        self._pending_pass = None
+        self._set_running(running=False)
+        self._status.setText(_("Cancelled. Nothing else was generated or saved."))
+        self._continue_watch()
 
     def _batch_items(self) -> list[PhotoItem]:
         """List the photos of the run the chain is working through, skipping any since removed."""
         return [item for key in self._generated_keys if (item := self._items.get(key)) is not None]
 
-    def _retry_pass_due(self) -> bool:
-        """Report whether this batch still owes its one automatic retry of what failed."""
-        if self._retried or not self._wants_chained_save():
-            return False
-        return any(item.status == FAILED for item in self._batch_items())
+    def _pass_targets(self, name: str) -> list[PhotoItem]:
+        """Pick what *name* would re-run: nothing when it is spent, switched off, or has no work."""
+        if name in self._passes_done or not self._wants_chained_save():
+            return []
+        return photos_for_pass(name, self._batch_items())
 
-    def _start_retry_pass(self) -> bool:
-        """
-        Queue one more go at the photos this batch failed on; report whether one was queued.
+    def _next_pass(self) -> str | None:
+        """Name the next extra pass this batch owes, in order, or None when it owes none."""
+        return next((name for name in EXTRA_PASSES if self._pass_targets(name)), None)
 
-        Only for a run that writes by itself. With nobody watching, a photo lost to a model server
-        that blinked would otherwise sit unwritten until someone noticed, which is the opposite of
-        what leaving the machine alone was for. **Retry Failed** is the same move by hand, and it
-        happens once per batch, so a provider that is simply down cannot loop.
+    def _start_extra_pass(self) -> bool:
         """
-        if not self._retry_pass_due():
+        Queue the next extra pass this batch owes; report whether one was queued.
+
+        Only for a run that writes by itself, where these are the two things a person would do
+        before saving and nobody is there to do them: press **Retry Failed**, and generate again
+        the odd photo whose text came back in two writing systems. Each pass runs once per batch,
+        so a provider that is down, or a photo that really does show foreign text, cannot loop.
+        """
+        name = self._next_pass()
+        if name is None:
             return False
-        self._retried = True
-        failed = [item for item in self._batch_items() if item.status == FAILED]
-        self._status.setText(
-            ngettext(
-                "Retrying {n} photo that failed...",
-                "Retrying {n} photos that failed...",
-                len(failed),
-            ).format(n=len(failed)),
-        )
-        QTimer.singleShot(_RETRY_PASS_DELAY_MS, self._run_retry_pass)
+        targets = self._pass_targets(name)
+        self._passes_done.add(name)
+        self._pending_pass = name
+        self._status.setText(extra_pass_status(name, len(targets)))
+        QTimer.singleShot(_RETRY_PASS_DELAY_MS, self._run_pending_pass)
         return True
 
-    def _run_retry_pass(self) -> None:
-        """Start the queued retry pass, or pick the chain back up when there is nothing to run."""
-        if self._closing:
+    def _run_pending_pass(self) -> None:
+        """Start the pass the pause was for, or pick the chain back up when it has no work left."""
+        if self._closing or self._pending_pass is None:
+            return  # closing, or Cancel already ended the chain during the pause
+        name, self._pending_pass = self._pending_pass, None
+        targets = photos_for_pass(name, self._batch_items()) if name else []
+        if targets and not self._busy():
+            # A mixed-script pass reads past the cache: the answer it is unhappy with is the one
+            # stored there, so replaying it would not be asking again at all.
+            self._run_generation(
+                targets,
+                use_cache=self._batch_uses_cache,
+                extra_pass=True,
+                refresh=name == RERUN_MIXED_SCRIPT,
+            )
             return
-        failed = [item for item in self._batch_items() if item.status == FAILED]
-        if failed and not self._busy():
-            self._run_generation(failed, retry=True)
-            return
-        # Nothing left to retry, or another run claimed the window during the wait. Either way the
+        # Nothing left to do, or another run claimed the window during the pause. Either way the
         # chain carries on from where it was; a new run brings its own.
         self._after_generation()
 
@@ -5512,6 +5586,8 @@ class MainWindow(QMainWindow):
         if self._wants_chained_save() and not self._write_fields_chosen():
             # Silence here would mean coming back to an unattended run that wrote nothing.
             self._status.setText(_(_PICK_A_FIELD))
+        # Nothing more is chained, so whatever the run was, it is over.
+        self._set_running(running=False)
         self._continue_watch()
 
     def _reset_working(self) -> int:
@@ -5532,11 +5608,19 @@ class MainWindow(QMainWindow):
 
     def _busy(self) -> bool:
         """
-        Whether a generation or save run is in flight.
+        Whether a run is in flight, counting the steps a finished generation still owes.
 
-        The two never overlap.
+        A generation and a save never overlap. Neither may start in the pause before an extra pass
+        or while harmonization runs: the chain would then carry on inside the new run, spend its
+        pass there, and could lay the old run's harmonized keywords over the new run's photos. A
+        click or a watch batch in that window waits, and the watch picks its queue up at the end.
         """
-        return self._thread is not None or self._save_thread is not None
+        return (
+            self._thread is not None
+            or self._save_thread is not None
+            or self._pending_pass is not None
+            or self._harmonize_thread is not None
+        )
 
     def _has_failures(self) -> bool:
         """Report whether any photo is currently in the failed state."""
@@ -6210,6 +6294,9 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         self._teardown_harmonize_thread()
+        if self._chain_cancelled:
+            self._end_chain()
+            return
         self._continue_after_run()
 
     def _teardown_harmonize_thread(self) -> None:

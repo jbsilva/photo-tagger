@@ -28,8 +28,10 @@ All notable changes to this project are documented here. The format is based on
 - GUI: **Save After Generating** writes each run's photos as soon as it finishes, so an overnight
   batch is one click. The toggle sits on the arrow of either **Generate** button, which then reads
   **Generate and Save**. The one set of **Save Options** sits beside it, because the write it makes
-  is the write **Save** makes. The photos that failed are retried once before the save, the way the
-  CLI retries its own. The closing line counts any still failing. The choice persists to `[gui]`.
+  is the write **Save** makes. Before saving, the run retries the photos that failed. Then it asks
+  again for the photos whose text came back in two writing systems, where a second answer usually
+  comes back in one. That call reads past the result cache and replaces what it finds. The closing
+  line counts any photo still failing. The choice persists to `[gui]`.
 
 - GUI: **Settings > Copyright...** sets the same credit and notice, previews the tags a save writes,
   and persists them to `[copyright]`. A copyright alone is enough to save a photo, and **Insert**

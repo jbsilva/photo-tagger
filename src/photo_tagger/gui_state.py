@@ -1496,6 +1496,41 @@ def watch_status_text(settings: WatchSettings, *, added: int) -> str:
     ).format(folders=folders, n=added)
 
 
+# The extra passes a run that writes by itself makes before it saves, in the order it makes them.
+# Both are the window doing by itself what a person at the keyboard would do next: press Retry
+# Failed, and generate the odd photo whose text came back in two writing systems.
+RERUN_FAILED = "failed"
+RERUN_MIXED_SCRIPT = "mixed-script"
+EXTRA_PASSES = (RERUN_FAILED, RERUN_MIXED_SCRIPT)
+
+
+def photos_for_pass(name: str, items: Iterable[PhotoItem]) -> list[PhotoItem]:
+    """
+    Pick the photos an extra pass re-runs.
+
+    The failed ones, or the ones whose generated text mixes writing systems: a second answer often
+    comes back in one script, the way a second attempt often succeeds.
+    """
+    if name == RERUN_FAILED:
+        return [item for item in items if item.status == FAILED]
+    return [item for item in items if item.foreign_terms]
+
+
+def extra_pass_status(name: str, count: int) -> str:
+    """Say what a run about to ask the model again for part of its batch is doing."""
+    if name == RERUN_FAILED:
+        return ngettext(
+            "Retrying {n} photo that failed...",
+            "Retrying {n} photos that failed...",
+            count,
+        ).format(n=count)
+    return ngettext(
+        "Retrying {n} photo that mixed writing systems...",
+        "Retrying {n} photos that mixed writing systems...",
+        count,
+    ).format(n=count)
+
+
 def photos_to_write(items: Iterable[PhotoItem]) -> list[PhotoItem]:
     """
     Pick the photos a save nobody reviews is to write: generated, and not written yet.

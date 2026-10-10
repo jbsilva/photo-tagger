@@ -219,7 +219,8 @@ When the model gets a photo wrong (a deer tagged as a boar, say), correct it wit
 AI** field next to *Generate This Photo*: type a note such as `The animal is a deer` and press Enter
 (or the button) to regenerate. The hint is sent with the photo as a note the model must trust over
 its own reading of the image, and a hinted photo always calls the model instead of replaying its
-cached result; the corrected answer then replaces the cached one. Each photo keeps its own hint (it
+cached result. The corrected answer is not cached either: a one-off correction must not become the
+generic answer a later hint-less run of that photo replays. Each photo keeps its own hint (it
 survives browsing to other photos and rides along in batch runs too) and it is never written to the
 file. The CLI equivalent for a whole run is [`--hint`](cli-reference.md#inference).
 
@@ -305,12 +306,27 @@ A run you will not sit through can write its own photos. **Save After Generating
 either **Generate** button, writes every photo a run produced as soon as that run finishes. Both
 buttons then read **Generate and Save**, and their tooltips spell out what that save writes.
 
-Before it writes, the run has one more go at the photos that failed, which is what **Retry Failed**
-does by hand. A model server that blinks for a minute costs you those photos otherwise, and nobody
-is there to press the button. The pass waits a few seconds first, because a failure usually means
-the server is busy or restarting, and it happens once per batch, so a provider that is down cannot
-loop. Photos still failing after it keep their `failed ✗` row, and the closing line counts them:
-`Saved 48 of 48 checked photos. 2 photos failed (Retry Failed to try again).`
+Before it writes, the run does the two things you would do at the keyboard. First it has another go
+at the photos that **failed**, which is what **Retry Failed** does by hand: a model server that
+blinks for a minute costs you those photos otherwise, and nobody is there to press the button. Then
+it asks again for the photos whose text came back in **two writing systems**, because a second
+answer usually comes back in one. That second call reads past the result cache (the answer it is
+unhappy with is the one stored there) and stores what it gets, so a later run of the same folder
+does not bring the mixed text back. A batch started with **Skip Cache** leaves the cache alone here
+too.
+
+Each pass waits a few seconds before it starts, because a failure usually means the server is busy
+or restarting, and each happens once per batch, so a provider that is down cannot loop. Photos still
+failing keep their `failed ✗` row and are counted in the closing line:
+`Saved 48 of 48 checked photos. 2 photos failed (Retry Failed to try again).` Photos that come back
+mixed a second time keep their amber `⚠` and are saved as they are.
+
+!!! note "When the foreign word is the right answer"
+
+    Mixed script is correct when the photo shows the text: a sign, a book cover, a printed character.
+    Asking again may replace that word with an English one, and with nobody reviewing, that answer is
+    what gets written. If your library is full of such photos, leave **Save After Generating** off for
+    them and review as usual, or check the `⚠` rows afterwards.
 
 It covers the run you just started, so a proposal left over from an earlier one is still yours to
 review. Nothing else changes. The write is the one **Save Selected** makes, down to the

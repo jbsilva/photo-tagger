@@ -43,11 +43,14 @@ from PySide6.QtWidgets import (
 from photo_tagger import gui, metadata, telemetry
 from photo_tagger.errors import ProviderError
 from photo_tagger.gui_state import (
+    EXTRA_PASSES,
     FAILED,
     MAX_ZOOM,
     MIXED_SCRIPT_MARK,
     PENDING,
     READY,
+    RERUN_FAILED,
+    RERUN_MIXED_SCRIPT,
     SAVED,
     TOOLTIP_WIDTH,
     WORKING,
@@ -4245,6 +4248,47 @@ def test_hinted_photo_skips_the_cache_lookup(
     assert corrected[0].from_cache is False
 
 
+def test_a_refresh_run_replaces_the_answer_it_read_past(
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The mixed-script pass asks again because the cached answer is the unusable one.
+
+    Reading past it is half the job: what comes back is a plain generic answer for this photo, so
+    it has to land under the same key. Otherwise the next run of the folder replays the mixed text
+    and re-flags a photo the window already fixed and wrote.
+    """
+    _stub_generation(monkeypatch)
+    img = _jpeg(tmp_path / "a.jpg")
+    cache_file = tmp_path / "cache.sqlite"
+    first = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    first.file_done.connect(lambda _p: None)
+    first.run()  # caches the mixed-script title "T"
+
+    monkeypatch.setattr(
+        gui,
+        "analyze_image_with_ai",
+        lambda **_k: InferenceResult(title="Ocarina", description="D", keywords=["Ocarina"]),
+    )
+    again = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file, refresh=True)
+    fresh: list[Proposal] = []
+    again.file_done.connect(fresh.append)
+    again.run()
+    assert fresh[0].title == "Ocarina"
+    assert fresh[0].from_cache is False
+
+    monkeypatch.setattr(gui, "analyze_image_with_ai", lambda **_k: pytest.fail("no call expected"))
+    later = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    replayed: list[Proposal] = []
+    later.file_done.connect(replayed.append)
+    later.run()
+
+    assert replayed[0].title == "Ocarina"  # the refreshed answer, not the one it replaced
+    assert replayed[0].from_cache is True
+
+
 def test_hinted_photo_does_not_poison_the_shared_cache(
     qapp: QApplication,
     tmp_path: Path,
@@ -5026,8 +5070,66 @@ def test_an_unattended_run_retries_what_failed_before_saving(
 
     assert "Retrying 1 photo that failed" in window._status.text()  # noqa: SLF001
     assert saved == []  # the save waits for the retry
-    window._run_retry_pass()  # noqa: SLF001 - fire the queued pass without its wait
+    window._run_pending_pass()  # noqa: SLF001 - fire the queued pass without its wait
     assert runs == [[b]]
+
+
+def test_an_unattended_run_asks_again_for_mixed_writing_systems(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second answer usually comes back in one script, and nobody is there to ask for it."""
+    a, b = _ready_pair_for_autosave(window, tmp_path, monkeypatch)
+    window._generated_keys = [str(a), str(b)]  # noqa: SLF001
+    window._items[str(b)].foreign_terms = ["陶笛"]  # noqa: SLF001
+    runs: list[tuple[list[Path], bool]] = []
+    monkeypatch.setattr(
+        window,
+        "_run_generation",
+        lambda items, **kw: runs.append(([i.path for i in items], kw.get("refresh", False))),
+    )
+    saved: list[list[Path]] = []
+    monkeypatch.setattr(window, "_run_save", lambda items: saved.append([i.path for i in items]))
+
+    window._after_generation()  # noqa: SLF001
+
+    assert "Retrying 1 photo that mixed writing systems" in window._status.text()  # noqa: SLF001
+    assert saved == []  # the save waits for the answer
+    window._run_pending_pass()  # noqa: SLF001
+
+    # Refreshed, not cached: the answer it is unhappy with is the one in the cache.
+    assert runs == [([b], True)]
+
+
+def test_the_failed_pass_runs_before_the_mixed_script_one(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A photo that failed has no text yet, so its retry can only make more work for the other."""
+    a, b = _ready_pair_for_autosave(window, tmp_path, monkeypatch)
+    window._generated_keys = [str(a), str(b)]  # noqa: SLF001
+    window._items[str(a)].foreign_terms = ["陶笛"]  # noqa: SLF001
+    window._items[str(b)].status = FAILED  # noqa: SLF001
+
+    assert window._next_pass() == RERUN_FAILED  # noqa: SLF001
+    window._passes_done.add(RERUN_FAILED)  # noqa: SLF001 - as starting it would
+    assert window._next_pass() == RERUN_MIXED_SCRIPT  # noqa: SLF001
+
+
+def test_a_reviewed_run_leaves_the_mixed_script_call_to_you(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mixed script is right when the photo shows the text, and only you can tell."""
+    a, _b = _ready_pair_for_autosave(window, tmp_path, monkeypatch)
+    window._autosave_action.setChecked(False)  # noqa: SLF001
+    window._generated_keys = [str(a)]  # noqa: SLF001
+    window._items[str(a)].foreign_terms = ["陶笛"]  # noqa: SLF001
+
+    assert window._next_pass() is None  # noqa: SLF001
 
 
 def test_the_retry_pass_keeps_the_batch_tallies(
@@ -5041,7 +5143,7 @@ def test_the_retry_pass_keeps_the_batch_tallies(
     window._generated_keys = [str(a), str(b)]  # noqa: SLF001
     window._vocabulary_mapped = 7  # noqa: SLF001 - what the first pass rewrote
 
-    window._run_generation([window._items[str(b)]], retry=True)  # noqa: SLF001
+    window._run_generation([window._items[str(b)]], extra_pass=True)  # noqa: SLF001
 
     assert window._vocabulary_mapped == 7  # noqa: SLF001, PLR2004 - still the batch's tally
     assert window._generated_keys == [str(a), str(b)]  # noqa: SLF001
@@ -5059,12 +5161,12 @@ def test_the_retry_pass_happens_once_per_batch(
     window._items[str(b)].status = FAILED  # noqa: SLF001
     monkeypatch.setattr(window, "_run_generation", lambda _items, **_k: None)
 
-    assert window._start_retry_pass() is True  # noqa: SLF001
-    assert window._start_retry_pass() is False  # noqa: SLF001 - still failing, but that was the go
+    assert window._start_extra_pass() is True  # noqa: SLF001
+    assert window._next_pass() is None  # noqa: SLF001 - still failing, but that was its one go
 
-    # A fresh run is a fresh batch, so it gets its own retry again.
-    window._retried = False  # noqa: SLF001 - what _run_generation does for a non-retry run
-    assert window._start_retry_pass() is True  # noqa: SLF001
+    # A fresh run is a fresh batch, so it gets its own passes again.
+    window._passes_done = set()  # noqa: SLF001 - what _run_generation does for a first pass
+    assert window._next_pass() == RERUN_FAILED  # noqa: SLF001
 
 
 def test_a_reviewed_run_leaves_retrying_to_the_retry_button(
@@ -5078,10 +5180,10 @@ def test_a_reviewed_run_leaves_retrying_to_the_retry_button(
     window._generated_keys = [str(a), str(b)]  # noqa: SLF001
     window._items[str(b)].status = FAILED  # noqa: SLF001
 
-    assert window._start_retry_pass() is False  # noqa: SLF001
+    assert window._start_extra_pass() is False  # noqa: SLF001
 
 
-def test_the_retry_pass_carries_on_when_the_failures_are_gone(
+def test_an_extra_pass_carries_on_when_its_photos_are_gone(
     window: gui.MainWindow,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5091,9 +5193,10 @@ def test_the_retry_pass_carries_on_when_the_failures_are_gone(
     window._generated_keys = [str(a), str(b)]  # noqa: SLF001
     saved: list[list[Path]] = []
     monkeypatch.setattr(window, "_run_save", lambda items: saved.append([i.path for i in items]))
-    window._retried = True  # noqa: SLF001 - the pass already ran
+    window._passes_done = set(EXTRA_PASSES)  # noqa: SLF001 - both passes already ran
+    window._pending_pass = "failed"  # noqa: SLF001 - the pass the pause was for
 
-    window._run_retry_pass()  # noqa: SLF001
+    window._run_pending_pass()  # noqa: SLF001
 
     assert saved == [[a, b]]
 
@@ -6554,3 +6657,59 @@ def test_window_reads_the_image_size_from_the_config(
         assert window._model_image_size == 896  # noqa: SLF001, PLR2004 - window state.
     finally:
         window.close()
+
+
+def test_the_steps_a_generation_still_owes_keep_the_window_busy(window: gui.MainWindow) -> None:
+    """
+    The pause before an extra pass, and harmonization, belong to the run that just ended.
+
+    A click or a watch batch landing there used to start a run the chain then carried on inside.
+    """
+    assert window._busy() is False  # noqa: SLF001
+    window._pending_pass = "failed"  # noqa: SLF001
+    assert window._busy() is True  # noqa: SLF001
+    window._pending_pass = None  # noqa: SLF001
+    window._harmonize_thread = object()  # type: ignore[assignment]  # noqa: SLF001
+    try:
+        assert window._busy() is True  # noqa: SLF001
+    finally:
+        window._harmonize_thread = None  # noqa: SLF001
+
+
+def test_an_extra_pass_follows_the_batch_choice_to_skip_the_cache(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After Skip Cache, the retry pass must not replay the cached answer the user skipped."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    item = window._items[str(img)]  # noqa: SLF001
+    item.status = FAILED
+    window._generated_keys = [str(img)]  # noqa: SLF001
+    window._batch_uses_cache = False  # noqa: SLF001
+    window._pending_pass = "failed"  # noqa: SLF001 - the retry pass (RERUN_FAILED)
+    runs: list[dict[str, object]] = []
+    monkeypatch.setattr(window, "_run_generation", lambda _items, **kwargs: runs.append(kwargs))
+
+    window._run_pending_pass()  # noqa: SLF001
+
+    assert runs
+    assert runs[0]["use_cache"] is False
+
+
+def test_cancel_during_the_pause_ends_the_chain(window: gui.MainWindow) -> None:
+    """Cancel between the chain's steps runs no pass and no save, and frees the buttons."""
+    window._pending_pass = "failed"  # noqa: SLF001
+    window._hold_for_chain()  # noqa: SLF001
+    assert not window._generate_button.isEnabled()  # noqa: SLF001
+    assert window._cancel_button.isEnabled()  # noqa: SLF001
+
+    window._cancel_generation()  # noqa: SLF001
+
+    assert window._pending_pass is None  # noqa: SLF001
+    assert window._busy() is False  # noqa: SLF001
+    assert window._generate_button.isEnabled()  # noqa: SLF001
+    window._run_pending_pass()  # noqa: SLF001 - the timer firing later changes nothing
+    assert window._busy() is False  # noqa: SLF001

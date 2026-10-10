@@ -39,6 +39,8 @@ from photo_tagger.gui_state import (
     PENDING,
     READY,
     REMOVED,
+    RERUN_FAILED,
+    RERUN_MIXED_SCRIPT,
     SAVED,
     SELECT_CHECK,
     SELECT_ONLY,
@@ -83,6 +85,7 @@ from photo_tagger.gui_state import (
     estimate_remaining,
     expand_inputs,
     extension_counts,
+    extra_pass_status,
     failure_summary,
     fields_written,
     file_dialog_name_filters,
@@ -122,6 +125,7 @@ from photo_tagger.gui_state import (
     photo_item_to_report_row,
     photo_matches_filter,
     photo_sort_key,
+    photos_for_pass,
     photos_to_write,
     progress_timing_text,
     rank_vision_models,
@@ -1950,6 +1954,30 @@ def test_photos_to_write_takes_only_the_unsaved_proposals() -> None:
     pending = PhotoItem(path=Path("/d.jpg"))
 
     assert photos_to_write([ready, saved, failed, pending]) == [ready]
+
+
+def test_photos_for_pass_picks_what_each_extra_pass_re_runs() -> None:
+    """One pass takes the photos with no answer, the other the answers in two scripts."""
+    failed = PhotoItem(path=Path("/a.jpg"), status=FAILED)
+    mixed = PhotoItem(
+        path=Path("/b.jpg"),
+        status=READY,
+        has_proposal=True,
+        foreign_terms=["陶笛"],
+    )
+    clean = PhotoItem(path=Path("/c.jpg"), status=READY, has_proposal=True)
+    batch = [failed, mixed, clean]
+
+    assert photos_for_pass(RERUN_FAILED, batch) == [failed]
+    assert photos_for_pass(RERUN_MIXED_SCRIPT, batch) == [mixed]
+
+
+def test_extra_pass_status_says_which_photos_it_is_asking_about() -> None:
+    """The status bar has to explain a run that started itself, plural included."""
+    assert extra_pass_status(RERUN_FAILED, 1) == "Retrying 1 photo that failed..."
+    assert extra_pass_status(RERUN_FAILED, 4) == "Retrying 4 photos that failed..."
+    mixed = extra_pass_status(RERUN_MIXED_SCRIPT, 2)
+    assert mixed == "Retrying 2 photos that mixed writing systems..."
 
 
 def test_failure_summary_names_the_button_that_tries_again() -> None:
