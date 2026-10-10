@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from PySide6 import __version__ as pyside_version
-from PySide6.QtCore import QPoint, QSignalBlocker, QSize, Qt, QThread, QTimer, QUrl, qVersion
+from PySide6.QtCore import QPoint, QSize, Qt, QThread, QTimer, QUrl, qVersion
 
 # QCloseEvent, QDragEnterEvent and QDropEvent are used only in annotations, but they are imported
 # here at runtime on purpose: see the note above closeEvent. Moving them into the TYPE_CHECKING
@@ -63,15 +63,11 @@ from photo_tagger import __version__, i18n, telemetry
 from photo_tagger.cli_options import (
     known_config_keys,
     load_defaults,
-    resolve_notify,
     to_pacing_plan,
 )
-from photo_tagger.config import DEFAULT_OUTPUT_LANGUAGE
 from photo_tagger.config_file import (
     config_file_kind,
-    find_config_file,
     load_config,
-    user_config_path,
 )
 from photo_tagger.csv_report import write_report
 from photo_tagger.discovery import load_skip_list, skip_list_matches
@@ -90,6 +86,7 @@ from photo_tagger.gui.common import (
     PATH_ROLE,
     PICK_A_FIELD,
     STATUS_RANK_ROLE,
+    config_target,
 )
 from photo_tagger.gui.connection import ConnectionBar
 from photo_tagger.gui.copyright import CopyrightDialog
@@ -98,6 +95,7 @@ from photo_tagger.gui.folder_grid import FolderGrid
 from photo_tagger.gui.keyword_rules import KeywordRulesDialog
 from photo_tagger.gui.pacing import PacingDialog
 from photo_tagger.gui.save_options import SaveOptionsMenu
+from photo_tagger.gui.settings_menu import SettingsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
 from photo_tagger.gui.threads import join_thread, release_thread, start_in_thread
 from photo_tagger.gui.undo_dialog import UndoDialog
@@ -126,7 +124,6 @@ from photo_tagger.gui_state import (
     FILTER_PENDING,
     FILTER_SAVED,
     FILTER_UNTAGGED,
-    OUTPUT_LANGUAGE_SUGGESTIONS,
     PENDING,
     READY,
     RERUN_FAILED,
@@ -156,8 +153,6 @@ from photo_tagger.gui_state import (
     build_save_job,
     build_tree,
     capture_year,
-    config_text_with_language,
-    config_text_with_output_language,
     config_toml_text,
     deselect_paths,
     expand_inputs,
@@ -200,7 +195,6 @@ from photo_tagger.gui_state import (
     tagged_legend,
     tagged_summary,
     tagged_tooltip,
-    telemetry_toggle_note,
     tooltip,
     vocabulary_summary,
     watch_status_text,
@@ -236,7 +230,6 @@ from photo_tagger.metadata import (
     read_metadata_sources,
     write_metadata_everywhere,
 )
-from photo_tagger.notify import APP_NAME, notify
 from photo_tagger.pacing import SECONDS_PER_MINUTE
 from photo_tagger.pipeline import FAILURE_OTHER
 from photo_tagger.providers import get_backend
@@ -437,31 +430,24 @@ class MainWindow(QMainWindow):
         self._init_worker_state()
         self._syncing = False
         self._closing = False
-        # The persisted UI language choice; "auto" means follow the OS locale. Changing it in the
-        # Settings menu rewrites this key and takes effect on the next launch.
-        self._language = str(self._raw_config.get("language", i18n.AUTO))
-        # The language the model writes titles, descriptions, and keywords in. Distinct from the
-        # UI language above; persisted under [inference] output_language, which the CLI shares.
-        self._output_language = self._defaults.inference.output_language
-        self._cache_file = self._defaults.artifacts.cache_file or DEFAULT_CACHE_FILE
         # What this window does, for its telemetry: runs, saves, features, busy and idle time.
         self._usage = GuiUsage(time.monotonic())
         # The photos of the run in flight, kept apart from _generated_keys, which a chained save
         # empties before the run is over.
         self._run_keys: list[str] = []
-        # Telemetry on/off: a persisted Settings-menu choice wins over the config-file default, and
-        # a toggle turned on by hand is an opt-in that overrules DO_NOT_TRACK.
-        self._telemetry_enabled, self._telemetry_opted_in = telemetry.gui_choice(
-            config_enabled=self._defaults.telemetry.enabled,
-        )
-        # End-of-run desktop alert, resolved the same way the CLI resolves its two flags: a config
-        # that asks only for the sound is asking for the notification that carries it.
-        self._notify_enabled, self._notify_sound = resolve_notify(self._defaults.display)
         # The size the model sees, from [inference] jpeg_dimensions. The window used to hardcode
         # its preview size here, which silently ignored the configured value and gave CLI and GUI
         # runs different answers (and separate cache namespaces) for the same photo.
         self._model_image_size = self._defaults.inference.jpeg_dimensions
         self._init_keyword_rules()
+        # Built before the dialogs: the Keyword Rules dialog reads the metadata language from it.
+        self._settings_menu = SettingsMenu(
+            self,
+            raw_config=self._raw_config,
+            defaults=self._defaults,
+            # The GUI cache lives next to the GUI logs unless the config names a cache_file.
+            cache_file=self._defaults.artifacts.cache_file or DEFAULT_CACHE_FILE,
+        )
 
         self.setWindowTitle(f"Photo Tagger {__version__}")
         self.setWindowIcon(app_icon())
@@ -528,7 +514,7 @@ class MainWindow(QMainWindow):
             self,
             photo_paths=self._item_paths,
             connection=self._connection_bar.connection,
-            output_language=lambda: self._output_language,
+            output_language=lambda: self._settings_menu.output_language,
         )
         self._builder_dialog.status.connect(self._status.setText)
         self._builder_dialog.used.connect(self._count)
@@ -606,7 +592,6 @@ class MainWindow(QMainWindow):
         of what was configured.
         """
         output = self._defaults.output
-        self._repair_language = self._defaults.inference.repair_language
         self._sidecar_overrides, overrides_error = load_sidecar_overrides(output.sidecar_overrides)
         if overrides_error:
             # A config the CLI would refuse must not take the window down with it.
@@ -683,7 +668,8 @@ class MainWindow(QMainWindow):
 
         self._build_go_menu(menubar)
         self._build_tools_menu(menubar)
-        self._build_settings_menu(menubar)
+        menubar.addMenu(self._settings_menu)
+        self._wire_settings_menu()
 
         help_menu = self._help_menu = menubar.addMenu(_("Help"))
         help_menu.addAction(
@@ -714,152 +700,25 @@ class MainWindow(QMainWindow):
         )
         menu.addAction(self._up_action)
 
-    def _build_settings_menu(self, menubar: QMenu) -> None:
-        """Build the Settings menu: the toggles and the two languages, then the config actions."""
-        settings_menu = self._settings_menu = menubar.addMenu(_("Settings"))
-        settings_menu.setToolTipsVisible(True)
-        self._cache_action = QAction(_("Cache AI Results"), self)
-        self._cache_action.setCheckable(True)
-        self._cache_action.setChecked(True)
-        self._cache_action.setToolTip(
-            tooltip(
-                "Reuse earlier results for unchanged photos ({cache_file}). Uncheck to call "
-                "the model again for everything; a single photo can skip the cache from its "
-                "right-click menu.",
-                cache_file=self._cache_file,
-            ),
-        )
-        self._cache_action.toggled.connect(lambda _on: self._count("cache_toggle"))
-        settings_menu.addAction(self._cache_action)
-        self._telemetry_action = QAction(_("Send Anonymous Telemetry"), self)
-        self._telemetry_action.setCheckable(True)
-        self._refresh_telemetry_action()
-        self._telemetry_action.toggled.connect(self._on_telemetry_toggled)
-        settings_menu.addAction(self._telemetry_action)
-        self._undo_log_action = QAction(_("Record Saves for Undo"), self)
-        self._undo_log_action.setCheckable(True)
-        self._undo_log_action.setChecked(self._defaults.artifacts.undo_log)
-        self._undo_log_action.setToolTip(
-            tooltip(
-                "Record every file a save writes, so Tools > Undo Writes can put it back. On by "
-                "default: the saves worth undoing are the ones nobody planned to.",
-            ),
-        )
-        self._undo_log_action.toggled.connect(lambda _on: self._count("undo_log_toggle"))
-        settings_menu.addAction(self._undo_log_action)
-        self._build_repair_action(settings_menu)
-        self._build_notify_actions(settings_menu)
-        settings_menu.addSeparator()
-        keyword_rules = settings_menu.addAction(
-            _("Keyword Rules..."),
-            self._show_keyword_rules,
-        )
-        keyword_rules.setToolTip(
-            tooltip(
-                "The controlled vocabulary generated keywords are snapped onto, and whether the "
-                "keywords of one shoot are made to agree with each other.",
-            ),
-        )
-        copyright_action = settings_menu.addAction(_("Copyright..."), self._show_copyright)
-        copyright_action.setToolTip(
-            tooltip(
-                "Your credit and copyright notice, written by every save. The year comes from "
-                "each photo, so one setting covers every shoot.",
-            ),
-        )
-        pacing_action = settings_menu.addAction(_("Pacing..."), self._show_pacing)
-        pacing_action.setToolTip(
-            tooltip(
-                "Rest a long run now and then, so it does not flatten the battery, cook the "
-                "machine, or take it over while you work.",
-            ),
-        )
-        settings_menu.addSeparator()
-        self._build_language_menu(settings_menu)
-        self._build_output_language_menu(settings_menu)
-        settings_menu.addSeparator()
-        save_defaults = settings_menu.addAction(
-            _("Save Settings as Defaults..."),
-            self._save_config,
-        )
-        save_defaults.setToolTip(
-            tooltip(
-                "Update the config file with the current provider, model, URL, file types, and "
-                "save options. Other settings and comments in the file are preserved; the API "
-                "key is never written.",
-            ),
-        )
-        edit_config = settings_menu.addAction(_("Edit Config File..."), self._edit_config)
-        edit_config.setToolTip(
-            tooltip(
-                "Open the config file in your default editor for the settings the GUI does not "
-                "surface (prompt file, sampling, workers, filters, ...). Created if missing.",
-            ),
-        )
+    def _wire_settings_menu(self) -> None:
+        """Answer the Settings menu's requests: its dialogs, the config file, a new language."""
+        menu = self._settings_menu
+        menu.used.connect(self._count)
+        menu.status.connect(self._status.setText)
+        menu.output_language_changed.connect(self._on_output_language_changed)
+        menu.keyword_rules_requested.connect(self._show_keyword_rules)
+        menu.copyright_requested.connect(self._show_copyright)
+        menu.pacing_requested.connect(self._show_pacing)
+        menu.save_defaults_requested.connect(self._save_config)
+        menu.edit_config_requested.connect(self._edit_config)
 
-    def _build_repair_action(self, settings_menu: QMenu) -> None:
-        """Add the toggle that lets a run pay a second call to undo a mixed-script answer."""
-        self._repair_action = QAction(_("Rewrite Mixed-Language Output"), self)
-        self._repair_action.setCheckable(True)
-        self._repair_action.setChecked(self._repair_language)
-        self._repair_action.setToolTip(
-            tooltip(
-                "When the model answers in two writing systems, ask it again for the output "
-                "language ('Ocarina' for a stray '陶笛'). Costs one extra call per affected "
-                "photo. Off by default; those photos are marked either way.",
-            ),
-        )
-        self._repair_action.toggled.connect(self._on_repair_toggled)
-        settings_menu.addAction(self._repair_action)
-
-    def _on_repair_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
-        """Record the repair choice so the next generate run and a settings save both see it."""
-        self._count("repair_toggle")
-        self._repair_language = enabled
-
-    def _build_notify_actions(self, settings_menu: QMenu) -> None:
-        """Add the two end-of-run alert toggles, the sound one tied to the notification one."""
-        self._notify_action = QAction(_("Notify When a Run Ends"), self)
-        self._notify_action.setCheckable(True)
-        self._notify_action.setChecked(self._notify_enabled)
-        self._notify_action.setToolTip(
-            tooltip(
-                "Raise a desktop notification when a generation or save run finishes, so a long "
-                "batch can be started and left alone. Uses the notifier your system already has; "
-                "nothing is shown if it has none.",
-            ),
-        )
-        self._notify_action.toggled.connect(self._on_notify_toggled)
-        settings_menu.addAction(self._notify_action)
-        self._notify_sound_action = QAction(_("Play a Sound With Notifications"), self)
-        self._notify_sound_action.setCheckable(True)
-        self._notify_sound_action.setChecked(self._notify_sound)
-        self._notify_sound_action.setEnabled(self._notify_enabled)
-        self._notify_sound_action.setToolTip(
-            tooltip("Play the system alert sound with the notification."),
-        )
-        settings_menu.addAction(self._notify_sound_action)
-
-    def _on_notify_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
-        """Follow the notification toggle with its sound sub-toggle: no notification, no sound."""
-        self._count("notify_toggle")
-        self._notify_enabled = enabled
-        self._notify_sound_action.setEnabled(enabled)
-
-    def _alert_run_finished(self, message: str) -> None:
-        """
-        Raise the desktop alert for a run that just ended, when the user asked for one.
-
-        *message* is the status line the run wrote, so the notification and the window agree on what
-        happened. Never blocking: the alert spawns a helper process, and the window has to stay
-        responsive while it does.
-        """
-        notify(
-            APP_NAME,
-            message,
-            enabled=self._notify_action.isChecked(),
-            sound=self._notify_sound_action.isChecked(),
-        )
+    def _on_output_language_changed(self, _language: str) -> None:
+        """Rebuild the vocabulary for a new metadata language."""
+        rules = self._keyword_rules_dialog
+        if rules.vocabulary_path is not None:
+            # The language decides whether plurals fold onto their singular, and that shapes the
+            # vocabulary's lookup index, so it has to be built again for the new one.
+            rules.load_vocabulary(rules.vocabulary_path, announce=False)
 
     def _build_tools_menu(self, menubar: QMenu) -> None:
         """Build the Tools menu: the jobs that act on a whole library rather than one photo."""
@@ -898,183 +757,6 @@ class MainWindow(QMainWindow):
             ),
         )
 
-    def _build_language_menu(self, settings_menu: QMenu) -> None:
-        """Add the Language submenu: System Default plus every shipped catalog."""
-        self._language_menu = settings_menu.addMenu(_("Language"))
-        self._language_menu.menuAction().setToolTip(
-            tooltip(
-                "Language of the app itself (menus, buttons, messages). The language of the "
-                "generated metadata is set under Metadata Language.",
-            ),
-        )
-        self._language_group = QActionGroup(self)
-        entries = [(i18n.AUTO, _("System Default")), *i18n.SUPPORTED_LANGUAGES.items()]
-        for code, label in entries:
-            action = QAction(label, self)
-            action.setCheckable(True)
-            action.setChecked(code == self._language)
-            action.triggered.connect(
-                lambda _checked=False, chosen=code: self._set_language(chosen),
-            )
-            self._language_group.addAction(action)
-            self._language_menu.addAction(action)
-
-    def _set_language(self, code: str) -> None:
-        """Persist the UI language choice into the config file; applied on the next launch."""
-        if code == self._language:
-            return
-        self._count("ui_language")
-        self._language = code
-        target = self._config_target()
-        try:
-            existing = target.read_text(encoding="utf-8") if target.exists() else ""
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(config_text_with_language(existing, code), encoding="utf-8")
-        except (OSError, ConfigFileError) as exc:
-            # ConfigFileError: the file on disk is not TOML we can rewrite in place. Reporting it
-            # is the whole point of the dialog; letting it out of a Qt slot crashed the window.
-            QMessageBox.warning(self, _(CONFIG_SAVE_ERROR_TITLE), str(exc))
-            return
-        self._status.setText(_("Language saved. Restart Photo Tagger to apply it."))
-
-    def _build_output_language_menu(self, settings_menu: QMenu) -> None:
-        """Add the Metadata Language submenu: one click sets the generated-metadata language."""
-        menu = self._output_language_menu = settings_menu.addMenu(_("Metadata Language"))
-        menu.setToolTipsVisible(True)
-        menu.menuAction().setToolTip(
-            tooltip(
-                "Language of the generated titles, descriptions, and keywords. The language of "
-                "the app itself is set under Language.",
-            ),
-        )
-        self._output_language_group = QActionGroup(self)
-        self._output_language_actions: dict[str, QAction] = {}
-        # The trailing rows go in first so the language entries can insert above the separator
-        # (a language chosen later via Other... joins the same list).
-        self._output_language_separator = menu.addSeparator()
-        other = menu.addAction(_("Other..."), self._choose_other_output_language)
-        other.setToolTip(
-            tooltip(
-                "Any language name the model understands works; it is sent to the model as is. "
-                "Saved to the config file, which the CLI's --output-language default also reads.",
-            ),
-        )
-        # English (the default) first, then the suggestions sorted by their translated label.
-        rest = sorted(
-            (name for name in OUTPUT_LANGUAGE_SUGGESTIONS if name != DEFAULT_OUTPUT_LANGUAGE),
-            key=lambda name: _(name).casefold(),
-        )
-        for name in (DEFAULT_OUTPUT_LANGUAGE, *rest):
-            self._add_output_language_action(name)
-        self._check_output_language_action(self._output_language)
-
-    def _add_output_language_action(self, name: str) -> QAction:
-        """
-        Insert a checkable entry for *name* above the Other...
-
-        row and return it.
-        """
-        # The label is translated for display; *name* (the English form) is what the prompt,
-        # config file, and cache namespace carry. A custom name passes through _() unchanged.
-        action = QAction(_(name), self)
-        action.setCheckable(True)
-        action.triggered.connect(
-            lambda _checked=False, chosen=name: self._set_output_language(chosen),
-        )
-        self._output_language_group.addAction(action)
-        self._output_language_menu.insertAction(self._output_language_separator, action)
-        self._output_language_actions[name] = action
-        return action
-
-    def _check_output_language_action(self, name: str) -> None:
-        """Check *name*'s menu entry, first creating one for a language not in the list."""
-        action = self._output_language_actions.get(name)
-        if action is None:
-            action = self._add_output_language_action(name)
-        action.setChecked(True)
-
-    def _choose_other_output_language(self) -> None:
-        """Ask for a free-form language name (Other...) and apply it."""
-        language, ok = QInputDialog.getText(
-            self,
-            _("Metadata Language"),
-            _("Language for the generated titles, descriptions, and keywords:"),
-            text=self._output_language,
-        )
-        if ok:
-            self._set_output_language(language)
-
-    def _set_output_language(self, language: str) -> None:
-        """Persist the metadata language into the config file; used from the next generation on."""
-        normalized = language.strip() or DEFAULT_OUTPUT_LANGUAGE
-        if normalized == self._output_language:
-            # Still sync the menu: Other... may have re-entered the current language, and the
-            # clicked action must not end up unchecked.
-            self._check_output_language_action(normalized)
-            return
-        self._count("output_language")
-        self._output_language = normalized
-        self._check_output_language_action(normalized)
-        target = self._config_target()
-        try:
-            existing = target.read_text(encoding="utf-8") if target.exists() else ""
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(
-                config_text_with_output_language(existing, normalized),
-                encoding="utf-8",
-            )
-        except (OSError, ConfigFileError) as exc:
-            # ConfigFileError: the file on disk is not TOML we can rewrite in place. Reporting it
-            # is the whole point of the dialog; letting it out of a Qt slot crashed the window.
-            QMessageBox.warning(self, _(CONFIG_SAVE_ERROR_TITLE), str(exc))
-            return
-        rules = self._keyword_rules_dialog
-        if rules.vocabulary_path is not None:
-            # The language decides whether plurals fold onto their singular, and that shapes the
-            # vocabulary's lookup index, so it has to be built again for the new one.
-            rules.load_vocabulary(rules.vocabulary_path, announce=False)
-        self._status.setText(
-            _("Metadata language set to {language} for the next generation.").format(
-                language=normalized,
-            ),
-        )
-
-    def _telemetry_consent(self) -> telemetry.Consent:
-        """Resolve whether this window may send, from its toggle and the environment."""
-        return telemetry.resolve_consent(
-            enabled=self._telemetry_enabled,
-            opted_in=self._telemetry_opted_in,
-        )
-
-    def _refresh_telemetry_action(self) -> None:
-        """Check the toggle only when beacons go out; gray it out under an environment opt-out."""
-        consent = self._telemetry_consent()
-        with QSignalBlocker(self._telemetry_action):
-            self._telemetry_action.setChecked(consent.send)
-        self._telemetry_action.setEnabled(consent.reason != telemetry.CONSENT_ENV_OPT_OUT)
-        text = tooltip(
-            "Anonymous usage stats (the settings and features you use, model, batch size, timing, "
-            "OS, CPU/GPU, RAM, battery, screen) and crash reports (error type and stack trace, "
-            "code locations only). No photos, text you type, error messages, or personal data.",
-        )
-        if note := telemetry_toggle_note(consent.reason, do_not_track=telemetry.do_not_track()):
-            text = f"{text}\n\n{wrap_tooltip(note)}"
-        self._telemetry_action.setToolTip(text)
-
-    def _on_telemetry_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
-        """Persist the choice; checking the box is an opt-in that overrules DO_NOT_TRACK."""
-        self._telemetry_enabled = enabled
-        self._telemetry_opted_in = enabled
-        telemetry.write_gui_pref(enabled=enabled)
-        self._refresh_telemetry_action()
-        self._status.setText(
-            _("Anonymous telemetry on.") if enabled else _("Anonymous telemetry off."),
-        )
-
-    def _active_cache_file(self) -> Path | None:
-        """Return the cache file generation should use, or None when caching is toggled off."""
-        return self._cache_file if self._cache_action.isChecked() else None
-
     def _current_config_values(self) -> GuiConfigValues:
         """Collect the GUI's current choices that persist to the config file (never the API key)."""
         connection = self._connection_bar.connection()
@@ -1086,14 +768,10 @@ class MainWindow(QMainWindow):
             extensions=self._extensions.text().strip(),
             recursive=self._recursive.isChecked(),
             **self._save_options_menu.config_values(),
-            telemetry_enabled=self._telemetry_enabled,
+            **self._settings_menu.config_values(),
             vocabulary=self._keyword_rules_dialog.vocabulary_path,
             vocabulary_strict=self._keyword_rules_dialog.strict,
             session_gap_minutes=self._keyword_rules_dialog.session_gap,
-            undo_log=self._undo_log_action.isChecked(),
-            notify=self._notify_action.isChecked(),
-            notify_sound=self._notify_sound_action.isChecked(),
-            repair_language=self._repair_language,
             **self._copyright_dialog.config_values(),
             save_after_generating=self._autosave_action.isChecked(),
             duty=pacing.duty_percent,
@@ -1103,10 +781,6 @@ class MainWindow(QMainWindow):
             max_pause_minutes=pacing.max_pause_seconds / SECONDS_PER_MINUTE,
         )
 
-    def _config_target(self) -> Path:
-        """Return the config file to save into: the one in effect, or the user default path."""
-        return find_config_file() or user_config_path()
-
     def _save_config(self) -> None:
         """
         Persist the GUI's current choices into the config file.
@@ -1115,7 +789,7 @@ class MainWindow(QMainWindow):
         ordering, and every other setting survive. A missing file is created from a template.
         """
         self._count("save_defaults")
-        target = self._config_target()
+        target = config_target()
         values = self._current_config_values()
         try:
             if target.exists():
@@ -1136,7 +810,7 @@ class MainWindow(QMainWindow):
     def _edit_config(self) -> None:
         """Open the config file in the user's editor, creating it first if it does not exist."""
         self._count("edit_config")
-        target = self._config_target()
+        target = config_target()
         if not target.exists():
             self._save_config()
         if target.exists():
@@ -2823,7 +2497,7 @@ class MainWindow(QMainWindow):
         """
         return open_journal(
             datetime.now(tz=UTC),
-            enabled=self._undo_log_action.isChecked(),
+            enabled=self._settings_menu.records_undo,
         )
 
     def _single_save_journal(self) -> UndoJournal | None:
@@ -2836,7 +2510,7 @@ class MainWindow(QMainWindow):
         session's single saves therefore land in one journal, which is also what "undo what I did
         just now" means when that is how you were working.
         """
-        if not self._undo_log_action.isChecked():
+        if not self._settings_menu.records_undo:
             return None
         if self._session_journal is None:
             self._session_journal = self._open_undo_journal()
@@ -3036,7 +2710,7 @@ class MainWindow(QMainWindow):
             self._finish_run(telemetry.OUTCOME_CANCELLED)
             return
         # Same as a finished generation: the alert is for the run nobody was watching.
-        self._alert_run_finished(self._status.text())
+        self._settings_menu.notify_run_finished(self._status.text())
         self._continue_after_run()
 
     def _teardown_save_thread(self) -> None:
@@ -3132,13 +2806,13 @@ class MainWindow(QMainWindow):
             connection.api_base_url,
             [item.path for item in items],
             api_key=connection.api_key,
-            cache_file=self._active_cache_file() if use_cache else None,
+            cache_file=self._settings_menu.active_cache_file() if use_cache else None,
             options=GenerateOptions(
-                output_language=self._output_language,
+                output_language=self._settings_menu.output_language,
                 hints={str(item.path): item.hint for item in items if item.hint},
                 vocabulary=self._keyword_rules_dialog.vocabulary,
                 vocabulary_strict=self._keyword_rules_dialog.strict,
-                repair_language=self._repair_language,
+                repair_language=self._settings_menu.repair_language,
                 pacing=self._pacing_dialog.plan,
                 jpeg_dimensions=self._model_image_size,
                 refresh=refresh,
@@ -3238,7 +2912,7 @@ class MainWindow(QMainWindow):
             # An extra pass or a chained save still to come is part of the same job, so let the
             # end of that job raise the one alert rather than one per step.
             if self._next_pass() is None and not self._chained_save_targets():
-                self._alert_run_finished(self._status.text())
+                self._settings_menu.notify_run_finished(self._status.text())
         cancelled = self._cancelling
         self._cancelling = False
         self._resort()
@@ -3516,7 +3190,7 @@ class MainWindow(QMainWindow):
         dialog = KeywordRulesDialog(
             self,
             self._defaults.output,
-            output_language=lambda: self._output_language,
+            output_language=lambda: self._settings_menu.output_language,
         )
         dialog.status.connect(self._status.setText)
         dialog.used.connect(self._count)
@@ -3592,7 +3266,7 @@ class MainWindow(QMainWindow):
         self._harmonize_worker = HarmonizeWorker(
             keywords,
             gap_minutes=gap,
-            output_language=self._output_language,
+            output_language=self._settings_menu.output_language,
         )
         self._harmonize_worker.done.connect(self._on_harmonize_done)
         self._harmonize_worker.finished.connect(self._on_harmonize_finished)
@@ -3908,7 +3582,7 @@ class MainWindow(QMainWindow):
         ``__init__``, so the headless test suite (which builds the window directly) never blocks on
         a modal dialog.
         """
-        if not self._telemetry_consent().send:
+        if not self._settings_menu.consent().send:
             return
         if telemetry.first_run_notice(interface="gui") is None:  # already shown on an earlier run
             return
@@ -3929,7 +3603,7 @@ class MainWindow(QMainWindow):
         box.exec()
         if box.clickedButton() is not keep:
             # Unchecking fires _on_telemetry_toggled, which persists the choice.
-            self._telemetry_action.setChecked(False)
+            self._settings_menu.turn_telemetry_off()
 
     # --- telemetry -----------------------------------------------------------------------------
 
@@ -3963,12 +3637,8 @@ class MainWindow(QMainWindow):
 
     def _send(self, event: telemetry.Event, *, block: bool = False) -> object:
         """Send one beacon under this window's toggle; returns the sending thread, if any."""
-        return telemetry.emit(
-            event,
-            enabled=self._telemetry_enabled,
-            opted_in=self._telemetry_opted_in,
-            block=block,
-        )
+        enabled, opted_in = self._settings_menu.telemetry_choice()
+        return telemetry.emit(event, enabled=enabled, opted_in=opted_in, block=block)
 
     def _telemetry_settings(self) -> telemetry.Settings:
         """Snapshot the window's settings as the bounded values telemetry reports."""
@@ -3982,7 +3652,7 @@ class MainWindow(QMainWindow):
                 url=connection.api_base_url or backend.default_base_url,
                 custom_url=connection.api_base_url is not None,
                 api_key=bool(backend.resolve_api_key(connection.api_key)),
-                cache=self._cache_action.isChecked(),
+                cache=self._settings_menu.uses_cache,
                 jpeg_dimensions=self._model_image_size,
                 vocabulary_terms=len(vocabulary.terms) if vocabulary else 0,
                 copyright=self._copyright_dialog.fields,
@@ -4019,7 +3689,7 @@ class MainWindow(QMainWindow):
         return RunContext(
             provider=connection.provider,
             model=connection.model,
-            output_language=self._output_language,
+            output_language=self._settings_menu.output_language,
             ui_language=i18n.current_language(),
             settings=settings,
             setup=telemetry.Setup(

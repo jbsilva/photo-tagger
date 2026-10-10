@@ -381,7 +381,7 @@ def test_run_generation_hands_the_metadata_language_to_the_worker(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_generation(monkeypatch)  # so the background worker does no real I/O
     _add_dir(window, {"a": img})
-    window._output_language = "German"  # noqa: SLF001
+    window._settings_menu._output_language = "German"  # noqa: SLF001
 
     window._run_generation([window._items[str(img)]])  # noqa: SLF001
 
@@ -3198,13 +3198,13 @@ def test_tools_menu_offers_every_library_job(window: gui.MainWindow) -> None:
 
 def test_telemetry_toggle_defaults_on_and_persists(window: gui.MainWindow) -> None:
     """The Settings toggle reflects the default (on) and persists the choice when changed."""
-    action = window._telemetry_action  # noqa: SLF001
+    action = window._settings_menu._telemetry_action  # noqa: SLF001
     assert action.isCheckable()
     assert action.isChecked() is True  # default: telemetry on, no saved preference yet
-    assert window._telemetry_enabled is True  # noqa: SLF001
+    assert window._settings_menu._telemetry_enabled is True  # noqa: SLF001
 
     action.setChecked(False)  # user turns it off from the menu
-    assert window._telemetry_enabled is False  # noqa: SLF001
+    assert window._settings_menu._telemetry_enabled is False  # noqa: SLF001
     assert telemetry.read_gui_pref() is False  # the choice is persisted for next launch
 
 
@@ -3220,14 +3220,14 @@ def test_telemetry_toggle_shows_do_not_track_and_checking_it_opts_in(
     monkeypatch.setenv("DO_NOT_TRACK", "1")
     win = gui.MainWindow()
     try:
-        action = win._telemetry_action  # noqa: SLF001
+        action = win._settings_menu._telemetry_action  # noqa: SLF001
         assert action.isChecked() is False
         assert action.isEnabled() is True
         assert "DO_NOT_TRACK" in action.toolTip()
 
         action.setChecked(True)  # the user opts Photo Tagger in anyway
         assert telemetry.read_gui_pref() is True
-        consent = win._telemetry_consent()  # noqa: SLF001
+        consent = win._settings_menu.consent()  # noqa: SLF001
         assert consent.send is True
         assert consent.reason == telemetry.CONSENT_GUI_OPT_IN
         assert "turned this on here" in " ".join(action.toolTip().split())
@@ -3243,7 +3243,7 @@ def test_telemetry_toggle_is_grayed_out_under_an_environment_opt_out(
     monkeypatch.setenv("PHOTO_TAGGER_TELEMETRY", "0")
     win = gui.MainWindow()
     try:
-        action = win._telemetry_action  # noqa: SLF001
+        action = win._settings_menu._telemetry_action  # noqa: SLF001
         assert action.isChecked() is False
         assert action.isEnabled() is False
         assert "PHOTO_TAGGER_TELEMETRY" in action.toolTip()
@@ -3253,8 +3253,8 @@ def test_telemetry_toggle_is_grayed_out_under_an_environment_opt_out(
 
 def test_notify_toggles_default_off_and_gate_each_other(window: gui.MainWindow) -> None:
     """Alerts start off, and the sound sub-toggle is only reachable once alerts are on."""
-    alert = window._notify_action  # noqa: SLF001
-    sound = window._notify_sound_action  # noqa: SLF001
+    alert = window._settings_menu._notify_action  # noqa: SLF001
+    sound = window._settings_menu._notify_sound_action  # noqa: SLF001
     assert alert.isChecked() is False
     assert sound.isEnabled() is False
 
@@ -3278,8 +3278,8 @@ def test_finished_generation_alerts_with_the_status_line(
             (title, message, kwargs["enabled"], kwargs["sound"]),
         ),
     )
-    window._notify_action.setChecked(True)  # noqa: SLF001
-    window._notify_sound_action.setChecked(True)  # noqa: SLF001
+    window._settings_menu._notify_action.setChecked(True)  # noqa: SLF001
+    window._settings_menu._notify_sound_action.setChecked(True)  # noqa: SLF001
 
     window._on_generate_finished()  # noqa: SLF001
 
@@ -3293,7 +3293,7 @@ def test_cancelled_generation_raises_no_alert(
     """Whoever pressed Cancel is already at the keyboard and needs no calling back."""
     raised: list[str] = []
     _patch_gui(monkeypatch, "notify", lambda _t, message, **_k: raised.append(message))
-    window._notify_action.setChecked(True)  # noqa: SLF001
+    window._settings_menu._notify_action.setChecked(True)  # noqa: SLF001
     window._cancelling = True  # noqa: SLF001
 
     window._on_generate_finished()  # noqa: SLF001
@@ -3308,7 +3308,7 @@ def test_finished_save_alerts_with_its_tally(
     """A finished write run announces how many photos it wrote."""
     raised: list[str] = []
     _patch_gui(monkeypatch, "notify", lambda _t, message, **_k: raised.append(message))
-    window._notify_action.setChecked(True)  # noqa: SLF001
+    window._settings_menu._notify_action.setChecked(True)  # noqa: SLF001
 
     window._on_save_finished()  # noqa: SLF001
 
@@ -3330,12 +3330,12 @@ def test_alert_is_skipped_while_the_toggle_is_off(
 
 def test_language_menu_lists_system_default_and_catalogs(window: gui.MainWindow) -> None:
     """The Settings > Language menu offers System Default plus every shipped language."""
-    labels = [action.text() for action in window._language_menu.actions()]  # noqa: SLF001
+    labels = [action.text() for action in window._settings_menu._language_menu.actions()]  # noqa: SLF001
     assert labels[0] == "System Default"
     assert "English" in labels
     assert "Português (Brasil)" in labels
     # No explicit choice saved: the system-default entry starts checked.
-    assert window._language_menu.actions()[0].isChecked()  # noqa: SLF001
+    assert window._settings_menu._language_menu.actions()[0].isChecked()  # noqa: SLF001
 
 
 def test_language_choice_persists_to_the_config_file(
@@ -3348,13 +3348,13 @@ def test_language_choice_persists_to_the_config_file(
     target.write_text('# keep me\nextensions = "jpg"\n', encoding="utf-8")
     _patch_gui(monkeypatch, "find_config_file", lambda: target)
 
-    window._set_language("pt_BR")  # noqa: SLF001
+    window._settings_menu.set_language("pt_BR")  # noqa: SLF001
     text = target.read_text(encoding="utf-8")
     assert 'language = "pt_BR"' in text
     assert "# keep me" in text
     assert "Restart" in window._status.text()  # noqa: SLF001
 
-    window._set_language("auto")  # noqa: SLF001
+    window._settings_menu.set_language("auto")  # noqa: SLF001
     assert "language" not in target.read_text(encoding="utf-8")
 
 
@@ -3364,13 +3364,13 @@ def test_output_language_menu_lists_english_first_then_other(window: gui.MainWin
 
     last.
     """
-    actions = window._output_language_menu.actions()  # noqa: SLF001
+    actions = window._settings_menu._output_language_menu.actions()  # noqa: SLF001
     labels = [action.text() for action in actions if not action.isSeparator()]
     assert labels[0] == "English"
     assert labels[-1] == "Other..."
     assert "Brazilian Portuguese" in labels
     # No explicit choice saved: the default entry starts checked.
-    assert window._output_language_actions["English"].isChecked()  # noqa: SLF001
+    assert window._settings_menu._output_language_actions["English"].isChecked()  # noqa: SLF001
 
 
 def test_output_language_defaults_to_english_and_persists(
@@ -3379,22 +3379,22 @@ def test_output_language_defaults_to_english_and_persists(
     tmp_path: Path,
 ) -> None:
     """The metadata language starts at English; a choice persists and English unpins it."""
-    assert window._output_language == "English"  # noqa: SLF001
+    assert window._settings_menu.output_language == "English"  # noqa: SLF001
     target = tmp_path / "config.toml"
     target.write_text('# keep me\nextensions = "jpg"\n', encoding="utf-8")
     _patch_gui(monkeypatch, "find_config_file", lambda: target)
 
-    window._set_output_language("Brazilian Portuguese")  # noqa: SLF001
+    window._settings_menu.set_output_language("Brazilian Portuguese")  # noqa: SLF001
     text = target.read_text(encoding="utf-8")
     assert 'output_language = "Brazilian Portuguese"' in text
     assert "# keep me" in text
-    assert window._output_language == "Brazilian Portuguese"  # noqa: SLF001
-    assert window._output_language_actions["Brazilian Portuguese"].isChecked()  # noqa: SLF001
+    assert window._settings_menu.output_language == "Brazilian Portuguese"  # noqa: SLF001
+    assert window._settings_menu._output_language_actions["Brazilian Portuguese"].isChecked()  # noqa: SLF001
     assert "Brazilian Portuguese" in window._status.text()  # noqa: SLF001
 
-    window._set_output_language("English")  # noqa: SLF001
+    window._settings_menu.set_output_language("English")  # noqa: SLF001
     assert "output_language" not in target.read_text(encoding="utf-8")
-    assert window._output_language_actions["English"].isChecked()  # noqa: SLF001
+    assert window._settings_menu._output_language_actions["English"].isChecked()  # noqa: SLF001
 
 
 def test_output_language_custom_value_gets_its_own_checked_entry(
@@ -3410,11 +3410,11 @@ def test_output_language_custom_value_gets_its_own_checked_entry(
     target = tmp_path / "config.toml"
     _patch_gui(monkeypatch, "find_config_file", lambda: target)
 
-    window._set_output_language("Swahili")  # noqa: SLF001
+    window._settings_menu.set_output_language("Swahili")  # noqa: SLF001
 
-    action = window._output_language_actions["Swahili"]  # noqa: SLF001
+    action = window._settings_menu._output_language_actions["Swahili"]  # noqa: SLF001
     assert action.isChecked()
-    menu_actions = window._output_language_menu.actions()  # noqa: SLF001
+    menu_actions = window._settings_menu._output_language_menu.actions()  # noqa: SLF001
     assert action in menu_actions
     assert menu_actions.index(action) < len(menu_actions) - 1  # above the Other... row
     assert 'output_language = "Swahili"' in target.read_text(encoding="utf-8")
@@ -3432,10 +3432,10 @@ def test_output_language_blank_means_the_default(
     """
     target = tmp_path / "config.toml"
     _patch_gui(monkeypatch, "find_config_file", lambda: target)
-    window._set_output_language("German")  # noqa: SLF001
-    window._set_output_language("   ")  # noqa: SLF001
-    assert window._output_language == "English"  # noqa: SLF001
-    assert window._output_language_actions["English"].isChecked()  # noqa: SLF001
+    window._settings_menu.set_output_language("German")  # noqa: SLF001
+    window._settings_menu.set_output_language("   ")  # noqa: SLF001
+    assert window._settings_menu.output_language == "English"  # noqa: SLF001
+    assert window._settings_menu._output_language_actions["English"].isChecked()  # noqa: SLF001
     assert "output_language" not in target.read_text(encoding="utf-8")
 
 
@@ -3444,8 +3444,8 @@ def test_telemetry_toggle_reflects_saved_off_preference(qapp: QApplication) -> N
     telemetry.write_gui_pref(enabled=False)
     win = gui.MainWindow()
     try:
-        assert win._telemetry_enabled is False  # noqa: SLF001
-        assert win._telemetry_action.isChecked() is False  # noqa: SLF001
+        assert win._settings_menu._telemetry_enabled is False  # noqa: SLF001
+        assert win._settings_menu._telemetry_action.isChecked() is False  # noqa: SLF001
     finally:
         win.close()
 
@@ -3501,7 +3501,7 @@ def test_close_beacon_reports_session_tagged_count_and_fields(
                 keywords=["K"],
             ),
         )
-    window._output_language = "German"  # noqa: SLF001
+    window._settings_menu._output_language = "German"  # noqa: SLF001
 
     window.close()
 
@@ -4570,10 +4570,10 @@ def test_worker_cache_survives_metadata_rewrites(
 
 def test_cache_toggle_controls_the_active_cache_file(window: gui.MainWindow) -> None:
     """Caching defaults on; unchecking the Settings toggle disables it for new runs."""
-    assert window._cache_action.isChecked()  # noqa: SLF001
-    assert window._active_cache_file() is not None  # noqa: SLF001
-    window._cache_action.setChecked(False)  # noqa: SLF001
-    assert window._active_cache_file() is None  # noqa: SLF001
+    assert window._settings_menu._cache_action.isChecked()  # noqa: SLF001
+    assert window._settings_menu.active_cache_file() is not None  # noqa: SLF001
+    window._settings_menu._cache_action.setChecked(False)  # noqa: SLF001
+    assert window._settings_menu.active_cache_file() is None  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -5007,7 +5007,7 @@ def test_switching_off_the_undo_log_records_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Recording is a setting, and turning it off leaves no journal behind."""
-    window._undo_log_action.setChecked(False)  # noqa: SLF001
+    window._settings_menu._undo_log_action.setChecked(False)  # noqa: SLF001
 
     _save_two_photos(window, tmp_path, monkeypatch)
 
@@ -5253,7 +5253,7 @@ def test_a_chained_save_raises_one_alert_for_the_whole_job(
     raised: list[str] = []
     _patch_gui(monkeypatch, "notify", lambda _t, message, **_k: raised.append(message))
     monkeypatch.setattr(window, "_run_save", lambda _items: None)
-    window._notify_action.setChecked(True)  # noqa: SLF001
+    window._settings_menu._notify_action.setChecked(True)  # noqa: SLF001
 
     window._on_generate_finished()  # noqa: SLF001
     assert raised == []  # the run is not over: its photos are still to be written
@@ -5889,7 +5889,7 @@ def test_changing_the_metadata_language_reloads_the_vocabulary(
     assert window._keyword_rules_dialog.vocabulary is not None  # noqa: SLF001
     assert window._keyword_rules_dialog.vocabulary.fold_plurals is True  # noqa: SLF001
 
-    window._set_output_language("German")  # noqa: SLF001
+    window._settings_menu.set_output_language("German")  # noqa: SLF001
 
     assert window._keyword_rules_dialog.vocabulary is not None  # noqa: SLF001
     assert window._keyword_rules_dialog.vocabulary.fold_plurals is False  # noqa: SLF001
@@ -6269,9 +6269,9 @@ def test_the_detail_pane_says_when_the_text_mixes_writing_systems(
 
 def test_the_repair_toggle_lands_in_the_saved_settings(window: gui.MainWindow) -> None:
     """Flipping the Settings entry is what a config save then writes."""
-    window._repair_action.setChecked(True)  # noqa: SLF001
+    window._settings_menu._repair_action.setChecked(True)  # noqa: SLF001
     assert window._current_config_values().repair_language is True  # noqa: SLF001
-    window._repair_action.setChecked(False)  # noqa: SLF001
+    window._settings_menu._repair_action.setChecked(False)  # noqa: SLF001
     assert window._current_config_values().repair_language is False  # noqa: SLF001
 
 
@@ -6976,6 +6976,30 @@ def test_window_paces_a_run_from_the_config_file(
         assert window._pacing_dialog.plan.battery_floor == 30  # noqa: SLF001, PLR2004 - window state.
     finally:
         window.close()
+
+
+@pytest.mark.parametrize(
+    ("label", "dialog"),
+    [
+        ("Keyword Rules...", "_keyword_rules_dialog"),
+        ("Copyright...", "_copyright_dialog"),
+        ("Pacing...", "_pacing_dialog"),
+    ],
+)
+def test_settings_menu_entries_open_their_dialogs(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    dialog: str,
+) -> None:
+    """Each Settings entry reaches the window's own dialog, the one that holds the setting."""
+    opened: list[str] = []
+    monkeypatch.setattr(getattr(window, dialog), "exec", lambda: opened.append(dialog))
+    actions = window._settings_menu.actions()  # noqa: SLF001
+
+    next(action for action in actions if action.text() == label).trigger()
+
+    assert opened == [dialog]
 
 
 def test_pacing_dialog_edits_the_plan_the_next_run_follows(window: gui.MainWindow) -> None:

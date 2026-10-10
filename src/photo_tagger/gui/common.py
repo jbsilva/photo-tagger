@@ -2,16 +2,17 @@
 # static analysis: ignore
 # The two lines above keep zuban and pycroscope out; see the note in gui/__init__.py.
 """
-Constants the GUI modules share.
+Constants the GUI modules share, and where their settings are saved.
 
-The app's own folder, the item-data roles and tree columns the list and the grid agree on, and the
-labels more than one dialog uses.
+The app's own folder, the item-data roles and tree columns the list and the grid agree on, the
+labels more than one dialog uses, and the config file a setting is written into.
 """
 
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 
+from photo_tagger.config_file import find_config_file, user_config_path
 from photo_tagger.i18n import gettext_noop
 
 
@@ -62,3 +63,8 @@ SESSION_NOTE = gettext_noop(
     "Kept for this session. Settings > Save Settings as Defaults writes them to the config file, "
     "which CLI runs read too.",
 )
+
+
+def config_target() -> Path:
+    """Return the config file a setting is saved into: the one in effect, or the user default."""
+    return find_config_file() or user_config_path()
