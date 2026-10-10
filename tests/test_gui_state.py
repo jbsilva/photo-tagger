@@ -113,6 +113,7 @@ from photo_tagger.gui_state import (
     keyword_lines,
     keywords_to_save,
     keywords_to_text,
+    load_sidecar_overrides,
     load_vocabulary_file,
     location_crumb,
     login_shell_path,
@@ -145,6 +146,7 @@ from photo_tagger.gui_state import (
     review_summary,
     save_options_for,
     search_summary,
+    sidecar_overrides_summary,
     sort_photos,
     source_label,
     status_sort_rank,
@@ -2347,6 +2349,27 @@ def test_build_copyright_fields_trims_what_was_typed() -> None:
     assert error == ""
     assert fields is not None
     assert fields.resolve(2025)["EXIF:Artist"] == "Ada Lovelace"
+
+
+def test_load_sidecar_overrides_parses_the_config_entries() -> None:
+    """The window writes a DNG where the CLI would, from the same config key."""
+    assert load_sidecar_overrides(["dng=photo"]) == ({".dng": "photo"}, "")
+
+
+def test_load_sidecar_overrides_reports_a_bad_entry_instead_of_raising() -> None:
+    """A config the CLI refuses must not keep the window from opening; the reason is logged."""
+    overrides, error = load_sidecar_overrides(["dng=embed"])
+
+    assert overrides == {}
+    assert "EXT=TARGET" in error
+
+
+def test_sidecar_overrides_summary_names_each_type() -> None:
+    """The Save tooltip says where each overridden type goes, since the menu cannot show it."""
+    summary = sidecar_overrides_summary({".tif": "both", ".dng": "photo"})
+
+    assert summary == "DNG into the image file, TIF into the image file and an XMP sidecar"
+    assert sidecar_overrides_summary({}) == ""
 
 
 def test_build_copyright_fields_keeps_config_only_assignments() -> None:

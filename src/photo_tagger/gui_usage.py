@@ -594,6 +594,7 @@ class WindowFacts:
     copyright: ExtraFields | None
     watch_interval: float
     watch_settle: float
+    sidecar_overrides: int = 0  # from the config file: the window has no control for them
 
 
 def window_settings(values: GuiConfigValues, facts: WindowFacts) -> telemetry.Settings:
@@ -613,6 +614,7 @@ def window_settings(values: GuiConfigValues, facts: WindowFacts) -> telemetry.Se
         vocabulary_strict=values.vocabulary_strict,
         session_gap_minutes=values.session_gap_minutes,
         sidecar_mode=values.sidecar_mode,
+        sidecar_overrides=facts.sidecar_overrides,
         write_title=values.write_title,
         write_description=values.write_description,
         write_keywords=values.write_keywords,

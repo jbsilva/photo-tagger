@@ -47,11 +47,13 @@ from photo_tagger.config import (
     DEFAULT_TEMPERATURE,
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_WORK_MINUTES,
+    FileTypeTarget,
     LogLevel,
     SidecarMode,
 )
 from photo_tagger.config_file import apply_overrides, find_config_file, load_config
 from photo_tagger.fields import ExtraFields, build_extra_fields
+from photo_tagger.metadata import parse_sidecar_overrides
 from photo_tagger.pacing import MAX_BATTERY_FLOOR, SECONDS_PER_MINUTE, PacingPlan
 from photo_tagger.pipeline import ProcessingOptions
 
@@ -259,6 +261,11 @@ class CopyrightConfig:
     ] = None
 
 
+def validate_sidecar_overrides(_type: type, entries: list[str] | None) -> None:
+    """Refuse a malformed --sidecar-override at parse time, before the first photo is read."""
+    parse_sidecar_overrides(entries)
+
+
 @dataclass
 class OutputConfig(CopyrightConfig):
     """
@@ -364,6 +371,19 @@ class OutputConfig(CopyrightConfig):
             help=(
                 "Shorthand for --sidecar-mode: --write-sidecar is 'all' (the default), "
                 "--embed-in-photo is 'none'. An explicit --sidecar-mode wins over both"
+            ),
+        ),
+    ] = None
+    sidecar_overrides: Annotated[
+        list[str] | None,
+        Parameter(
+            name=("--sidecar-override",),
+            validator=validate_sidecar_overrides,
+            help=(
+                "Send one file type somewhere else than --sidecar-mode says, as EXT=TARGET with "
+                "TARGET one of 'sidecar', 'photo', or 'both' (repeat this option). For example, "
+                "--sidecar-override dng=photo writes into each DNG, which is where Lightroom "
+                "Classic keeps a DNG's metadata"
             ),
         ),
     ] = None
@@ -1106,6 +1126,16 @@ def resolve_sidecar_mode(output: OutputConfig) -> SidecarMode:
     return "all" if output.use_sidecar else "none"
 
 
+def resolve_sidecar_overrides(output: OutputConfig) -> dict[str, FileTypeTarget]:
+    """
+    Parse ``--sidecar-override`` into the per-extension answers the writer uses.
+
+    The CLI has already refused a malformed entry at parse time. The GUI reads the config file
+    without that step, so it catches the :class:`ValueError` this raises in that case.
+    """
+    return parse_sidecar_overrides(output.sidecar_overrides)
+
+
 def resolve_notify(display: DisplayConfig) -> tuple[bool, bool]:
     """
     Fold the two notification flags into (raise an alert, make it audible).
@@ -1155,6 +1185,7 @@ def to_processing_options(
         write_keywords=output.write_keywords,
         backup_xmp=output.backup_xmp,
         sidecar_mode=resolve_sidecar_mode(output),
+        sidecar_overrides=resolve_sidecar_overrides(output),
         dry_run=output.dry_run,
         temperature=inference.temperature,
         max_tokens=inference.max_tokens,
@@ -1248,6 +1279,7 @@ def to_telemetry_settings(  # noqa: PLR0913 - one parameter per option group tag
         vocabulary_strict=output.vocabulary_strict,
         session_gap_minutes=output.session_gap_minutes,
         sidecar_mode=resolve_sidecar_mode(output),
+        sidecar_overrides=len(resolve_sidecar_overrides(output)),
         write_title=output.write_title,
         write_description=output.write_description,
         write_keywords=output.write_keywords,

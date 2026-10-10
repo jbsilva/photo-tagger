@@ -5363,6 +5363,41 @@ def test_a_window_built_from_that_config_comes_up_ready_to_write(
         win.close()
 
 
+def test_a_window_follows_the_config_file_sidecar_overrides(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A save writes into each DNG as the CLI would, and the tooltip says so."""
+    monkeypatch.setattr(
+        gui,
+        "load_config",
+        lambda: {"output": {"sidecar_overrides": ["dng=photo"]}},
+    )
+    win = gui.MainWindow()
+    try:
+        assert win._save_options().sidecar_overrides == {".dng": "photo"}  # noqa: SLF001
+        assert "but DNG into the image file" in win._save_options_summary()  # noqa: SLF001
+    finally:
+        win.close()
+
+
+def test_a_window_opens_despite_a_bad_sidecar_override(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typo the CLI refuses leaves the window usable, following the Write To mode alone."""
+    monkeypatch.setattr(
+        gui,
+        "load_config",
+        lambda: {"output": {"sidecar_overrides": ["dng=embed"]}},
+    )
+    win = gui.MainWindow()
+    try:
+        assert win._save_options().sidecar_overrides == {}  # noqa: SLF001
+    finally:
+        win.close()
+
+
 # ---------------------------------------------------------------------------
 # Watching a folder
 # ---------------------------------------------------------------------------

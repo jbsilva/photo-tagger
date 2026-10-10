@@ -312,6 +312,7 @@ class Settings:
     session_gap_minutes: float = 0.0
     # What a save writes, and where.
     sidecar_mode: str = DEFAULT_SIDECAR_MODE
+    sidecar_overrides: int = 0  # how many file types --sidecar-override sends elsewhere
     write_title: bool = True
     write_description: bool = True
     write_keywords: bool = True

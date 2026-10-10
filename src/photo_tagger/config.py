@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "OFF"]
@@ -46,6 +46,13 @@ NON_RAW_EXTENSIONS = frozenset(
 # untouched while the JPEG beside it carries its own metadata.
 SidecarMode = Literal["all", "none", "raw", "both"]
 DEFAULT_SIDECAR_MODE: SidecarMode = "all"
+
+# Where one file type goes, whatever the mode says (--sidecar-override). Named by the file, not by
+# the mode's "all"/"none", because "dng=photo" reads as what it does and "dng=none" does not. The
+# case in point is Lightroom Classic: it keeps a DNG's metadata inside the DNG, not in a sidecar.
+FileTypeTarget = Literal["sidecar", "photo", "both"]
+# Keyed by the lowercase suffix with its dot (".dng"), the form Path.suffix gives.
+type SidecarOverrides = Mapping[str, FileTypeTarget]
 
 
 def _env_int(name: str, default: int) -> int:

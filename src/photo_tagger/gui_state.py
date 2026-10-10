@@ -32,7 +32,9 @@ from photo_tagger.config import (
     DEFAULT_OUTPUT_LANGUAGE,
     DEFAULT_SIDECAR_MODE,
     DEFAULT_WORK_MINUTES,
+    FileTypeTarget,
     SidecarMode,
+    SidecarOverrides,
 )
 from photo_tagger.csv_report import ReportRow
 from photo_tagger.discovery import parse_extensions, resolve_image_files
@@ -55,6 +57,7 @@ from photo_tagger.metadata import (
     SOURCE_SIDECAR,
     TAGGED_FIELDS,
     CaptionValue,
+    parse_sidecar_overrides,
     select_camera_fields,
     select_location,
 )
@@ -364,8 +367,11 @@ class SaveOptions:
     overwrite_description: bool = True
     overwrite_keywords: bool = False
     backup: bool = True
-    # Sidecar, embedded, or one per file type: resolved per photo by metadata.use_sidecar_for.
+    # Sidecar, embedded, or one per file type: resolved per photo by metadata.plan_writes.
     sidecar_mode: SidecarMode = DEFAULT_SIDECAR_MODE
+    # The config file's sidecar_overrides (dng = photo), which win over the mode per extension.
+    # The window has no control for them: they are set once, for a catalog's rules.
+    sidecar_overrides: SidecarOverrides = field(default_factory=dict)
     # The active vocabulary's own spelling of each term, keyed by casefolded term. None when no
     # vocabulary is in force, which is the only time the merge step may capitalize freely.
     verbatim: Mapping[str, str] | None = None
@@ -583,6 +589,50 @@ def build_copyright_fields(
     except FieldError as exc:
         return None, str(exc)
     return fields, ""
+
+
+def load_sidecar_overrides(
+    entries: Iterable[str] | None,
+) -> tuple[dict[str, FileTypeTarget], str]:
+    """
+    Parse the config file's ``sidecar_overrides``: the overrides, or the message refusing them.
+
+    The CLI refuses a malformed entry at parse time, but the window reads the config file without
+    that step. It must still open, so it gets ``({}, message)`` to log, and every save follows the
+    Write To mode alone.
+    """
+    try:
+        return parse_sidecar_overrides(entries), ""
+    except ValueError as exc:
+        return {}, str(exc)
+
+
+# How the Save tooltip names each override target. The same words as the Write To summaries in the
+# Qt shell, so they share one translation.
+_OVERRIDE_SUMMARIES: dict[FileTypeTarget, str] = {
+    "photo": gettext_noop("into the image file"),
+    "sidecar": gettext_noop("to an XMP sidecar"),
+    "both": gettext_noop("into the image file and an XMP sidecar"),
+}
+
+
+def sidecar_overrides_summary(overrides: SidecarOverrides) -> str:
+    """
+    Describe the per-type overrides, or "" when there are none.
+
+    A save writes somewhere else for these types than the Write To menu says, so the Save tooltip
+    and that menu both name them.
+    """
+    if not overrides:
+        return ""
+    parts = [
+        _("{type} {target}").format(
+            type=suffix.lstrip(".").upper(),
+            target=_(_OVERRIDE_SUMMARIES[target]),
+        )
+        for suffix, target in sorted(overrides.items())
+    ]
+    return ", ".join(parts)
 
 
 def copyright_summary(fields: ExtraFields | None, year: int) -> str:

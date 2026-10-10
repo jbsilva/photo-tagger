@@ -35,6 +35,9 @@ By default photo-tagger leaves your originals untouched: for each image it write
 - `--sidecar-mode raw` splits by file type: a sidecar for each RAW file, embedded metadata for
     everything else.
 - `--sidecar-mode both` writes each photo and a sidecar beside it.
+- `--sidecar-override dng=photo` sends one file type elsewhere, whatever the mode. Lightroom Classic
+    keeps the metadata of a DNG inside the DNG, so this is the setting for a Lightroom library. See
+    [Tag DNG files for Lightroom Classic](recipes.md#tag-dng-files-for-lightroom-classic).
 
 Either way the metadata is written through ExifTool. The fields generated are:
 

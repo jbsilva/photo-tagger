@@ -345,6 +345,7 @@ those buttons spells out the current choice in its tooltip.
     to refresh only the title and description. A curated Lightroom keyword list then stays as it is.
     If you turn off a field, the GUI also turns off its **Overwrite Existing** entry, because there
     is then nothing to write.
+
 - **Overwrite Existing** holds one entry per field. Each entry decides what a save replaces on a
     photo that already has that field: the GUI's `--overwrite-keywords`, `--preserve-title`, and
     `--preserve-description`. **Keywords** is off by default, so new keywords merge with the old
@@ -352,14 +353,22 @@ those buttons spells out the current choice in its tooltip.
     each field holds only one value. Turning either field on clears a camera's placeholder text.
     Uncheck one to keep the value the photo already has, and fill in only the photos that lack it.
     This way, a caption you wrote by hand survives a rerun.
+
 - **Write To** picks where a save puts the metadata: the GUI's equivalent of the CLI's
     `--sidecar-mode`. The choices are:
+
     - **XMP Sidecar** (the default) writes a `.xmp` file next to every photo.
     - **The Photo Itself** writes into each image file.
     - **Sidecar for RAW, Photo Otherwise** writes one of each, matched to the file type. This suits a
         folder of RAW+JPEG pairs.
     - **Both, Photo and Sidecar** writes the photo *and* a sidecar. The photo then travels tagged, and
         the sidecar stays for your catalog.
+
+    The menu has no control for `sidecar_overrides`, but a save follows it from the configuration
+    file. If one is set, the menu shows it in a grayed-out line, and the tooltip of the Save buttons
+    names it. See
+    [Tag DNG files for Lightroom Classic](recipes.md#tag-dng-files-for-lightroom-classic).
+
 - **Keep ExifTool Backup** (on by default) tells ExifTool to save the untouched file as `*_original`
     before it writes. This is the GUI's equivalent of the CLI's `--backup-xmp` and
     `--no-backup-xmp`. With this on, saving a few thousand photos leaves a full second copy of each

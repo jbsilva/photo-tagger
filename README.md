@@ -189,6 +189,8 @@ Key options:
   - `none` (the same as `--embed-in-photo`): metadata inside every photo
   - `raw`: a sidecar for RAW files, embedded metadata for JPEG and friends
   - `both`: each photo *and* a sidecar beside it
+- `--sidecar-override EXT=TARGET`: send one file type elsewhere, whatever the mode. For example,
+  `dng=photo` writes into each DNG, which is where Lightroom Classic keeps the metadata of a DNG
 - `--dry-run`: run the model and log the proposed metadata without writing XMP
 - `-w/--workers N`: process N photos concurrently using a thread pool (default 1)
 - `--no-progress`: hide the live rich progress bar (auto-disabled on non-interactive stdouts)
@@ -331,6 +333,12 @@ Tag a folder of RAW + JPEG pairs, sidecars for the RAWs and embedded metadata fo
 
 ```bash
 photo-tagger -i ~/Pictures/shoot --ext cr3,jpg --sidecar-mode raw
+```
+
+Match Lightroom Classic: a sidecar for proprietary RAW files, embedded metadata in DNG and JPEG:
+
+```bash
+photo-tagger -i ~/Pictures/shoot --ext cr3,dng,jpg --sidecar-mode raw --sidecar-override dng=photo
 ```
 
 Build a keyword list from the photos you already have, then tag against it:

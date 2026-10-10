@@ -114,6 +114,7 @@ write_keywords = true     # Write keywords (false leaves existing keywords untou
 write_copyright = true    # Write the [copyright] block below (false skips it).
 backup_xmp = true         # Keep ExifTool's *_original backup before writing.
 sidecar_mode = "all"      # "none" embeds; "raw" is a sidecar for RAW only; "both" writes each.
+# sidecar_overrides = ["dng=photo"]  # Per file type, wins over sidecar_mode (Lightroom: DNG).
 dry_run = false           # Run the model and log results, but write nothing.
 # max_keywords = 10       # Cap AI keywords kept per photo (omit to keep all).
 # vocabulary = "~/keywords.txt"  # Restrict keywords to the terms in this file.

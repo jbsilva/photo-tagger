@@ -83,3 +83,14 @@ fail at the start. To fix it:
     model file.
 - Match the identifier exactly. The identifier must match the spelling on the server. This includes
     any namespace or tag (for example `qwen/qwen3-vl-30b` or `llava:34b`).
+
+## Lightroom Classic does not show the keywords of a DNG
+
+Symptom: photo-tagger wrote a `.xmp` beside each DNG, but Lightroom Classic does not show the new
+keywords, or they are gone after you edit the photo.
+
+Lightroom Classic keeps the metadata of a DNG inside the DNG. It reads a sidecar beside a DNG only
+when the sidecar is newer than the DNG. To fix it, write into the DNG with
+`--sidecar-override dng=photo`, then choose _Metadata > Read Metadata from Files_ in Lightroom. See
+[Tag DNG files for Lightroom Classic](usage/recipes.md#tag-dng-files-for-lightroom-classic), which
+also shows how to move old sidecars into their DNG files.

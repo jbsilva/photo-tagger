@@ -8,6 +8,10 @@ This file lists all notable changes to this project. The format follows the
 
 ### Added
 
+- `--sidecar-override EXT=TARGET` (`sidecar_overrides` in the configuration file) sends one file
+  type elsewhere, whatever `--sidecar-mode` says. `dng=photo` writes into each DNG, as Lightroom
+  Classic does.
+
 - `--duty` and `--battery-floor` pace a long run. The run works for a window, then rests, so the
   battery charges back and the fans wind down. This means a library of hundreds of thousands of
   photos no longer needs the machine at full tilt for days. Rests happen at photo boundaries and

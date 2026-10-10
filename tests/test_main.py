@@ -1587,6 +1587,48 @@ def test_sidecar_mode_reaches_the_pipeline_options() -> None:
     assert options.sidecar_mode == "raw"
 
 
+def test_sidecar_overrides_reach_the_pipeline_options() -> None:
+    """A config file's [output] sidecar_overrides lands on the options, parsed per extension."""
+    from photo_tagger.cli_options import load_defaults, to_processing_options  # noqa: PLC0415
+
+    defaults = load_defaults({"output": {"sidecar_overrides": ["DNG=photo"]}})
+
+    options = to_processing_options(defaults.output, defaults.inference)
+
+    assert options.sidecar_overrides == {".dng": "photo"}
+
+
+def test_sidecar_override_flag_reaches_the_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag wins over the config file's list, and it leaves the mode it sits beside alone."""
+    _point_config_at(tmp_path, monkeypatch, '[output]\nsidecar_overrides = ["tif=both"]\n')
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--sidecar-override", "dng=photo"])
+
+    # A list flag replaces the config's list, as every repeatable flag does.
+    assert captured["options"].sidecar_overrides == {".dng": "photo"}
+    assert captured["options"].sidecar_mode == "all"
+
+
+def test_sidecar_override_typo_fails_before_any_photo(tmp_path: Path) -> None:
+    """A wrong target is a parse error, not a run that quietly writes sidecars instead."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch, pytest.raises(SystemExit) as exit_info:
+        main_module.app(["--input", str(image), "--sidecar-override", "dng=embed"])
+
+    assert exit_info.value.code != 0
+    assert "options" not in captured
+
+
 def test_preserve_flags_reach_the_pipeline_per_field() -> None:
     """Each field's keep-or-replace answer travels on its own, keywords included."""
     from photo_tagger.cli_options import load_defaults, to_processing_options  # noqa: PLC0415
@@ -2527,6 +2569,21 @@ def test_set_writes_the_copyright_fields_dated_per_photo(tmp_path: Path) -> None
     assert written[new]["XMP-xmpRights:Marked"] == "True"
 
 
+def test_set_passes_the_sidecar_overrides_to_the_writer(tmp_path: Path) -> None:
+    """`set` stamps a DNG the same place `tag` would, or Lightroom sees half the metadata."""
+    image = _make_jpeg(tmp_path / "img.dng")
+
+    with (
+        patch.object(main_module, "read_capture_years", return_value={image.resolve(): 2025}),
+        patch.object(main_module, "write_metadata_everywhere", return_value=(True, [])) as write,
+    ):
+        _run_app(
+            ["set", "--input", str(image), "--artist", "Ada", "--sidecar-override", "dng=photo"],
+        )
+
+    assert write.call_args.kwargs["sidecar_overrides"] == {".dng": "photo"}
+
+
 def test_set_records_its_writes_for_undo(tmp_path: Path) -> None:
     """A run that went to the wrong folder is one `photo-tagger undo` away."""
     image = _make_jpeg(tmp_path / "img.cr3")
@@ -3138,6 +3195,31 @@ def test_telemetry_settings_of_the_defaults_are_the_defaults(
         recursive=defaults.recursive,
     )
     assert settings == telemetry.Settings()
+
+
+def test_telemetry_settings_count_the_sidecar_overrides() -> None:
+    """
+    --sidecar-override is reported as how many file types it sends elsewhere, never which.
+
+    File types, not entries: a later entry for the same type replaces the earlier one, as the GUI
+    counts them.
+    """
+    overrides = ["dng=photo", "tif=both", "DNG=sidecar"]
+    defaults = load_defaults({"output": {"sidecar_overrides": overrides}})
+    settings = to_telemetry_settings(
+        provider=defaults.provider,
+        inference=defaults.inference,
+        output=defaults.output,
+        artifacts=defaults.artifacts,
+        display=defaults.display,
+        filter_=defaults.filter,
+        log=defaults.log,
+        pacing=defaults.pacing,
+        workers=defaults.workers,
+        extensions=defaults.extensions,
+        recursive=defaults.recursive,
+    )
+    assert settings.sidecar_overrides == 2  # noqa: PLR2004 - the two entries above.
 
 
 def test_telemetry_settings_keep_no_path_or_text(tmp_path: Path) -> None:

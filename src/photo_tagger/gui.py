@@ -244,6 +244,7 @@ from photo_tagger.gui_state import (
     keyword_diff,
     keyword_lines,
     keywords_to_text,
+    load_sidecar_overrides,
     load_vocabulary_file,
     location_crumb,
     login_shell_path,
@@ -273,6 +274,7 @@ from photo_tagger.gui_state import (
     review_summary,
     save_options_for,
     search_summary,
+    sidecar_overrides_summary,
     sort_photos,
     source_label,
     status_sort_rank,
@@ -1249,6 +1251,7 @@ class SaveWorker(QObject):
                     extra=resolve_extra_tags(self._options, job.path, years),
                     backup=self._options.backup,
                     sidecar_mode=self._options.sidecar_mode,
+                    sidecar_overrides=self._options.sidecar_overrides,
                     et=helper,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -2078,6 +2081,10 @@ class MainWindow(QMainWindow):
         self._vocabulary_strict = output.vocabulary_strict
         self._session_gap = output.session_gap_minutes
         self._repair_language = self._defaults.inference.repair_language
+        self._sidecar_overrides, overrides_error = load_sidecar_overrides(output.sidecar_overrides)
+        if overrides_error:
+            # A config the CLI would refuse must not take the window down with it.
+            logger.warning("gui_sidecar_overrides_unusable", error=overrides_error)
         # What the vocabulary did over the run in flight, for its closing summary line.
         self._vocabulary_mapped = 0
         self._vocabulary_dropped: dict[str, int] = {}
@@ -3997,6 +4004,12 @@ class MainWindow(QMainWindow):
             group.addAction(action)
             menu.addAction(action)
             self._sidecar_actions[value] = action
+        if overrides := sidecar_overrides_summary(self._sidecar_overrides):
+            # Set in the config file, with no control here, so the menu at least says so.
+            menu.addSeparator()
+            note = QAction(_("From the config file: {overrides}").format(overrides=overrides), self)
+            note.setEnabled(False)
+            menu.addAction(note)
         return menu
 
     def _sidecar_mode(self) -> SidecarMode:
@@ -4029,6 +4042,8 @@ class MainWindow(QMainWindow):
         if kept := self._kept_captions():
             parts.append(_("keeping any existing {fields}").format(fields=", ".join(kept)))
         parts.append(_WRITE_TO_SUMMARIES[self._sidecar_mode()]())
+        if overrides := sidecar_overrides_summary(self._sidecar_overrides):
+            parts.append(_("but {overrides}").format(overrides=overrides))
         parts.append(
             _("keeping a *_original backup")
             if self._backup.isChecked()
@@ -5228,6 +5243,7 @@ class MainWindow(QMainWindow):
             overwrite_keywords=self._overwrites(FIELD_KEYWORDS),
             backup=self._backup.isChecked(),
             sidecar_mode=self._sidecar_mode(),
+            sidecar_overrides=self._sidecar_overrides,
             verbatim=self._verbatim_spellings(),
             # None when Write Copyright is off, so an unchecked toggle skips the whole block
             # without anyone having to empty the dialog that holds it.
@@ -5313,6 +5329,7 @@ class MainWindow(QMainWindow):
                 extra=self._copyright_tags_for(options, item),
                 backup=options.backup,
                 sidecar_mode=options.sidecar_mode,
+                sidecar_overrides=options.sidecar_overrides,
             )
         except Exception as exc:  # noqa: BLE001 - exiftool itself failing to start must surface
             # as a failed save, not an uncaught exception Qt swallows into the log unseen.
@@ -7547,6 +7564,7 @@ class MainWindow(QMainWindow):
                 copyright=self._copyright_fields,
                 watch_interval=watching.interval,
                 watch_settle=watching.settle,
+                sidecar_overrides=len(self._sidecar_overrides),
             ),
         )
 

@@ -173,19 +173,19 @@ beacon never carries the error message, because messages can contain file paths.
 
 ### Settings
 
-| Area                    | Fields                                                                                                                                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The model server        | `endpoint`, `secure`, `custom_url`, `api_key` (a key is set), `retries`, `timeout_seconds`                                                                                                 |
-| What the model is asked | `temperature`, `max_tokens`, `frequency_penalty`, `jpeg_dimensions`, `jpeg_quality`, `repair_language`, `hint`, `hint_chars`, `custom_prompt`, `workers`, `cache`                          |
-| Keywords                | `max_keywords`, `vocabulary`, `vocabulary_terms`, `vocabulary_strict`, `session_gap_minutes`                                                                                               |
-| What a save writes      | `sidecar_mode`, `write_title`, `write_description`, `write_keywords`, `write_copyright`, `overwrite_title`, `overwrite_description`, `overwrite_keywords`, `backup`, `undo_log`, `dry_run` |
-| Copyright               | `artist`, `copyright_notice`, `rights` (each one filled in or not), `marked`, `set_tags` (a count)                                                                                         |
-| Pacing                  | `paced`, `duty`, `battery_floor`, `battery_resume`, `work_minutes`, `max_pause_minutes`                                                                                                    |
-| Alerts                  | `notify`, `notify_sound`                                                                                                                                                                   |
-| Which photos            | `extensions` (known formats only), `recursive`, `skip_tagged`, `date_filter`, `skip_list`, `resume_list`                                                                                   |
-| Reports (CLI)           | `summary_file`, `csv_report`, `json_output`, `progress_bar`, `lock_file`, `otel`, `otel_content`, `console_log_level`, `file_log_level`                                                    |
-| Watching                | `watch_interval`, `watch_settle`                                                                                                                                                           |
-| GUI                     | `autosave` (**Save After Generating**)                                                                                                                                                     |
+| Area                    | Fields                                                                                                                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The model server        | `endpoint`, `secure`, `custom_url`, `api_key` (a key is set), `retries`, `timeout_seconds`                                                                                                                                |
+| What the model is asked | `temperature`, `max_tokens`, `frequency_penalty`, `jpeg_dimensions`, `jpeg_quality`, `repair_language`, `hint`, `hint_chars`, `custom_prompt`, `workers`, `cache`                                                         |
+| Keywords                | `max_keywords`, `vocabulary`, `vocabulary_terms`, `vocabulary_strict`, `session_gap_minutes`                                                                                                                              |
+| What a save writes      | `sidecar_mode`, `sidecar_overrides` (a count), `write_title`, `write_description`, `write_keywords`, `write_copyright`, `overwrite_title`, `overwrite_description`, `overwrite_keywords`, `backup`, `undo_log`, `dry_run` |
+| Copyright               | `artist`, `copyright_notice`, `rights` (each one filled in or not), `marked`, `set_tags` (a count)                                                                                                                        |
+| Pacing                  | `paced`, `duty`, `battery_floor`, `battery_resume`, `work_minutes`, `max_pause_minutes`                                                                                                                                   |
+| Alerts                  | `notify`, `notify_sound`                                                                                                                                                                                                  |
+| Which photos            | `extensions` (known formats only), `recursive`, `skip_tagged`, `date_filter`, `skip_list`, `resume_list`                                                                                                                  |
+| Reports (CLI)           | `summary_file`, `csv_report`, `json_output`, `progress_bar`, `lock_file`, `otel`, `otel_content`, `console_log_level`, `file_log_level`                                                                                   |
+| Watching                | `watch_interval`, `watch_settle`                                                                                                                                                                                          |
+| GUI                     | `autosave` (**Save After Generating**)                                                                                                                                                                                    |
 
 The `duty`, `battery_floor`, and `battery_resume` fields are percentages, and `watch_interval` and
 `watch_settle` are seconds. Each field has the name of the configuration key it reports.

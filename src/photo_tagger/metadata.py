@@ -35,7 +35,9 @@ from photo_tagger.config import (
     TAG_XMP_SUBJECT,
     TAG_XMP_TITLE,
     TAG_XMP_WEIGHTED_FLAT_SUBJECT,
+    FileTypeTarget,
     SidecarMode,
+    SidecarOverrides,
     exiftool_executable,
 )
 from photo_tagger.fields import COPYRIGHT_READ_TAGS
@@ -1238,22 +1240,79 @@ class WriteTarget:
     existed: bool
 
 
-def plan_writes(image_path: Path, mode: SidecarMode) -> list[WriteTarget]:
+# What each --sidecar-override target writes, as use_sidecar values: photo before sidecar, the
+# order metadata_targets reads them in.
+_TARGET_SIDECARS: dict[FileTypeTarget, tuple[bool, ...]] = {
+    "photo": (False,),
+    "sidecar": (True,),
+    "both": (False, True),
+}
+# The same keys by their spelling, so a parsed string comes out typed without a cast.
+_TARGET_NAMES: dict[str, FileTypeTarget] = {name: name for name in _TARGET_SIDECARS}
+
+
+def parse_sidecar_overrides(entries: Iterable[str] | None) -> dict[str, FileTypeTarget]:
+    """
+    Parse ``EXT=TARGET`` entries into overrides keyed by lowercase suffix.
+
+    The extension takes any case and an optional dot, so ``DNG=photo`` and ``.dng=photo`` agree. A
+    later entry for the same extension wins, like a repeated flag. Raises :class:`ValueError` on an
+    entry that is not ``EXT=TARGET``, or that names the sidecar extension itself.
+
+    Examples:
+        >>> parse_sidecar_overrides(["DNG=photo", "tif=both"])
+        {'.dng': 'photo', '.tif': 'both'}
+    """
+    overrides: dict[str, FileTypeTarget] = {}
+    for entry in entries or ():
+        extension, _, name = entry.partition("=")
+        suffix = "." + extension.strip().lstrip(".").lower()
+        target = _TARGET_NAMES.get(name.strip().lower())
+        if target is None or suffix == ".":
+            msg = (
+                f"--sidecar-override {entry!r} must be EXT=TARGET, where TARGET is sidecar, "
+                f"photo, or both. For example: dng=photo"
+            )
+            raise ValueError(msg)
+        if suffix == ".xmp":
+            msg = f"--sidecar-override {entry!r}: an XMP sidecar cannot get a sidecar of its own"
+            raise ValueError(msg)
+        overrides[suffix] = target
+    return overrides
+
+
+def _sidecar_choices(
+    image_path: Path,
+    mode: SidecarMode,
+    overrides: SidecarOverrides | None,
+) -> tuple[bool, ...]:
+    """Return the use_sidecar value of each file a save writes, photo first."""
+    if overrides and (target := overrides.get(image_path.suffix.lower())) is not None:
+        return _TARGET_SIDECARS[target]
+    return (False, True) if mode == "both" else (use_sidecar_for(image_path, mode),)
+
+
+def plan_writes(
+    image_path: Path,
+    mode: SidecarMode,
+    overrides: SidecarOverrides | None = None,
+) -> list[WriteTarget]:
     """
     List the files a save under *mode* writes for *image_path*, as they are before the write.
 
     One target for every mode but "both", which writes the photo *and* a sidecar beside it: the
     photo travels with its metadata, and the sidecar is what a catalog edits without touching the
-    photo again.
+    photo again. An entry in *overrides* for the photo's extension wins over *mode*, so a DNG can
+    carry its own metadata (as Lightroom Classic expects) while every other file gets a sidecar.
 
     Examples:
         >>> [t.path.name for t in plan_writes(Path("/photos/image.cr3"), "both")]
         ['image.cr3', 'image.xmp']
+        >>> [t.path.name for t in plan_writes(Path("/photos/image.dng"), "all", {".dng": "photo"})]
+        ['image.dng']
     """
-    # Photo before sidecar, the order metadata_targets reads them in.
-    uses_sidecar = [False, True] if mode == "both" else [use_sidecar_for(image_path, mode)]
     targets: list[WriteTarget] = []
-    for use_sidecar in uses_sidecar:
+    for use_sidecar in _sidecar_choices(image_path, mode, overrides):
         path = write_target(image_path, use_sidecar=use_sidecar)
         targets.append(WriteTarget(path=path, use_sidecar=use_sidecar, existed=path.exists()))
     return targets
@@ -1268,16 +1327,20 @@ def write_metadata_everywhere(  # noqa: PLR0913 - distinct optional fields are c
     extra: Mapping[str, str] | None = None,
     backup: bool = True,
     sidecar_mode: SidecarMode,
+    sidecar_overrides: SidecarOverrides | None = None,
     et: ExifToolHelper | None = None,
 ) -> tuple[bool, list[WriteTarget]]:
     """
     Write *image_path*'s metadata everywhere *sidecar_mode* asks for.
 
+    An entry in *sidecar_overrides* for the photo's extension wins over the mode (see
+    :func:`plan_writes`).
+
     Returns whether every target was saved, and the ones that were written, for the caller's undo
     journal. A target that already carried every value counts as saved but was not touched, so it is
     left out. A partial failure under "both" still reports what landed, so undo can revert it.
     """
-    targets = plan_writes(image_path, sidecar_mode)
+    targets = plan_writes(image_path, sidecar_mode, sidecar_overrides)
     saved = 0
     written: list[WriteTarget] = []
     for target in targets:

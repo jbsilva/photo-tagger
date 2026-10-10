@@ -55,7 +55,8 @@ photo-tagger \
 
 A camera set to RAW+JPEG leaves two files per shot. `--sidecar-mode raw` handles both in one pass:
 the CR3 (or DNG, NEF, ARW) keeps its bytes and gets a `.xmp` beside it. The JPEG carries its own
-metadata, so it travels intact.
+metadata, so it travels intact. If you use Lightroom Classic, also read the next recipe: it keeps a
+DNG's metadata inside the DNG.
 
 ```bash
 photo-tagger \
@@ -63,6 +64,128 @@ photo-tagger \
   --ext cr3,jpg \
   --sidecar-mode raw
 ```
+
+## Tag DNG files for Lightroom Classic
+
+Lightroom Classic keeps the metadata of a DNG inside the DNG file, not in a `.xmp` sidecar.
+photo-tagger counts DNG as a RAW format, so each sidecar mode except `none` gives a DNG a sidecar.
+To write into each DNG instead, add an override for the DNG file type:
+
+```bash
+photo-tagger \
+  -i ~/Pictures/shoot \
+  --ext cr3,dng,jpg \
+  --sidecar-mode raw \
+  --sidecar-override dng=photo
+```
+
+This matches what Lightroom Classic does. A CR3 keeps its bytes and gets a `.xmp` beside it. A DNG
+and a JPEG carry their own metadata. To make this your default, put it in the
+[configuration file](../getting-started/configuration.md). The GUI then follows it too:
+
+```toml
+[output]
+sidecar_mode = "raw"               # A sidecar for CR3, NEF, ARW. Embedded for JPEG and TIFF.
+sidecar_overrides = ["dng=photo"]  # DNG counts as RAW above. This writes into each DNG instead.
+```
+
+An override has the form `EXT=TARGET`, where TARGET is `sidecar`, `photo`, or `both`. It applies to
+one file extension and wins over `--sidecar-mode`. Without an override, photo-tagger still gives a
+DNG a sidecar.
+
+### Two overrides in one run
+
+Repeat the flag once for each file type. This run keeps the default sidecar for most files. It
+writes into each DNG for Lightroom Classic. It writes each TIFF twice: into the file itself, and
+into a sidecar for other tools. The TIFF then carries its metadata to wherever you send it.
+
+```bash
+photo-tagger \
+  -i ~/Pictures/shoot \
+  --ext cr3,dng,tif,jpg \
+  --sidecar-mode all \
+  --sidecar-override dng=photo \
+  --sidecar-override tif=both
+```
+
+In the configuration file, the same two overrides are two entries in one list:
+
+```toml
+[output]
+sidecar_mode = "all"
+sidecar_overrides = ["dng=photo", "tif=both"]
+```
+
+Each photo then gets these files:
+
+```text
+photos/
+  duck.cr3        # the mode: original, never modified
+  duck.xmp        # its sidecar
+  heron.dng       # dng=photo: metadata written into the file itself
+  swan.tif        # tif=both: metadata written into the file itself
+  swan.xmp        # and the same metadata beside it
+  owl.jpg         # the mode: original, never modified
+  owl.xmp         # its sidecar
+```
+
+An override matches one extension exactly, and `tif=both` does not cover `.tiff` files. If you have
+both, add `--sidecar-override tiff=both`. On the command line, the flags replace the whole list from
+the configuration file. To keep an entry from the file, repeat it on the command line.
+
+### Why a sidecar beside a DNG loses metadata
+
+Lightroom Classic picks the place for XMP by file type. For a proprietary RAW file (CR2, CR3, NEF,
+ARW), it writes a `.xmp` sidecar, because it never changes those files. For DNG, JPEG, TIFF, and
+PSD, it writes the XMP inside the file. Lightroom Classic has no option to change this. See
+[Adobe: metadata basics](https://helpx.adobe.com/lightroom-classic/help/metadata-basics-actions.html).
+
+Lightroom Classic shows the metadata from its catalog, not the metadata from the newest file. When a
+file changes outside Lightroom, it marks the thumbnail with a "metadata was changed externally"
+badge. You then choose to read the file or to overwrite it. See
+[Adobe: advanced metadata actions](https://helpx.adobe.com/lightroom-classic/help/advanced-metadata-actions.html).
+
+When Lightroom Classic reads metadata from a DNG (on import, or with _Metadata > Read Metadata from
+Files_), it also reads a sidecar beside it. If the sidecar is older than the DNG, Lightroom ignores
+the sidecar. See the
+[Adobe community thread](https://community.adobe.com/t5/lightroom-classic-discussions/p-lrc-reads-metadata-for-a-dng-from-an-associated-sidecar/m-p/13204500),
+where Thomas Knoll of Adobe replies. This gives a sequence that loses the keywords:
+
+1. photo-tagger writes `duck.xmp` beside `duck.dng`. The sidecar is now the newer file, but the
+    catalog does not change.
+2. You edit the photo in Lightroom Classic. With _Automatically write changes into XMP_ on,
+    Lightroom writes the catalog metadata into `duck.dng`. The DNG is now the newer file.
+3. Later, Lightroom Classic reads the metadata from the file. It ignores the older sidecar, so the
+    keywords from photo-tagger never reach the catalog.
+
+With `dng=photo`, the keywords are in the DNG itself, so no date comparison applies. To bring them
+into the catalog, select the photos and choose _Metadata > Read Metadata from Files_.
+
+!!! warning
+
+    Save your catalog edits to the files (_Metadata > Save Metadata to Files_) before you run
+    photo-tagger. Otherwise, _Read Metadata from Files_ replaces the catalog edits that are not in the
+    file yet.
+
+Lightroom Classic 15.0 (October 2025) and later also write `.acr` files. They hold large edit data,
+such as AI masks, noise reduction, and Distraction Removal, so that the `.xmp` stays small. See
+[Adobe: XMP and ACR files](https://helpx.adobe.com/lightroom-classic/help/create-xmp-acr-files.html).
+Adobe does not say that they hold keywords or captions, and photo-tagger does not read or write
+them. They do not change the choice above.
+
+### Move old sidecars into their DNG files
+
+If an earlier run gave your DNG files sidecars, copy each sidecar into its DNG with ExifTool. `%d%f`
+is the directory and name of each DNG, so every DNG reads the `.xmp` with its own name:
+
+```bash
+exiftool -tagsFromFile %d%f.xmp -all:all -ext dng -r ~/Pictures/shoot
+```
+
+ExifTool keeps a `*_original` backup of each DNG. Make sure that the DNG files carry the keywords
+(`photo-tagger show -i photo.dng`), then delete the old sidecars. photo-tagger does not delete them.
+While a sidecar is there, photo-tagger reads it first, so its old values hide the new ones in the
+DNG.
 
 ## Point at a remote Ollama host with a custom model
 

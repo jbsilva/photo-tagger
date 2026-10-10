@@ -203,8 +203,10 @@ answers. `--write-sidecar` and `--embed-in-photo` are shorthand for the first tw
 
 !!! note
 
-    Sidecars keep your originals completely untouched, and Lightroom reads the `.xmp` file alongside the
-    photo on import. This is the safest option for RAW workflows, which is why it is the default.
+    Sidecars keep your originals completely untouched, which is why they are the default. Lightroom
+    Classic reads a `.xmp` sidecar only for a proprietary RAW file (CR3, NEF, ARW). It keeps the
+    metadata of a DNG, JPEG, or TIFF inside the file. See
+    [Tag DNG files for Lightroom Classic](../usage/recipes.md#tag-dng-files-for-lightroom-classic).
 
 `--sidecar-mode raw` is for the folder that holds both, the RAW+JPEG pairs a camera set to that mode
 produces: the RAWs keep their bytes, and each JPEG carries its own metadata so it travels intact.
@@ -216,6 +218,14 @@ and keeps its file untouched.
 itself and into a sidecar. The photo then carries its metadata wherever it is copied, while the
 sidecar stays for the catalog to edit. It costs two ExifTool writes per photo, and `plan_writes` is
 what turns a mode into that list of targets. Undo records each one, so reverting puts back both.
+
+`--sidecar-override EXT=TARGET` (`sidecar_overrides` in `config.toml`) wins over the mode for one
+extension. TARGET is `sidecar`, `photo`, or `both`, the per-file forms of `all`, `none`, and `both`.
+A mode name reads wrong there: `dng=none` does not say "into the DNG". `plan_writes` checks the
+override before the mode, so every writer (`tag`, `watch`, `set`, and the GUI) agrees.
+`parse_sidecar_overrides` makes the extension lowercase and adds the dot. It refuses an unknown
+target, and it refuses `xmp`, because a sidecar has no sidecar. The CLI checks the entries at parse
+time, so a typo stops the run before the first photo. The GUI logs a bad entry and follows the mode.
 
 ### Cameras ExifTool will not write to on the first try
 

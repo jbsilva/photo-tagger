@@ -25,6 +25,7 @@ from photo_tagger.config import (
     DEFAULT_USER_PROMPT,
     TAG_EXIF_DATE_TIME_ORIGINAL,
     SidecarMode,
+    SidecarOverrides,
     build_repair_prompt,
 )
 from photo_tagger.errors import BatchError
@@ -143,6 +144,8 @@ class ProcessingOptions:
     backup_xmp: bool = True
     # Sidecar, embedded, or both: resolved per photo by photo_tagger.metadata.plan_writes.
     sidecar_mode: SidecarMode = DEFAULT_SIDECAR_MODE
+    # Per-extension answers that win over the mode (--sidecar-override dng=photo).
+    sidecar_overrides: SidecarOverrides = field(default_factory=dict)
     dry_run: bool = False
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_MAX_TOKENS
@@ -897,6 +900,7 @@ def _write_pending(
         extra=pending.extra_tags,
         backup=options.backup_xmp,
         sidecar_mode=options.sidecar_mode,
+        sidecar_overrides=options.sidecar_overrides,
         et=et,
     )
     if ctx.journal is not None:

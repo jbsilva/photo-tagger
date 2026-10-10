@@ -30,6 +30,7 @@ from photo_tagger.metadata import (
     format_metadata_value,
     iter_field_presence,
     managed_helper,
+    parse_sidecar_overrides,
     plan_writes,
     prompt_with_hint,
     read_all_tags,
@@ -50,6 +51,8 @@ from photo_tagger.models import KeywordSet
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from photo_tagger.config import FileTypeTarget, SidecarMode
 
 
 def _fake_helper(get_tags_result: object = None) -> MagicMock:
@@ -222,6 +225,81 @@ def test_plan_writes_lists_one_target_per_mode(tmp_path: Path) -> None:
     assert [t.use_sidecar for t in both] == [False, True]
     # Sampled before the write: the photo is there, the sidecar is not.
     assert [t.existed for t in both] == [True, False]
+
+
+@pytest.mark.parametrize(
+    ("mode", "target", "expected"),
+    [
+        # The Lightroom Classic case: a DNG keeps its metadata inside, the rest gets sidecars.
+        ("all", "photo", ["a.dng"]),
+        ("none", "sidecar", ["a.xmp"]),
+        ("raw", "both", ["a.dng", "a.xmp"]),
+        ("both", "photo", ["a.dng"]),
+    ],
+)
+def test_plan_writes_lets_an_override_win_over_the_mode(
+    tmp_path: Path,
+    mode: SidecarMode,
+    target: FileTypeTarget,
+    expected: list[str],
+) -> None:
+    """An override for the photo's extension decides alone, whatever the mode says."""
+    img = tmp_path / "a.dng"
+
+    assert [t.path.name for t in plan_writes(img, mode, {".dng": target})] == expected
+
+
+def test_plan_writes_leaves_other_file_types_to_the_mode(tmp_path: Path) -> None:
+    """A DNG override must not move the JPEG beside it, and the suffix match ignores case."""
+    overrides: dict[str, FileTypeTarget] = {".dng": "photo"}
+
+    assert [t.path.name for t in plan_writes(tmp_path / "b.jpg", "all", overrides)] == ["b.xmp"]
+    assert [t.path.name for t in plan_writes(tmp_path / "C.DNG", "all", overrides)] == ["C.DNG"]
+
+
+def test_parse_sidecar_overrides_normalizes_the_extension() -> None:
+    """
+    Case, a leading dot, and spaces do not matter.
+
+    A later entry wins, like a repeated flag.
+    """
+    entries = ["DNG=photo", " .tif = Both ", "dng=sidecar"]
+
+    assert parse_sidecar_overrides(entries) == {".dng": "sidecar", ".tif": "both"}
+    assert parse_sidecar_overrides(None) == {}
+
+
+@pytest.mark.parametrize("entry", ["dng", "dng=embed", "=photo", ".=photo", "dng="])
+def test_parse_sidecar_overrides_refuses_a_malformed_entry(entry: str) -> None:
+    """A typo must stop the run: the default would silently write sidecars the catalog ignores."""
+    with pytest.raises(ValueError, match="EXT=TARGET"):
+        parse_sidecar_overrides([entry])
+
+
+def test_parse_sidecar_overrides_refuses_the_sidecar_extension() -> None:
+    """An .xmp is the sidecar itself, so an override for it can only be a mistake."""
+    with pytest.raises(ValueError, match="sidecar of its own"):
+        parse_sidecar_overrides(["xmp=photo"])
+
+
+def test_write_metadata_everywhere_follows_an_override(tmp_path: Path) -> None:
+    """The override reaches the writer: an embedded DNG gets the real EXIF tags, not XMP only."""
+    img = tmp_path / "a.dng"
+    img.write_text("x")
+    helper = _fake_helper()
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        ok, written = write_metadata_everywhere(
+            img,
+            KeywordSet(subject=["Bird"]),
+            description="A caption.",
+            sidecar_mode="all",
+            sidecar_overrides={".dng": "photo"},
+        )
+
+    assert ok is True
+    assert [t.path.name for t in written] == ["a.dng"]
+    assert TAG_EXIF_IMAGE_DESCRIPTION in helper.set_tags.call_args.kwargs["tags"]
 
 
 def _jpeg_file(path: Path) -> Path:

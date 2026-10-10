@@ -7,7 +7,8 @@ Alternatively, pass --embed-in-photo to write metadata directly into the origina
 Unfortunately, Lightroom uses XMP sidecar files only for proprietary raw formats (e.g., CR3, NEF).
 For JPEG, DNG and other formats, you'll often prefer embedding the metadata directly into the file.
 A folder holding both is what --sidecar-mode raw is for: sidecars for the RAW files, embedded
-metadata for the rest, in one pass.
+metadata for the rest, in one pass. Mind that DNG counts as RAW there; add
+--sidecar-override dng=photo to write into each DNG, as Lightroom Classic does.
 This can be done with ExifTool manually as well:
     exiftool -tagsFromFile image.xmp -all:all image.jpg
 
@@ -59,12 +60,14 @@ from photo_tagger.cli_options import (
     known_config_keys,
     resolve_notify,
     resolve_sidecar_mode,
+    resolve_sidecar_overrides,
     to_extra_fields,
     to_pacing_plan,
     to_processing_options,
     to_telemetry_settings,
     to_trim_rules,
     validate_pacing,
+    validate_sidecar_overrides,
 )
 from photo_tagger.config import DEFAULT_USER_PROMPT, SidecarMode
 from photo_tagger.config_file import config_file_kind, configured_exiftool_path, load_config
@@ -440,18 +443,20 @@ def _write_fields(
     image_files: list[Path],
     fields: ExtraFields,
     *,
-    sidecar_mode: SidecarMode,
-    backup: bool,
+    output: OutputConfig,
     journal: UndoJournal | None,
 ) -> tuple[int, list[Path]]:
     """
-    Stamp every photo with *fields*, dated by its own capture year.
+    Stamp every photo with *fields*, dated by its own capture year, where *output* says to write.
 
     Returns (written, failed). One ExifTool process for the batch, and one batched read of the
     capture dates before it, so a thousand photos cost two round trips plus one write each.
     """
     written = 0
     failed: list[Path] = []
+    backup = output.backup_xmp
+    sidecar_mode = resolve_sidecar_mode(output)
+    sidecar_overrides = resolve_sidecar_overrides(output)
     with managed_helper(None) as helper:
         years = read_capture_years(image_files, et=helper)
         for image_file in image_files:
@@ -461,6 +466,7 @@ def _write_fields(
                 extra=fields.resolve(years[image_file]),
                 backup=backup,
                 sidecar_mode=sidecar_mode,
+                sidecar_overrides=sidecar_overrides,
                 et=helper,
             )
             if journal is not None:
@@ -514,6 +520,17 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
             name=("--write-sidecar",),
             negative="--embed-in-photo",
             help="Shorthand for --sidecar-mode: 'all' or 'none'. An explicit mode wins over both",
+        ),
+    ] = None,
+    sidecar_overrides: Annotated[
+        list[str] | None,
+        Parameter(
+            name=("--sidecar-override",),
+            validator=validate_sidecar_overrides,
+            help=(
+                "Send one file type somewhere else than --sidecar-mode says, as EXT=TARGET with "
+                "TARGET one of 'sidecar', 'photo', or 'both' (repeat this option)"
+            ),
         ),
     ] = None,
     backup_xmp: Annotated[
@@ -583,7 +600,12 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
 
-    mode = resolve_sidecar_mode(OutputConfig(sidecar_mode=sidecar_mode, use_sidecar=use_sidecar))
+    output = OutputConfig(
+        backup_xmp=backup_xmp,
+        sidecar_mode=sidecar_mode,
+        use_sidecar=use_sidecar,
+        sidecar_overrides=sidecar_overrides,
+    )
     telemetry.note(photos=len(image_files))
     if dry_run:
         _preview_fields(console, image_files, fields)
@@ -592,8 +614,7 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
     written, failed = _write_fields(
         image_files,
         fields,
-        sidecar_mode=mode,
-        backup=backup_xmp,
+        output=output,
         journal=open_journal(datetime.now(tz=UTC), enabled=undo_log),
     )
     telemetry.note(written=written, failed=len(failed))
@@ -1527,7 +1548,8 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         (use --overwrite-keywords to replace).
     - Writes metadata to an XMP sidecar (default), embeds it directly with --embed-in-photo,
         splits the two per file type with --sidecar-mode raw (sidecars for RAW, embedded for JPEG
-        and friends), or does both with --sidecar-mode both. Use
+        and friends), or does both with --sidecar-mode both. --sidecar-override dng=photo sends
+        one file type elsewhere (into each DNG here, as Lightroom Classic does). Use
         --no-write-title/--no-write-description to skip fields; --no-backup-xmp to avoid backups.
 
     Skipping:
