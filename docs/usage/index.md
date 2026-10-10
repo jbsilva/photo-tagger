@@ -4,9 +4,10 @@ icon: lucide/terminal
 
 # Usage
 
-photo-tagger is a single command-line tool. You point it at photos, it sends each one to a local
-vision-language model, and it writes Lightroom-compatible keywords, a title, and a description back
-to your images.
+photo-tagger is a single command-line tool. You point it at photos. It sends each one to a
+vision-language model, which can be a local model, a self-hosted one, or any OpenAI-compatible
+service, free or paid. It writes Lightroom-compatible keywords, a title, and a description back to
+your images.
 
 ## Basic invocation
 
@@ -17,21 +18,23 @@ photo-tagger -i PATH [-i PATH ...] [options]
 ```
 
 `-i`/`--input` is repeatable and accepts both files and directories. Add `-r`/`--recursive` to
-descend into subdirectories, and `--ext` to control which extensions are picked up when scanning
-directories (default `cr3,jpg`, case-insensitive). The tool reads RAW and standard formats (CR3,
-CR2, NEF, DNG, JPG, PNG, and more).
+descend into subdirectories. When scanning directories, `--ext` controls which extensions are picked
+up (default `cr3,jpg`, case-insensitive). The tool reads RAW and standard formats (CR3, CR2, NEF,
+DNG, JPG, PNG, and more).
 
-Before your first run, make sure ExifTool is on your `PATH` and a model server is running. See
+Before your first run, make sure that ExifTool is on your `PATH` and a model server is running. See
 [Installation](../getting-started/installation.md) for the full prerequisites, and
-[Configuration](../getting-started/configuration.md) for env vars and the TOML config file.
+[Configuration](../getting-started/configuration.md) for env vars and the TOML configuration file.
 
 ## What a run produces
 
 By default photo-tagger leaves your originals untouched: for each image it writes an XMP sidecar
-(for example `IMG_1234.xmp`) next to the file. Pass `--embed-in-photo` to write the metadata into
-the image file itself instead, `--sidecar-mode raw` to split by file type (a sidecar for each RAW
-file, embedded metadata for everything else), or `--sidecar-mode both` to write each photo and a
-sidecar beside it.
+(for example `IMG_1234.xmp`) next to the file. Pass one of these flags to change that:
+
+- `--embed-in-photo` writes the metadata into the image file itself.
+- `--sidecar-mode raw` splits by file type: a sidecar for each RAW file, embedded metadata for
+    everything else.
+- `--sidecar-mode both` writes each photo and a sidecar beside it.
 
 Either way the metadata is written through ExifTool. The fields generated are:
 
@@ -43,24 +46,24 @@ Either way the metadata is written through ExifTool. The fields generated are:
 
 !!! note
 
-    Existing metadata is merged, not clobbered. New keywords are combined with the ones already on the
-    file, preserving Lightroom hierarchies and deduplicating case-insensitively. Use
-    `--overwrite-keywords` if you would rather replace existing keywords instead of merging.
+    Existing metadata is merged, not replaced. New keywords are combined with the ones already on the
+    file. This keeps Lightroom hierarchies and removes duplicates without case sensitivity. If you
+    prefer to replace existing keywords instead of merging, use `--overwrite-keywords`.
 
 ## Logs, progress, and NDJSON
 
 photo-tagger keeps machine output and human output on separate streams so a run stays scriptable:
 
-- Logs and the live progress bar go to **stderr**. The progress bar is shown on a TTY and is
-    auto-disabled when stderr is redirected; disable it explicitly with `--no-progress`.
-- With `--json`, one NDJSON line per processed photo goes to **stdout** (file, status, from_cache,
+- Logs and the live progress bar go to stderr. The progress bar is shown on a TTY. When stderr is
+    redirected, it is auto-disabled. Disable it explicitly with `--no-progress`.
+- With `--json`, one NDJSON line per processed photo goes to stdout (file, status, from_cache,
     retry, title, description, keywords, token counts, seconds, foreign_terms). Because logs stay on
     stderr, stdout pipes cleanly into tools like `jq`.
 
 ## End-to-end example
 
-Tag every CR3 and JPG under a folder, recursing into subfolders, against an Ollama server, and write
-XMP sidecars (the default):
+This command tags every CR3 and JPG under a folder. It recurses into subfolders, runs against an
+Ollama server, and writes XMP sidecars (the default):
 
 ```bash
 photo-tagger \
@@ -70,7 +73,7 @@ photo-tagger \
 ```
 
 Each photo gets an `.xmp` sidecar with the generated keywords, title, and description, ready to
-import into Lightroom. Logs and a progress bar appear on stderr; nothing is written to stdout
+import into Lightroom. Logs and a progress bar appear on stderr. Nothing is written to stdout
 because `--json` was not passed.
 
 !!! tip

@@ -18,8 +18,8 @@ photo-tagger \
   --extensions cr3,jpg
 ```
 
-The default `--extensions` is `cr3,jpg`, so `--extensions` is only needed when you want a different
-set. Matching is case-insensitive.
+By default, `--extensions` is `cr3,jpg`. If you want a different set, add `--extensions`. Matching
+is case-insensitive.
 
 ## Tag a few explicit files and overwrite keywords
 
@@ -48,14 +48,14 @@ photo-tagger \
 
 !!! warning
 
-    `--embed-in-photo` modifies your originals. ExifTool keeps a `*_original` backup by default; add
-    `--no-backup-xmp` only if you are sure you do not need it.
+    `--embed-in-photo` modifies your originals. ExifTool keeps a `*_original` backup by default. If you
+    are sure you do not need it, add `--no-backup-xmp`.
 
 ## Tag a folder of RAW + JPEG pairs
 
 A camera set to RAW+JPEG leaves two files per shot. `--sidecar-mode raw` handles both in one pass:
-the CR3 (or DNG, NEF, ARW) keeps its bytes and gets a `.xmp` beside it, while the JPEG carries its
-own metadata so it travels intact.
+the CR3 (or DNG, NEF, ARW) keeps its bytes and gets a `.xmp` beside it. The JPEG carries its own
+metadata, so it travels intact.
 
 ```bash
 photo-tagger \
@@ -83,7 +83,7 @@ photo-tagger \
 
 ## Dry-run preview
 
-See the metadata the model would write without changing any files.
+See the metadata the model proposes, without changing any files.
 
 ```bash
 photo-tagger \
@@ -97,7 +97,7 @@ metadata.
 
 ## Process concurrently and write a run summary
 
-Run several photos at once with a thread pool and save a JSON summary when the run finishes.
+Run several photos at once with a thread pool. When the run finishes, save a JSON summary.
 
 ```bash
 photo-tagger \
@@ -107,8 +107,8 @@ photo-tagger \
   --summary-file ~/Pictures/run-summary.json
 ```
 
-The model server is usually the bottleneck, so raising `--workers` helps most when the server can
-serve requests in parallel. The summary file records success and failure counts, failed files, token
+When the server can serve requests in parallel, raising `--workers` helps most. The model server is
+usually the bottleneck. The summary file records success and failure counts, failed files, token
 usage, and wall time.
 
 ## Export a per-photo CSV report
@@ -125,8 +125,8 @@ photo-tagger \
 ```
 
 Rows stream as each photo finishes, so a run stopped with Ctrl-C still leaves a valid file. Pair it
-with `--dry-run` to preview a batch as a spreadsheet without writing any metadata, or with `--json`
-to get both the CSV and the NDJSON stream from one run.
+with `--dry-run` to preview a batch as a spreadsheet without writing any metadata. Pair it with
+`--json` instead to get both the CSV and the NDJSON stream from one run.
 
 ## Custom prompt with a keyword cap
 
@@ -144,8 +144,9 @@ automatically. `--max-keywords` caps the AI keywords before they are merged with
 
 ## Keep keywords inside your Lightroom catalog
 
-Export your keyword list from Lightroom (_Metadata > Export Keywords_) and point the run at it, so
-generated keywords use the names and hierarchy you already curate instead of new near-duplicates.
+Export your keyword list from Lightroom (_Metadata > Export Keywords_), and point the run at it.
+Generated keywords then use the names and hierarchy you already curate, instead of new
+near-duplicates.
 
 ```bash
 photo-tagger \
@@ -156,9 +157,9 @@ photo-tagger \
 ```
 
 `ospreys`, `Sea Hawk`, and `Osprey<Raptor<Wildlife` all land as your `Animal|Bird|Osprey`. Add
-`--vocabulary-strict` to drop anything the list does not cover; the summary file's
-`vocabulary_dropped` then names each rejected term and how often it came up, which is the list to
-work from when deciding what to add to the catalog.
+`--vocabulary-strict` to drop anything the list does not cover. The summary file's
+`vocabulary_dropped` then names each rejected term and how often it came up. When you decide what to
+add to the catalog, this is the list to use.
 
 ## Make a shoot's keywords agree with themselves
 
@@ -171,15 +172,15 @@ photo-tagger \
   --session-gap 60
 ```
 
-Photos taken less than an hour apart are one session. Each session is analyzed in full, its own
+Photos taken less than an hour apart are one session. Each session is analyzed in full. Its own
 output becomes its vocabulary (majority spelling, majority hierarchy), and only then is anything
-written, so forty frames of the same bird cannot land in the catalog as `Osprey`, `Ospreys`,
+written. This way, forty frames of the same bird cannot land in the catalog as `Osprey`, `Ospreys`,
 `Bird|Osprey`, and `Wildlife|Raptor|Osprey`. Photos are processed in capture order, and the result
 is the same at any `--workers` setting.
 
 ## Cache model outputs across reruns
 
-Store model outputs in a SQLite cache so reruns skip the model call when nothing relevant changed.
+Store model outputs in a SQLite cache. Reruns then skip the model call for anything unchanged.
 
 ```bash
 photo-tagger \
@@ -189,10 +190,10 @@ photo-tagger \
 ```
 
 The cache key combines a hash of the image data (ExifTool's `ImageDataHash`, which ignores metadata)
-with the model name and sampling settings, so changing the model or temperature invalidates stale
-entries. Because the hash ignores metadata, a rerun still hits the cache even when the first pass
-embedded tags into the photo with `--embed-in-photo`. The file is created if missing and safe to
-delete.
+with the model name and sampling settings. Changing the model or temperature invalidates stale
+entries. When the first pass embeds tags into the photo with `--embed-in-photo`, a rerun still hits
+the cache, because the hash ignores metadata. If the file is missing, photo-tagger creates it. It is
+safe to delete at any time.
 
 ## Tag photos as they are imported
 
@@ -220,13 +221,14 @@ photo-tagger undo --dry-run   # see the plan first
 photo-tagger undo             # carry it out
 ```
 
-Recording is automatic, so this works even when you did not expect to need it.
-`photo-tagger undo --list` shows the recorded runs and `--run PATH` picks one other than the newest.
-Files you edited after the run are left alone unless you add `--force`.
+Recording happens automatically on every run that writes (not on `--dry-run`, and not with
+`--no-undo-log`), so undo works even without advance planning. `photo-tagger undo --list` shows the
+recorded runs and `--run PATH` picks one other than the newest. Files you edited after the run are
+left alone unless you add `--force`.
 
 ## Resume a killed run
 
-Track successes in a skip file, then resume from it after an interruption. Use the **same** path for
+Track successes in a skip file, then resume from it after an interruption. Use the same path for
 both flags so the next run skips what already succeeded.
 
 ```bash
@@ -238,7 +240,7 @@ photo-tagger \
 ```
 
 `--append-to-skip-file` adds each successfully tagged filename as the run progresses, and
-`--skip-from` drops those filenames on the next run. The file uses one filename per line; lines
+`--skip-from` drops those filenames on the next run. The file uses one filename per line. Lines
 starting with `#` are comments.
 
 ## Tag a mixed folder, skipping already-tagged files
@@ -269,8 +271,8 @@ photo-tagger \
 | jq -r 'select(.status == "ok") | "\(.file)\t\(.title)"'
 ```
 
-`--newer-than` drops files whose mtime is on or before the timestamp; `--older-than` drops files on
-or after it. Logs and the progress bar stay on stderr, so stdout pipes cleanly into `jq`.
+`--newer-than` drops files whose mtime is on or before the timestamp, and `--older-than` drops files
+on or after it. Logs and the progress bar stay on stderr, so stdout pipes cleanly into `jq`.
 
 ## Refuse concurrent runs with a lock file
 

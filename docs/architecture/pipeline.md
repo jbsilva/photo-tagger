@@ -4,9 +4,9 @@ icon: lucide/workflow
 
 # Processing pipeline
 
-The pipeline turns a list of input paths into written metadata. It runs in two stages: first
+The pipeline turns a list of input paths into written metadata. It runs in two stages. First,
 [`discovery.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/discovery.py)
-resolves and filters the batch, then
+resolves and filters the batch. Then
 [`pipeline.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/pipeline.py)
 processes each surviving photo through the model and on to ExifTool.
 
@@ -27,8 +27,8 @@ flowchart LR
 
 `resolve_image_batch()` expands the `-i/--input` paths into a flat list of files. Directories are
 walked and matched against `--ext/--extensions` (case-insensitive, so `--ext cr3` also matches
-`IMG.CR3`); `-r/--recursive` controls whether subdirectories are included. Explicit files are kept
-as is, the extension filter does not apply to them. Duplicates are removed. If the extension list is
+`IMG.CR3`). `-r/--recursive` controls whether subdirectories are included. Explicit files are kept
+as is. The extension filter does not apply to them. Duplicates are removed. If the extension list is
 empty, no inputs were given, or nothing matched, the function raises a `DiscoveryError` and the CLI
 exits with code 1.
 
@@ -40,12 +40,11 @@ The resolved list then passes through three optional filters, in this order:
 | `apply_date_filter` | `--newer-than` / `--older-than` | Files whose mtime is outside the window. |
 | `apply_skip_tagged` | `--skip-tagged`                 | Files that already have keywords/title.  |
 
-The skip list is newline-delimited; blank lines and lines starting with `#` are ignored. The date
+The skip list is newline-delimited. Blank lines and lines starting with `#` are ignored. The date
 filter compares each file's modification time, not EXIF capture time, because reading EXIF off every
-file would cost an extra ExifTool pass. Bounds are exclusive: `--newer-than` drops files on or
-before the instant, `--older-than` drops files on or after it. `--skip-tagged` uses one read per
-file via `find_tagged_images()`; see [Metadata and keywords](metadata.md) for what counts as
-"tagged".
+file costs an extra ExifTool pass. Bounds are exclusive: `--newer-than` drops files on or before the
+instant, and `--older-than` drops files on or after it. `--skip-tagged` uses one read per file via
+`find_tagged_images()`. See [Metadata and keywords](metadata.md) for what counts as "tagged".
 
 !!! tip
 
@@ -70,43 +69,41 @@ flowchart TD
     G --> H[write_metadata]
 ```
 
-1. **`read_image_context`** does a single ExifTool read of the photo's existing keywords, location,
-    GPS, and camera EXIF, returning an `ImageContext`.
-2. **`build_contextual_prompt`** appends that context (existing keywords, location tags, GPS, camera
-    info) to the user prompt so the model can reuse and extend what is already there.
-3. **Cache lookup** runs only when `--cache-file` is set. The key is a hash of the image data
-    (ExifTool's `ImageDataHash`, which ignores metadata) plus a namespace digest of the model and
-    sampling settings. A hit replays the stored result and skips the model entirely. Cache I/O
-    failures are logged at warning level and treated as a miss, never raised, so a corrupt SQLite
-    file degrades to "no cache" instead of aborting the photo. See
-    [Caching and locking](caching.md).
-4. **`prepare_image_for_agent`** (on a miss) loads the image (rawpy for RAW, Pillow otherwise),
-    applies EXIF orientation, flattens alpha to white, resizes to `--jpeg-dimensions`, and
-    JPEG-encodes the bytes at `--jpeg-quality`.
-5. **`analyze_image_with_ai`** sends those bytes to the model with the sampling settings and returns
-    a validated `InferenceResult` (title, description, keywords, token usage, seconds). On a miss
-    the result is written back to the cache. See [AI providers](ai-providers.md).
-6. **The vocabulary snap** (only with `--vocabulary`) rewrites each generated keyword to the
-    catalog's own spelling and hierarchy, dropping what the catalog lacks under
-    `--vocabulary-strict`. It runs before the cap so the cap counts keywords that will actually be
-    written. See [`vocabulary.py`](../usage/cli-reference.md#controlled-vocabulary).
-7. **`merge_keywords`** merges the model's keywords with the existing ones. With
-    `--preserve-keywords` (the default) the existing keywords form the base; with
-    `--overwrite-keywords` the base is empty. `--max-keywords` caps how many AI keywords are kept
-    before merging.
-8. **`write_metadata`** writes the merged keywords, title, and description through ExifTool, to an
-    XMP sidecar by default, into the file with `--embed-in-photo`, or one of each per file type
-    with `--sidecar-mode raw` (`use_sidecar_for` decides per photo). `--no-write-title` and
+1. `read_image_context` does a single ExifTool read of the photo's existing keywords, location, GPS,
+    and camera EXIF. It returns an `ImageContext`.
+2. `build_contextual_prompt` appends that context, such as existing keywords, location tags, GPS,
+    and camera info, to the user prompt. The model can then reuse and extend what is already there.
+3. If `--cache-file` is set, cache lookup runs. The key is a hash of the image data (ExifTool's
+    `ImageDataHash`, which ignores metadata) plus a namespace digest of the model and sampling
+    settings. A hit replays the stored result and skips the model entirely. Cache I/O failures are
+    logged at warning level and treated as a miss, never raised. A corrupt SQLite file degrades to
+    "no cache" instead of aborting the photo. See [Caching and locking](caching.md).
+4. `prepare_image_for_agent` loads the image on a miss (rawpy for RAW, Pillow otherwise) and applies
+    EXIF orientation. It flattens alpha to white, resizes to `--jpeg-dimensions`, and JPEG-encodes
+    the bytes at `--jpeg-quality`.
+5. `analyze_image_with_ai` sends those bytes to the model with the sampling settings and returns a
+    validated `InferenceResult` (title, description, keywords, token usage, seconds). On a miss the
+    result is written back to the cache. See [AI providers](ai-providers.md).
+6. The vocabulary snap (only with `--vocabulary`) rewrites each generated keyword to the catalog's
+    own spelling and hierarchy. It drops what the catalog lacks under `--vocabulary-strict`. The
+    snap runs before the cap, so the cap counts keywords that will actually be written. See
+    [`vocabulary.py`](../usage/cli-reference.md#controlled-vocabulary).
+7. `merge_keywords` merges the model's keywords with the existing ones. With `--preserve-keywords`
+    (the default), the existing keywords form the base. With `--overwrite-keywords`, the base is
+    empty. `--max-keywords` caps how many AI keywords are kept before merging.
+8. `write_metadata` writes the merged keywords, title, and description through ExifTool. By default
+    it writes an XMP sidecar. `--embed-in-photo` writes into the file instead. `--sidecar-mode raw`
+    writes one of each per file type (`use_sidecar_for` decides per photo). `--no-write-title` and
     `--no-write-description` suppress those fields. See [Metadata and keywords](metadata.md). The
     write is recorded in the run's undo journal, which is what `photo-tagger undo` reads back.
 
-With `--dry-run`, steps 1 through 7 still run (so the model is queried and the cache is consulted),
-but step 8 is replaced by a log line previewing the proposed metadata. Nothing is written.
+With `--dry-run`, steps 1 through 7 still run: the model is queried and the cache is consulted. Step
+8 is replaced by a log line that previews the proposed metadata. Nothing is written.
 
 ## Session mode
 
-With `--session-gap MINUTES` the batch is grouped into shoots by capture time and the write is
-deferred, so a whole session can agree on its keywords before any of it lands on disk.
+With `--session-gap MINUTES`, the batch is grouped into shoots by capture time, and the write is
+deferred. As a result, a whole session can agree on its keywords before any of it lands on disk.
 
 ```mermaid
 flowchart TD
@@ -120,27 +117,28 @@ flowchart TD
 
 Steps 1 to 7 above run as usual, but instead of writing, each photo's analysis is held in a
 `_PendingWrite`. Once the session's last photo is analyzed, its own output becomes a `Vocabulary`
-(majority spelling, majority hierarchy), every held analysis is snapped onto it, and the session is
-written in one burst. The signals that must follow a real write (the `--append-to-skip-file`
-callback and the per-photo `ImageOutcome`) fire from that burst rather than from the analysis.
+(majority spelling, majority hierarchy). Every held analysis is then snapped onto it, and the
+session is written in one burst. The signals that must follow a real write (the
+`--append-to-skip-file` callback and the per-photo `ImageOutcome`) fire from that burst rather than
+from the analysis.
 
-Sessions run in sequence; the photos inside one still use the thread pool. A write that fails in the
-burst is final rather than retried, because the model work is already done and harmonized: an
+Sessions run in sequence. The photos inside a session still use the thread pool. A write that fails
+in the burst is final rather than retried, because the model work is already done and harmonized: an
 ExifTool failure there is a filesystem problem, not one a second inference clears. Analysis failures
-are retried as usual, and the retry pass applies the session's vocabulary so a recovered photo lands
-on the same terms as the rest of its shoot.
+are retried as usual. The retry pass applies the session's vocabulary, so a recovered photo lands on
+the same terms as the rest of its shoot.
 
 ## Retry pass
 
 `run_batch()` runs two passes. Photos that fail the first pass are collected and retried once in a
-second pass. A photo "fails" when `write_metadata` returns false or when any step raises. First-pass
-failures are logged as `file_queued_for_retry`; if the retry also fails, the photo is logged as
-`file_failed_after_retry` and listed in the final summary. The progress bar only advances when a
-photo is truly done (first-pass success, or any retry-pass outcome), so a flaky file that recovers
-on retry never makes the bar overshoot.
+second pass. If `write_metadata` returns false, or if any step raises, the photo "fails". First-pass
+failures are logged as `file_queued_for_retry`. If the retry also fails, the photo is logged as
+`file_failed_after_retry` and listed in the final summary. When a photo is truly done, whether by
+first-pass success or any retry-pass outcome, the progress bar advances. This stops a flaky file
+that recovers on retry from making the bar overshoot.
 
-The two-pass structure is separate from the model's own `--retries`. Those retries happen inside a
-single `analyze_image_with_ai` call when the model output fails schema validation; the pipeline's
+The two-pass structure is separate from the model's own `--retries`. When the model output fails
+schema validation, those retries happen inside a single `analyze_image_with_ai` call. The pipeline's
 retry pass re-runs the whole photo once more after the first pass finishes.
 
 ## Callbacks
@@ -159,13 +157,13 @@ The NDJSON emitter writes one JSON line per photo to stdout (file, status, `from
 title, description, keywords, token counts, seconds, `foreign_terms`). Logs and the progress bar
 stay on stderr, so stdout pipes cleanly into `jq`. The CSV writer
 ([`csv_report.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/csv_report.py))
-streams the same per-photo `ImageOutcome` into a spreadsheet-friendly row (adding the read EXIF and
-the keywords already on the file) and is flushed per row so an interrupted run still leaves a valid
-file; when both `--json` and `--csv-file` are set, `main` fans the single `on_image_result` hook out
-to both. The skip-list appender is built by `make_skip_list_appender()` and appends each success to
-the skip file, deduplicating under a lock so concurrent workers never produce interleaved or
-duplicate lines. The summary writer serializes the run totals (success and failure counts, failed
-files, token usage, wall time) to the `--summary-file` as JSON.
+streams the same per-photo `ImageOutcome` into a spreadsheet-friendly row. It adds the read EXIF and
+the keywords already on the file. Each row is flushed right away, so an interrupted run still leaves
+a valid file. When both `--json` and `--csv-file` are set, `main` fans the single `on_image_result`
+hook out to both. The skip-list appender is built by `make_skip_list_appender()` and appends each
+success to the skip file. It deduplicates under a lock, so concurrent workers never produce
+interleaved or duplicate lines. The summary writer serializes the run totals (success and failure
+counts, failed files, token usage, wall time) to the `--summary-file` as JSON.
 
 ## Graceful interruption
 
@@ -173,8 +171,8 @@ A `KeyboardInterrupt` (Ctrl-C) is handled rather than crashing the run. The curr
 every photo that was still pending is marked failed, and the retry pass is skipped. `run_batch()`
 still builds the `BatchTotals` and fires `on_complete`, so the summary file reflects what actually
 finished. In serial mode the interrupt lands cleanly between photos. In concurrent mode it cancels
-queued futures and stops accepting new work, but workers already in flight cannot be interrupted
-from outside, so this is a best-effort quick stop rather than an instant abort.
+queued futures and stops accepting new work. Workers already in flight cannot be interrupted from
+outside, so this is a best-effort quick stop rather than an instant abort.
 
 ## Concurrency
 
@@ -182,7 +180,7 @@ from outside, so this is a best-effort quick stop rather than an instant abort.
 
 === "workers=1 (default)"
 
-    The batch runs serially in the calling thread, reusing a single long-lived `ExifToolHelper`. Every
+    The batch runs serially in the calling thread. It reuses a single long-lived `ExifToolHelper`. Every
     metadata read and write goes through one long-running `exiftool` subprocess (`-stay_open`), which
     avoids the cost of spawning a process per photo.
 

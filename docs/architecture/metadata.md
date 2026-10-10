@@ -4,8 +4,8 @@ icon: lucide/tags
 
 # Metadata and keywords
 
-photo-tagger reads whatever metadata a photo already carries, feeds the useful parts into the model
-prompt, and writes the result back as Lightroom-compatible tags. Two modules do this work:
+photo-tagger reads whatever metadata a photo already carries and feeds the useful parts into the
+model prompt. It writes the result back as Lightroom-compatible tags. Two modules do this work:
 [`metadata.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/metadata.py)
 talks to ExifTool, and
 [`keywords.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/keywords.py)
@@ -34,10 +34,11 @@ class ImageContext:
 misspelled key is now a type error instead of a silently empty list.
 
 The read targets both the image file and any adjacent `.xmp` sidecar, so metadata that lives only in
-the sidecar is still picked up. Keywords from both are pooled; for the single-valued title and
-description, the sidecar's answer wins (`_sidecar_first`). The sidecar is the later copy, the one
-every XMP-aware catalog reads and the only thing a sidecar-mode run writes, so reading the image
-first let a camera's placeholder shadow the caption photo-tagger had just written beside it.
+the sidecar is still picked up. Keywords from both are pooled. For the single-valued title and
+description, the sidecar's answer wins (`_sidecar_first`). The sidecar is the later copy: it is the
+one every XMP-aware catalog reads, and the only thing a sidecar-mode run writes. That is why the old
+order, with the image first, was wrong. A camera's placeholder then hid the caption that
+photo-tagger wrote into the sidecar during an earlier run.
 
 `build_contextual_prompt()` turns that context into a short "Existing Metadata" block appended to
 the user prompt. The model gets the first few existing keywords, a `City, Country` location hint,
@@ -79,8 +80,10 @@ characters the model sometimes emits are dropped before parsing.
 three parallel buckets and preserves the hierarchy:
 
 - `subject`: every level flattened into a single keyword list.
+
 - `hierarchical`: cumulative pipe paths. Lightroom needs each prefix, so a `Animal|Bird|Duck` leaf
     also contributes `Animal|Bird`.
+
 - `weighted`: a flat list that mirrors `subject`.
 
 Deduplication is case-insensitive (compared with `casefold`), so a photo that already carries `Bird`
@@ -94,9 +97,9 @@ Two flag pairs control the merge:
 - `--max-keywords N` caps how many AI-generated keywords are kept per photo before merging. The
     default keeps all of them.
 
-The title and the description hold a single value each, so they have no merge step: their pairs
+The title and the description hold a single value each, so they have no merge step. Their pairs
 (`--preserve-title` / `--overwrite-title` and `--preserve-description` / `--overwrite-description`)
-only decide whether the generated text replaces what the photo carries, and each field answers for
+only decide whether the generated text replaces what the photo carries. Each field answers for
 itself. Replacing is the default, so a camera-written placeholder (some fill `ImageDescription` with
 one on every photo) does not outlive the first run. Preserving writes the generated text only where
 the field is empty, which is how a hand-written caption survives a re-run.
@@ -110,7 +113,7 @@ the field is empty, which is how a hand-written caption survives a re-run.
 ## Writing metadata
 
 `write_metadata()` builds one ExifTool payload and applies it in a single `set_tags` call. Each
-piece of generated metadata is written to both an XMP tag and its IPTC or EXIF counterpart so that
+piece of generated metadata is written to both an XMP tag and its IPTC or EXIF counterpart. This way
 different tools agree on the value. Lightroom prioritizes `IPTC:Keywords` for JPEGs, which is why
 the flat subject list is mirrored there.
 
@@ -122,13 +125,13 @@ the flat subject list is mirrored there.
 | Title              | `XMP-dc:Title`, `IPTC:ObjectName`                                            |
 | Description        | `XMP-dc:Description`, `XMP-tiff:ImageDescription`, `EXIF:ImageDescription`\* |
 
-\* `EXIF:ImageDescription` only when the target is the photo itself: a sidecar holds XMP and nothing
-else. ExifTool maps the `XMP-tiff` mirror back to IFD0 when a sidecar is folded into an image, but a
-direct write does not touch IFD0, so writing the EXIF tag too is what keeps a camera's placeholder
-from surviving underneath the new description.
+\* When the target is the photo itself, ExifTool also writes `EXIF:ImageDescription`. A sidecar
+holds XMP and nothing else. When a sidecar is folded into an image, ExifTool maps the `XMP-tiff`
+mirror back to IFD0, but a direct write does not touch IFD0. Writing the EXIF tag too is what keeps
+a camera's placeholder from surviving underneath the new description.
 
-Title and description are only written when `--write-title` and `--write-description` are enabled
-(both are on by default). If the payload would be empty, nothing is written.
+When `--write-title` and `--write-description` are enabled (both are on by default), title and
+description are written. If the payload is empty, nothing is written.
 
 ### Fields the model has no part in
 
@@ -157,7 +160,7 @@ extra ExifTool call.
 
 By default photo-tagger writes an XMP sidecar named after the image (`image.cr3` gets `image.xmp`).
 This leaves the original file byte-for-byte untouched. `--sidecar-mode` picks between the four
-answers; `--write-sidecar` and `--embed-in-photo` are shorthand for the first two.
+answers. `--write-sidecar` and `--embed-in-photo` are shorthand for the first two.
 
 === "Sidecar (default, `--sidecar-mode all`)"
 
@@ -199,25 +202,25 @@ answers; `--write-sidecar` and `--embed-in-photo` are shorthand for the first tw
 `--sidecar-mode raw` is for the folder that holds both, the RAW+JPEG pairs a camera set to that mode
 produces: the RAWs keep their bytes, and each JPEG carries its own metadata so it travels intact.
 RAW is decided by extension, by exclusion: a suffix Pillow reads natively (`.jpg`, `.png`, `.tif`,
-`.heic`, ...) is not RAW, and anything else is, so an unfamiliar extension gets the cautious answer
+`.heic`, ...) is not RAW, and anything else is. So an unfamiliar extension gets the cautious answer
 and keeps its file untouched.
 
-`--sidecar-mode both` is the belt-and-braces answer: every photo is written twice, into itself and
-into a sidecar. The photo then carries its metadata wherever it is copied, while the sidecar stays
-for the catalog to edit. It costs two ExifTool writes per photo, and `plan_writes` is what turns a
-mode into that list of targets. Undo records each one, so reverting puts back both.
+`--sidecar-mode both` is the safest and most redundant choice: every photo is written twice, into
+itself and into a sidecar. The photo then carries its metadata wherever it is copied, while the
+sidecar stays for the catalog to edit. It costs two ExifTool writes per photo, and `plan_writes` is
+what turns a mode into that list of targets. Undo records each one, so reverting puts back both.
 
 ### Cameras ExifTool will not write to on the first try
 
-ExifTool refuses a write when it cannot parse a photo's maker notes: it will not move a block whose
-internal offsets it cannot fix up. Some cameras ship files that trip this, their maker-note offsets
-already wrong from the camera (`exiftool -validate` says so before anything has written to them), so
-every embedded write failed with `Error: [minor] Maker notes could not be parsed`.
+When ExifTool cannot parse a photo's maker notes, it refuses a write: it will not move a block whose
+internal offsets it cannot fix up. Some cameras ship files that trip this. Their maker-note offsets
+are already wrong from the camera. `exiftool -validate` says so before anything is written to them.
+So every embedded write failed with `Error: [minor] Maker notes could not be parsed`.
 
 Such a write is tried once more with ExifTool's `-m` (ignore minor errors), the only way to put
-metadata inside those files, and each retry is logged per photo. The waiver is never asked for up
-front, since the check is worth having for everything else. Maker notes and image data come through
-byte-identical; what stays wrong is what the camera already had wrong.
+metadata inside those files. Each retry is logged per photo. The waiver is never asked for up front,
+since the check is worth having for everything else. Maker notes and image data come through
+byte-identical. What stays wrong is what the camera already had wrong.
 
 ### Backups and dry runs
 
@@ -231,13 +234,13 @@ nothing. Use it to preview output before touching any files.
 !!! warning
 
     `--no-backup-xmp` combined with `--embed-in-photo` modifies the original image file with no backup.
-    Make sure you have your own copies before running that combination.
+    Make sure that you have your own copies before running that combination.
 
 ## Detecting tagged images
 
 `find_tagged_images()` powers the `--skip-tagged` filter. It batches one ExifTool read across all
-candidate files and marks a photo as already tagged when the image or its sidecar has any of the
-indicator tags populated: the keyword tags above, a title, or a description. See
+candidate files. When the image or its sidecar has any indicator tag populated, it marks the photo
+as already tagged. The indicator tags are the keyword tags above, a title, or a description. See
 [Processing pipeline](pipeline.md) for where this filter runs in the batch.
 
 ## Related pages
