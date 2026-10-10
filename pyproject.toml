@@ -179,6 +179,11 @@ cmd = "uvx marimo run --sandbox telemetry/dashboard.py"
 help = "Open the telemetry dashboard as an editable notebook"
 cmd = "uvx marimo edit --sandbox telemetry/dashboard.py"
 
+[tool.poe.groups.telemetry.tasks.dashboard-demo]
+help = "Open the telemetry dashboard on made-up events"
+cmd = "uvx marimo run --sandbox telemetry/dashboard.py"
+env = { PHOTO_TAGGER_DASHBOARD_DEMO = "1" }
+
 [tool.poe.groups.telemetry.tasks.test-worker]
 help = "Test the telemetry collector (needs Node)"
 cmd = "node --experimental-detect-module --test telemetry/worker.test.mjs"

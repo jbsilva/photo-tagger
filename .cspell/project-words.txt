@@ -211,6 +211,7 @@ relocks
 renovatebot
 rescan
 roundtrips
+Ryzen
 SARIF
 scannerwork
 scriptable

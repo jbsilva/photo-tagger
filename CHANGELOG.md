@@ -80,6 +80,9 @@ All notable changes to this project are documented here. The format is based on
 - The telemetry collector now keeps events with no expiry date. Before, they expired after three
   months.
 
+- The telemetry dashboard reads the whole D1 history, filters by install (it leaves out the machine
+  it runs on), and charts GUI runs, sessions, and settings.
+
 - `--jpeg-dimensions` now defaults to 640 px instead of 1280. Prefill scales with the pixel count,
   so this is about a second less per photo on a local 30B model, and 640 px carries everything but
   small text in the frame. Raise it to 896 or 1024 for photos of signs, documents, or labels. A run
