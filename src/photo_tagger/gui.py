@@ -142,6 +142,7 @@ from photo_tagger.discovery import load_skip_list, skip_list_matches
 from photo_tagger.errors import (
     ConfigFileError,
     DiscoveryError,
+    ObservabilityError,
     PhotoTaggerError,
     ProviderError,
 )
@@ -275,6 +276,7 @@ from photo_tagger.metadata import (
     write_metadata_everywhere,
 )
 from photo_tagger.notify import APP_NAME, notify
+from photo_tagger.observability import configure_tracing
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
 from photo_tagger.script_guard import find_in_result
 from photo_tagger.undo import (
@@ -6496,6 +6498,19 @@ def launch(argv: list[str] | None = None) -> int:
     # File-only logging: the window carries the live status, so the terminal stays quiet, but a
     # durable log (with full tracebacks for failed photos) is written for the "Open logs" button.
     setup_logging(file_log_level="DEBUG", console_log_level="OFF", log_folder=_LOG_FOLDER)
+    # The GUI has no command line to pass --otel on, so tracing is configured from the [log] table
+    # of the config file alone. A misconfigured endpoint must not stop the window from opening: the
+    # reason is logged and the app runs untraced, unlike the CLI, where the user asked in this
+    # breath and deserves to be told the run will not be observed.
+    log_defaults = load_defaults().log
+    try:
+        configure_tracing(
+            enabled=log_defaults.otel,
+            endpoint=log_defaults.otel_endpoint,
+            include_content=log_defaults.otel_content,
+        )
+    except ObservabilityError as exc:
+        logger.warning("otel_setup_failed", error=str(exc))
     app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("Photo Tagger")
     app.setApplicationDisplayName("Photo Tagger")

@@ -326,7 +326,13 @@ class OutputConfig:
 
 @dataclass
 class LogConfig:
-    """Loguru sink levels and the directory used for rotating log files."""
+    """
+    Where a run's diagnostics go: the loguru sinks, and optional OpenTelemetry tracing.
+
+    The ``--otel`` flags share this group rather than forming their own because a tenth option group
+    would push ``watch`` past the parameter count a single function can be read at. They are the
+    same kind of thing as the log sinks anyway: output about the run, for whoever is debugging it.
+    """
 
     file_log_level: Annotated[
         LogLevel,
@@ -347,6 +353,43 @@ class LogConfig:
             help="Folder where log files are stored",
         ),
     ] = field(default_factory=lambda: Path("logs"))
+    otel: Annotated[
+        bool,
+        Parameter(
+            name=("--otel",),
+            negative="--no-otel",
+            help=(
+                "Export an OpenTelemetry trace of every model call (timings, tokens, failures) to "
+                "your own collector: Logfire, Jaeger, Grafana Tempo, anything speaking OTLP over "
+                "HTTP. Off by default, and needs an endpoint from --otel-endpoint or "
+                "OTEL_EXPORTER_OTLP_ENDPOINT. The photos themselves are never exported"
+            ),
+        ),
+    ] = False
+    otel_endpoint: Annotated[
+        str | None,
+        Parameter(
+            name=("--otel-endpoint",),
+            help=(
+                "Where to send traces, e.g. http://localhost:4318/v1/traces. Defaults to "
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, then OTEL_EXPORTER_OTLP_ENDPOINT plus "
+                "/v1/traces"
+            ),
+        ),
+    ] = None
+    otel_content: Annotated[
+        bool,
+        Parameter(
+            name=("--otel-content",),
+            negative="--no-otel-content",
+            help=(
+                "Include the prompt and the generated title, description, and keywords in the "
+                "exported traces. Off by default because that text describes your photos; turn it "
+                "on when debugging a prompt against a collector you trust. Photo bytes stay out "
+                "either way"
+            ),
+        ),
+    ] = False
 
 
 @dataclass

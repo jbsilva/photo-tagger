@@ -798,6 +798,30 @@ def test_cli_log_setup_failure_exits_cleanly(
     assert "disk full" in capsys.readouterr().err
 
 
+def test_cli_otel_without_an_endpoint_exits_before_tagging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    ``--otel`` with nowhere to send traces stops the run instead of tagging untraced.
+
+    Somebody who passed the flag wants the traces. Tagging the batch anyway would burn the model
+    calls they were trying to observe and leave them to notice the empty collector afterwards.
+    """
+    image = _make_jpeg(tmp_path / "img.cr3")
+    for name in ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT"):
+        monkeypatch.delenv(name, raising=False)
+
+    with (
+        patch.object(main_module, "create_agent") as agent_mock,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main_module.app(["--input", str(image), "--otel", "--log-folder", str(tmp_path / "logs")])
+
+    assert exc_info.value.code == 1
+    agent_mock.assert_not_called()
+
+
 def test_cli_lock_file_open_failure_exits(tmp_path: Path) -> None:
     """An OSError while opening the lock file (e.g. unwritable dir) exits with code 1."""
     image = _make_jpeg(tmp_path / "img.cr3")

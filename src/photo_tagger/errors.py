@@ -23,6 +23,10 @@ class BatchError(PhotoTaggerError):
     """One or more photos in a batch failed to process."""
 
 
+class ObservabilityError(PhotoTaggerError):
+    """``--otel`` was asked for but tracing cannot be set up (no endpoint, or no OTel SDK)."""
+
+
 class ConfigFileError(PhotoTaggerError):
     """
     The config file on disk cannot be updated in place.

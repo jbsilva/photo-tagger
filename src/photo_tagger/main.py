@@ -65,11 +65,12 @@ from photo_tagger.discovery import (
     make_skip_list_appender,
     resolve_image_batch,
 )
-from photo_tagger.errors import BatchError, DiscoveryError, PhotoTaggerError
+from photo_tagger.errors import BatchError, DiscoveryError, ObservabilityError, PhotoTaggerError
 from photo_tagger.locking import FileLock, LockHeldError
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.metadata import prompt_with_hint, select_camera_fields, select_location
 from photo_tagger.notify import APP_NAME, notify
+from photo_tagger.observability import configure_tracing
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
 
@@ -140,6 +141,25 @@ def _apply_exiftool_path(path: str | None) -> None:
     """Bridge a config ``exiftool_path`` into ``PHOTO_TAGGER_EXIFTOOL`` (an exported var wins)."""
     if path:
         os.environ.setdefault("PHOTO_TAGGER_EXIFTOOL", path)
+
+
+def _enable_tracing(log: LogConfig) -> None:
+    """
+    Switch on OpenTelemetry tracing when ``--otel`` asked for it, or stop with a clear reason.
+
+    Called before any agent exists, because instrumentation is applied to the agent class rather
+    than to instances. A failure here ends the run: somebody who passed ``--otel`` wants the traces,
+    and silently tagging photos without them wastes the batch they were trying to observe.
+    """
+    try:
+        configure_tracing(
+            enabled=log.otel,
+            endpoint=log.otel_endpoint,
+            include_content=log.otel_content,
+        )
+    except ObservabilityError as exc:
+        logger.error("otel_setup_failed", error=str(exc))
+        raise SystemExit(1) from exc
 
 
 @app.command
@@ -869,6 +889,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         # command's own pre-logging error path does.
         sys.stderr.write(f"Could not set up logging at {log.log_folder}: {exc}\n")
         raise SystemExit(1) from exc
+    _enable_tracing(log)
     _apply_exiftool_path(configured_exiftool_path())
 
     with contextlib.ExitStack() as stack:
@@ -1336,6 +1357,7 @@ def watch(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group
     except OSError as exc:
         sys.stderr.write(f"Could not set up logging at {log.log_folder}: {exc}\n")
         raise SystemExit(1) from exc
+    _enable_tracing(log)
     _apply_exiftool_path(configured_exiftool_path())
     if not inputs:
         logger.error("no_inputs_provided", hint="Pass one or more --input/-i paths to watch")

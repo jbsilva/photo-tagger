@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- `--otel` exports an OpenTelemetry trace of every model call (timings, tokens, failures) to a
+  collector you run, so a slow or expensive batch is something you can read rather than guess at.
+  Off by default and pointed only where `--otel-endpoint` says. The photo itself is never exported;
+  generated text needs `--otel-content`. Needs the new `[otel]` extra.
+
 - `--notify` raises a desktop notification when a batch ends, carrying its tally
   (`38 of 42 photos tagged, 4 failed.`); `--notify-sound` adds an audible alert. `watch` alerts per
   batch. In the GUI: **Settings > Notify When a Run Ends**. Uses the notifier the OS already ships

@@ -220,6 +220,46 @@ photo-tagger writes a timestamped log file and mirrors messages to stderr, so st
 | `--file-log-level` LEVEL    | `DEBUG` | `-`     | Same levels; `OFF` disables the file log.                          |
 | `--log-folder` PATH         | `logs`  | `-`     | Folder for timestamped log files.                                  |
 
+### Tracing model calls
+
+`--otel` exports an OpenTelemetry span per model call (the request, how long it took, how many
+tokens it cost, whether it failed) to a collector you run. It answers the questions a log file makes
+you piece together by hand: which photo was slow, where a batch stalled, what a run actually cost.
+
+It is off by default and there is no service behind it. Nothing is exported until you pass `--otel`
+**and** name an endpoint, and the endpoint is always yours. This is separate from
+[telemetry](#telemetry), which is the project's own anonymous beacon and carries none of this.
+
+| Flag                                   | Default | Env var                                                              | Description                                                                                                                |
+| -------------------------------------- | ------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `--otel` / `--no-otel`                 | `false` | `-`                                                                  | Export a trace of every model call over OTLP/HTTP.                                                                         |
+| `--otel-endpoint` URL                  | none    | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_ENDPOINT` | Where to send traces. The flag wins; the signal-specific variable beats the general one, which gets `/v1/traces` appended. |
+| `--otel-content` / `--no-otel-content` | `false` | `-`                                                                  | Also export the prompt and the generated title, description, and keywords.                                                 |
+
+Install the exporter with the optional extra, then point it somewhere:
+
+```bash
+pip install 'photo-tagger[otel]'
+photo-tagger -i ~/Pictures/Trip --otel --otel-endpoint http://localhost:4318/v1/traces
+```
+
+Any OTLP/HTTP backend works: [Logfire](https://pydantic.dev/logfire) (pydantic-ai's own, which
+renders these spans natively), Jaeger, Grafana Tempo, or an OpenTelemetry Collector you already run.
+For a hosted backend, set its auth header the standard way, with `OTEL_EXPORTER_OTLP_HEADERS`.
+
+**What never leaves the machine.** The photo itself is never exported. Spans record that an image of
+a given media type was sent, never its bytes, and there is no flag to change that. The text the
+model generates is also kept out by default, because it describes your photos by name; add
+`--otel-content` when you are debugging a prompt and trust the collector. Turning `--otel` on
+without an endpoint is an error rather than a silent fallback to `localhost:4318`, so a run never
+looks traced when nothing is listening.
+
+Spans are batched and flushed when the process exits. Setting `OTEL_SERVICE_NAME` renames the
+service; otherwise spans arrive as `photo-tagger`, tagged with the version that produced them. The
+GUI has no command line, so it reads these three settings from the `[log]` table of the
+[config file](../getting-started/configuration.md); a bad endpoint there is logged and the window
+still opens.
+
 ## Display
 
 The display group controls how a run makes itself visible: the progress bar, machine-readable

@@ -1450,6 +1450,10 @@ dependencies = [
 gui = [
     { name = "pyside6" },
 ]
+otel = [
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1480,6 +1484,8 @@ requires-dist = [
     { name = "filelock", specifier = ">=4.1.0" },
     { name = "httpx2", specifier = ">=2.13.1" },
     { name = "loguru", specifier = ">=0.7.3" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otel'", specifier = ">=1.44.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.44.0" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pydantic", specifier = ">=2.14.0" },
     { name = "pydantic-ai", specifier = ">=2.55.0" },
@@ -1489,7 +1495,7 @@ requires-dist = [
     { name = "rich", specifier = ">=15.0.0" },
     { name = "tomlkit", specifier = ">=0.15.1" },
 ]
-provides-extras = ["gui"]
+provides-extras = ["gui", "otel"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -45,6 +45,11 @@ These variables set defaults. Any matching CLI flag still overrides them. See
 | `JPEG_QUALITY`        | `80`                        | JPEG quality (1-100) of the image sent to the model.                               |
 | `RETRIES`             | `5`                         | Retries when model output fails schema validation.                                 |
 
+The standard OpenTelemetry variables (`OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`) are honored
+too, but only once `--otel` is on; see
+[tracing model calls](../usage/cli-reference.md#tracing-model-calls).
+
 !!! tip
 
     Prefer the API-key variables over the `-k/--api-key` flag. Keys passed on the command line can leak
@@ -109,6 +114,9 @@ dry_run = false           # Run the model and log results, but write nothing.
 file_log_level = "DEBUG"     # DEBUG/INFO/WARNING/ERROR/CRITICAL/OFF.
 console_log_level = "INFO"   # Same levels; OFF disables.
 log_folder = "logs"          # Folder for timestamped log files.
+otel = false                 # Export an OpenTelemetry trace of every model call.
+# otel_endpoint = "http://localhost:4318/v1/traces"  # Where to send them. Required by otel.
+otel_content = false         # Also export prompts and generated text. Photos never go either way.
 
 [display]
 progress_bar = true   # Live progress bar; auto-disabled when stderr is not a TTY.

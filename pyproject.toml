@@ -45,6 +45,14 @@ dependencies = [
 # Optional desktop GUI. Kept out of the base install so the CLI stays lean and dependency-light:
 # `pip install photo-tagger[gui]` pulls Qt only when wanted.
 gui = ["pyside6>=6.12.0"]
+# Optional OpenTelemetry export for `--otel`. Both packages arrive today anyway, as transitive
+# dependencies of pydantic-ai's logfire extra, but naming them here is what makes the feature
+# actually declare what it needs: pydantic-ai is free to drop that extra, and photo-tagger is free
+# to move to pydantic-ai-slim, without silently breaking tracing.
+otel = [
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
+]
 
 [dependency-groups]
 dev = [
