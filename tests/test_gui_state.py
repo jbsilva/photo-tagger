@@ -28,6 +28,7 @@ from photo_tagger.gui_state import (
     DEFAULT_GUI_EXTENSIONS,
     FAILED,
     FILTER_ALL,
+    FILTER_CHOICES,
     FILTER_FAILED,
     FILTER_GENERATED,
     FILTER_MIXED_SCRIPT,
@@ -49,6 +50,7 @@ from photo_tagger.gui_state import (
     SELECT_CHECK,
     SELECT_ONLY,
     SELECT_UNCHECK,
+    SORT_CHOICES,
     SORT_NAME,
     SORT_STATUS,
     SORT_TAGGED,
@@ -1474,6 +1476,34 @@ def test_photo_sort_key_is_uniformly_shaped_across_criteria() -> None:
         key = photo_sort_key(item, criterion)
         assert len(key) == 3  # noqa: PLR2004 - primary, name, full-path tiebreaks
         assert all(isinstance(part, str) for part in key)
+
+
+def test_sort_choices_offer_each_sort_once_name_first() -> None:
+    """The Sort by menu lists every sort once, with a label, and opens on the default."""
+    criteria = [criterion for _label, criterion in SORT_CHOICES]
+    assert criteria == [SORT_NAME, SORT_TYPE, SORT_STATUS, SORT_TAGGED]
+    assert all(label for label, _criterion in SORT_CHOICES)
+
+
+def test_filter_choices_offer_each_filter_once_all_first() -> None:
+    """The Show menu lists every filter once, with its own label, and opens on All."""
+    criteria = [criterion for _label, criterion in FILTER_CHOICES]
+    assert criteria[0] == FILTER_ALL
+    assert len(set(criteria)) == len(criteria)
+    assert set(criteria) == {
+        FILTER_ALL,
+        FILTER_SELECTED,
+        FILTER_PENDING,
+        FILTER_GENERATED,
+        FILTER_SAVED,
+        FILTER_FAILED,
+        FILTER_UNTAGGED,
+        FILTER_NO_COPYRIGHT,
+        FILTER_MIXED_SCRIPT,
+    }
+    labels = [label for label, _criterion in FILTER_CHOICES]
+    assert all(labels)
+    assert len(set(labels)) == len(labels)
 
 
 def test_filter_photos_all_keeps_everything_in_order() -> None:

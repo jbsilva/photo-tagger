@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-10 20:20+0200\n"
+"POT-Creation-Date: 2026-10-10 20:25+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -429,130 +429,67 @@ msgid ""
 "replaces it."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:85
+#: src/photo_tagger/gui/folder_grid.py:76
 msgid "generation failed"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:86
+#: src/photo_tagger/gui/folder_grid.py:77
 msgid "saved"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:87
+#: src/photo_tagger/gui/folder_grid.py:78
 msgid "generated, not saved yet"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:88
+#: src/photo_tagger/gui/folder_grid.py:79
 msgid "already has metadata"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:89
+#: src/photo_tagger/gui/folder_grid.py:80
 msgid "has a copyright notice"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:90
+#: src/photo_tagger/gui/folder_grid.py:81
 msgid "has an XMP sidecar"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:91
+#: src/photo_tagger/gui/folder_grid.py:82
 msgid "mixes writing systems"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:167
+#: src/photo_tagger/gui/folder_grid.py:158
 msgid "Show"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:170
-msgid "All"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:171
-msgid "Selected"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:172
-#: src/photo_tagger/gui/select_menu.py:111
-msgid "Not generated"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:173
-#: src/photo_tagger/gui/select_menu.py:112
-msgid "Generated"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:174
-#: src/photo_tagger/gui/select_menu.py:113
-msgid "Saved"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:175
-#: src/photo_tagger/gui/select_menu.py:114
-msgid "Failed"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:176
-#: src/photo_tagger/gui/select_menu.py:115
-msgid "Untagged"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:177
-#: src/photo_tagger/gui/select_menu.py:116
-msgid "No copyright"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:178
-#: src/photo_tagger/gui/select_menu.py:117
-msgid "Mixed writing systems"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:181
+#: src/photo_tagger/gui/folder_grid.py:162
 msgid "Show only the photos in the chosen state."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:186
+#: src/photo_tagger/gui/folder_grid.py:167
 msgid "Sort by"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:189
-msgid "Name"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:190
-#: src/photo_tagger/gui/photo_tree.py:87
-msgid "Type"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:191
-#: src/photo_tagger/gui/photo_tree.py:87
-#: src/photo_tagger/gui/select_menu.py:185
-msgid "Status"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:192
-#: src/photo_tagger/gui/photo_tree.py:87
-msgid "Tagged"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:196
+#: src/photo_tagger/gui/folder_grid.py:172
 msgid "Order the thumbnails by name, file type, status, or existing metadata."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:205
-#: src/photo_tagger/gui/folder_grid.py:249
+#: src/photo_tagger/gui/folder_grid.py:181
+#: src/photo_tagger/gui/folder_grid.py:225
 msgid "Ascending. Click to sort descending."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:247
+#: src/photo_tagger/gui/folder_grid.py:223
 msgid "Descending. Click to sort ascending."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:447
+#: src/photo_tagger/gui/folder_grid.py:423
 #, python-brace-format
 msgid "{n} photo in {folder}."
 msgid_plural "{n} photos in {folder}."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/photo_tagger/gui/folder_grid.py:451
+#: src/photo_tagger/gui/folder_grid.py:427
 #, python-brace-format
 msgid "Showing {shown} of {total} in {folder}."
 msgstr ""
@@ -1364,6 +1301,22 @@ msgstr ""
 msgid "Photos"
 msgstr ""
 
+#: src/photo_tagger/gui/photo_tree.py:87
+#: src/photo_tagger/gui_state/columns.py:139
+msgid "Type"
+msgstr ""
+
+#: src/photo_tagger/gui/photo_tree.py:87
+#: src/photo_tagger/gui/select_menu.py:185
+#: src/photo_tagger/gui_state/columns.py:140
+msgid "Status"
+msgstr ""
+
+#: src/photo_tagger/gui/photo_tree.py:87
+#: src/photo_tagger/gui_state/columns.py:141
+msgid "Tagged"
+msgstr ""
+
 #: src/photo_tagger/gui/photo_tree.py:106
 #, python-brace-format
 msgid ""
@@ -1688,6 +1641,41 @@ msgstr ""
 
 #: src/photo_tagger/gui/select_menu.py:103
 msgid "Check the matching photos and uncheck every other photo in the list."
+msgstr ""
+
+#: src/photo_tagger/gui/select_menu.py:111
+#: src/photo_tagger/gui_state/selection.py:222
+msgid "Not generated"
+msgstr ""
+
+#: src/photo_tagger/gui/select_menu.py:112
+#: src/photo_tagger/gui_state/selection.py:223
+msgid "Generated"
+msgstr ""
+
+#: src/photo_tagger/gui/select_menu.py:113
+#: src/photo_tagger/gui_state/selection.py:224
+msgid "Saved"
+msgstr ""
+
+#: src/photo_tagger/gui/select_menu.py:114
+#: src/photo_tagger/gui_state/selection.py:225
+msgid "Failed"
+msgstr ""
+
+#: src/photo_tagger/gui/select_menu.py:115
+#: src/photo_tagger/gui_state/selection.py:226
+msgid "Untagged"
+msgstr ""
+
+#: src/photo_tagger/gui/select_menu.py:116
+#: src/photo_tagger/gui_state/selection.py:227
+msgid "No copyright"
+msgstr ""
+
+#: src/photo_tagger/gui/select_menu.py:117
+#: src/photo_tagger/gui_state/selection.py:228
+msgid "Mixed writing systems"
 msgstr ""
 
 #: src/photo_tagger/gui/select_menu.py:145
@@ -2375,6 +2363,10 @@ msgstr ""
 msgid "nothing"
 msgstr ""
 
+#: src/photo_tagger/gui_state/columns.py:138
+msgid "Name"
+msgstr ""
+
 #: src/photo_tagger/gui_state/connection.py:22
 msgid "English"
 msgstr ""
@@ -2618,6 +2610,14 @@ msgstr ""
 #: src/photo_tagger/gui_state/saving.py:358
 #, python-brace-format
 msgid "{type} {target}"
+msgstr ""
+
+#: src/photo_tagger/gui_state/selection.py:220
+msgid "All"
+msgstr ""
+
+#: src/photo_tagger/gui_state/selection.py:221
+msgid "Selected"
 msgstr ""
 
 #: src/photo_tagger/gui_state/settings_file.py:46

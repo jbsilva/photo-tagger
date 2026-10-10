@@ -34,18 +34,9 @@ from photo_tagger.gui_state import (
     BADGE_UNSAVED,
     FAILED,
     FILTER_ALL,
-    FILTER_FAILED,
-    FILTER_GENERATED,
-    FILTER_MIXED_SCRIPT,
-    FILTER_NO_COPYRIGHT,
-    FILTER_PENDING,
-    FILTER_SAVED,
-    FILTER_SELECTED,
-    FILTER_UNTAGGED,
+    FILTER_CHOICES,
+    SORT_CHOICES,
     SORT_NAME,
-    SORT_STATUS,
-    SORT_TAGGED,
-    SORT_TYPE,
     filter_photos,
     paths_under,
     sort_photos,
@@ -166,18 +157,8 @@ class FolderGrid(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel(_("Show")))
         self._filter_combo = QComboBox()
-        for label, criterion in (
-            (_("All"), FILTER_ALL),
-            (_("Selected"), FILTER_SELECTED),
-            (_("Not generated"), FILTER_PENDING),
-            (_("Generated"), FILTER_GENERATED),
-            (_("Saved"), FILTER_SAVED),
-            (_("Failed"), FILTER_FAILED),
-            (_("Untagged"), FILTER_UNTAGGED),
-            (_("No copyright"), FILTER_NO_COPYRIGHT),
-            (_("Mixed writing systems"), FILTER_MIXED_SCRIPT),
-        ):
-            self._filter_combo.addItem(label, criterion)
+        for label, criterion in FILTER_CHOICES:
+            self._filter_combo.addItem(_(label), criterion)
         self._filter_combo.setToolTip(tooltip("Show only the photos in the chosen state."))
         fit_combo(self._filter_combo)
         row.addWidget(self._filter_combo)
@@ -185,13 +166,8 @@ class FolderGrid(QWidget):
 
         row.addWidget(QLabel(_("Sort by")))
         self._sort_combo = QComboBox()
-        for label, criterion in (
-            (_("Name"), SORT_NAME),
-            (_("Type"), SORT_TYPE),
-            (_("Status"), SORT_STATUS),
-            (_("Tagged"), SORT_TAGGED),
-        ):
-            self._sort_combo.addItem(label, criterion)
+        for label, criterion in SORT_CHOICES:
+            self._sort_combo.addItem(_(label), criterion)
         self._sort_combo.setToolTip(
             tooltip("Order the thumbnails by name, file type, status, or existing metadata."),
         )

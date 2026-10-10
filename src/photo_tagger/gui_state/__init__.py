@@ -14,6 +14,7 @@ from photo_tagger.gui_state.columns import (
     BADGE_SAVED,
     BADGE_SIDECAR,
     BADGE_UNSAVED,
+    SORT_CHOICES,
     SORT_NAME,
     SORT_STATUS,
     SORT_TAGGED,
@@ -140,6 +141,7 @@ from photo_tagger.gui_state.saving import (
 )
 from photo_tagger.gui_state.selection import (
     FILTER_ALL,
+    FILTER_CHOICES,
     FILTER_FAILED,
     FILTER_GENERATED,
     FILTER_MIXED_SCRIPT,
@@ -222,6 +224,7 @@ __all__ = [
     "EXTRA_PASSES",
     "FAILED",
     "FILTER_ALL",
+    "FILTER_CHOICES",
     "FILTER_FAILED",
     "FILTER_GENERATED",
     "FILTER_MIXED_SCRIPT",
@@ -244,6 +247,7 @@ __all__ = [
     "SELECT_CHECK",
     "SELECT_ONLY",
     "SELECT_UNCHECK",
+    "SORT_CHOICES",
     "SORT_NAME",
     "SORT_STATUS",
     "SORT_TAGGED",

@@ -13,6 +13,7 @@ from photo_tagger.gui_state.items import (
     SAVED,
     PhotoItem,
 )
+from photo_tagger.i18n import gettext_noop
 from photo_tagger.metadata import (
     FIELD_COPYRIGHT,
     TAGGED_FIELDS,
@@ -211,6 +212,21 @@ FILTER_NO_COPYRIGHT = "no_copyright"
 
 
 FILTER_MIXED_SCRIPT = "mixed_script"
+
+
+# The grid's Show menu, in the order it lists them: each filter with its label, marked here and
+# translated where it is shown.
+FILTER_CHOICES: tuple[tuple[str, str], ...] = (
+    (gettext_noop("All"), FILTER_ALL),
+    (gettext_noop("Selected"), FILTER_SELECTED),
+    (gettext_noop("Not generated"), FILTER_PENDING),
+    (gettext_noop("Generated"), FILTER_GENERATED),
+    (gettext_noop("Saved"), FILTER_SAVED),
+    (gettext_noop("Failed"), FILTER_FAILED),
+    (gettext_noop("Untagged"), FILTER_UNTAGGED),
+    (gettext_noop("No copyright"), FILTER_NO_COPYRIGHT),
+    (gettext_noop("Mixed writing systems"), FILTER_MIXED_SCRIPT),
+)
 
 
 # The filters that read the background metadata scan, so a view showing one must re-filter when

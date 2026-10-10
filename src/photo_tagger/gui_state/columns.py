@@ -132,6 +132,16 @@ SORT_STATUS = "status"
 SORT_TAGGED = "tagged"
 
 
+# The grid's Sort by menu, in the order it lists them: each sort with its label, marked here and
+# translated where it is shown.
+SORT_CHOICES: tuple[tuple[str, str], ...] = (
+    (gettext_noop("Name"), SORT_NAME),
+    (gettext_noop("Type"), SORT_TYPE),
+    (gettext_noop("Status"), SORT_STATUS),
+    (gettext_noop("Tagged"), SORT_TAGGED),
+)
+
+
 def photo_sort_key(item: PhotoItem, criterion: str) -> tuple[str, str, str]:
     """
     Build the sort key for one photo under a grid sort *criterion*.
