@@ -1,6 +1,6 @@
 """Pydantic schemas shared by the AI layer and the rest of the pipeline."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
@@ -117,3 +117,18 @@ class InferenceResult:
     output_tokens: int = 0
     total_tokens: int = 0
     seconds: float = 0.0
+
+    def with_cost_of(self, other: InferenceResult) -> InferenceResult:
+        """
+        Return this answer's text carrying what both calls cost.
+
+        For a photo asked twice (a repair): the per-photo row would otherwise report only the call
+        whose text was kept.
+        """
+        return replace(  # NOSONAR S5886 - replace() returns the type of self
+            self,
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+            seconds=round(self.seconds + other.seconds, 3),
+        )

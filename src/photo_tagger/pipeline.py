@@ -4,7 +4,7 @@ import contextlib
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from loguru import logger
@@ -391,24 +391,6 @@ def _call_model(ctx: _BatchContext, jpeg_bytes: BinaryContent, prompt: str) -> I
     return inference
 
 
-def _merge_cost(first: InferenceResult, second: InferenceResult) -> InferenceResult:
-    """
-    Return *second*'s text carrying what both calls cost.
-
-    The accumulator already counted each call on its own. This is for the per-photo row, which would
-    otherwise report a repaired photo as costing only its second call.
-    """
-    return InferenceResult(
-        title=second.title,
-        description=second.description,
-        keywords=second.keywords,
-        input_tokens=first.input_tokens + second.input_tokens,
-        output_tokens=first.output_tokens + second.output_tokens,
-        total_tokens=first.total_tokens + second.total_tokens,
-        seconds=round(first.seconds + second.seconds, 3),
-    )
-
-
 def _repair_foreign_script(
     inference: InferenceResult,
     ctx: _BatchContext,
@@ -421,7 +403,8 @@ def _repair_foreign_script(
 
     Only the same agent and the same image: the question that decides the right fix is whether the
     photo shows that text, which no text-only pass can answer. A failed repair is logged and the
-    original answer kept, because a photo that was tagged imperfectly still beats one not tagged.
+    original answer kept, because a photo that was tagged imperfectly still beats one not tagged. A
+    repair that comes back mixed again keeps the original too, and gets no third try.
 
     Runs before the cache write in :func:`_resolve_inference`, so what gets stored (and replayed) is
     the repaired answer and a rerun never pays for the second call again.
@@ -445,13 +428,56 @@ def _repair_foreign_script(
         logger.warning("foreign_script_repair_failed", file=file_name, error=str(exc))
         return inference
     ctx.usage.add_repair()
+    still_mixed = find_in_result(repaired) is not None
     logger.info(
         "foreign_script_repair_finished",
         file=file_name,
         title=repaired.title,
-        still_mixed=find_in_result(repaired) is not None,
+        still_mixed=still_mixed,
     )
-    return _merge_cost(inference, repaired)
+    # A repair that mixes scripts again is no better, and the original is the answer the photo
+    # was flagged on: keep it, so what the person reviews is what the check found.
+    return inference.with_cost_of(repaired) if still_mixed else repaired.with_cost_of(inference)
+
+
+def _repair_cached(
+    image_path: Path,
+    cached: InferenceResult,
+    ctx: _BatchContext,
+    *,
+    cache: InferenceCache,
+    content_key: str,
+) -> tuple[InferenceResult, bool]:
+    """
+    Return a replayed answer, repaired first when it mixes scripts and --repair-language is on.
+
+    An answer cached by a run without the setting would otherwise be replayed mixed forever. A
+    repair that helps replaces the cached answer, so the next run replays the fixed one. The copy
+    handed to the repair carries no cost, since the cached call was paid for by an earlier run.
+    """
+    if not ctx.options.repair_language or find_in_result(cached) is None:
+        return cached, True
+    jpeg_bytes = prepare_image_for_agent(
+        image_path,
+        jpg_quality=ctx.options.jpeg_quality,
+        max_size=ctx.options.jpeg_dimensions,
+    )
+    unpaid = replace(cached, input_tokens=0, output_tokens=0, total_tokens=0, seconds=0.0)
+    result = _repair_foreign_script(
+        unpaid,  # NOSONAR S5655 - replace() keeps the type of cached
+        ctx,
+        jpeg_bytes,
+        file_name=image_path.name,
+    )
+    if (
+        result.title == cached.title
+        and result.keywords == cached.keywords
+        and (result.description == cached.description)
+    ):
+        # The repair failed or came back mixed again: the cached answer stands, as it was.
+        return result, result.total_tokens == 0
+    safe_cache_put(cache, content_key, result, file_name=image_path.name)
+    return result, False
 
 
 def _run_model(image_path: Path, ctx: _BatchContext, *, contextual_prompt: str) -> InferenceResult:
@@ -509,7 +535,7 @@ def _resolve_inference(
 
     cached = _cache_replay(ctx, content_key, file_name=image_path.name)
     if cached is not None:
-        return cached, True
+        return _repair_cached(image_path, cached, ctx, cache=ctx.cache, content_key=content_key)
 
     with ctx.inflight_lock:
         leader_event = ctx.inflight.get(content_key)

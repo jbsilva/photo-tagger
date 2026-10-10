@@ -17,6 +17,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -5991,6 +5992,25 @@ def test_worker_keeps_the_answer_when_the_repair_call_fails(
 
     assert done[0].title == "Decorated陶笛"
     assert done[0].foreign_terms == ["陶笛"]
+
+
+def test_worker_keeps_the_original_when_the_repair_mixes_scripts_again(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The proposal keeps the text the check flagged, and counts what both calls cost."""
+    _stub_generation(monkeypatch)
+    first = replace(_GUI_MIXED, total_tokens=100)
+    second = replace(_GUI_MIXED, title="Painted陶器", total_tokens=40)
+    answers = iter([first, second])
+    monkeypatch.setattr(gui, "analyze_image_with_ai", lambda **_k: next(answers))
+    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], repair_language=True)
+    done: list[Proposal] = []
+    worker.file_done.connect(done.append)
+    worker.run()
+
+    assert done[0].title == "Decorated陶笛"
+    assert done[0].total_tokens == first.total_tokens + second.total_tokens
 
 
 def test_the_detail_pane_says_when_the_text_mixes_writing_systems(

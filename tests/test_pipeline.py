@@ -4,6 +4,7 @@ import contextlib
 import json
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
@@ -2431,6 +2432,79 @@ def test_a_repair_that_does_not_help_leaves_the_photo_flagged(
 
     assert patched_pipeline["analyze"].call_count == _WITH_REPAIR
     assert scratch["foreign_terms"] == ["陶笛"]
+
+
+def test_a_repair_that_mixes_scripts_again_keeps_the_original_text(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """
+    The photo keeps the answer it was flagged on, and its row counts both calls.
+
+    A second answer that mixes scripts too is no better, and replacing the flagged text with a
+    different, also flagged one would leave the person reviewing something the check never saw.
+    """
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    mixed_again = replace(
+        _REPAIRED_RESULT,
+        title="Painted陶器 Ocarina",
+        description="A painted ocarina.",
+    )
+    patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, mixed_again]
+    ctx = _ctx(options=ProcessingOptions(repair_language=True))
+    scratch: _InferenceScratch = {}
+
+    process_photo(image, ctx, outcome_sink=scratch)
+
+    inference = scratch["inference"]
+    assert inference.title == _MIXED_SCRIPT_RESULT.title
+    assert inference.total_tokens == _MIXED_SCRIPT_RESULT.total_tokens + mixed_again.total_tokens
+
+
+def _mixed_cache() -> tuple[Any, dict[str, InferenceResult]]:
+    """Return a cache already holding a mixed-script answer under "key", and its store."""
+    stored: dict[str, InferenceResult] = {"key": _MIXED_SCRIPT_RESULT}
+    cache = cast("Any", SimpleNamespace(get=stored.get, put=stored.__setitem__))
+    return cache, stored
+
+
+def test_a_cached_mixed_answer_is_repaired_when_the_setting_is_on(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """An answer cached before --repair-language was turned on is fixed, and the fix is stored."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    patched_pipeline["analyze"].side_effect = [_REPAIRED_RESULT]
+    cache, stored = _mixed_cache()
+    ctx = _ctx(options=ProcessingOptions(repair_language=True), cache=cache)
+    scratch: _InferenceScratch = {}
+
+    with patch("photo_tagger.pipeline.content_cache_key", return_value="key"):
+        process_photo(image, ctx, outcome_sink=scratch)
+
+    assert patched_pipeline["analyze"].call_count == 1
+    assert stored["key"].title == _REPAIRED_RESULT.title
+    assert scratch["inference"].total_tokens == _REPAIRED_RESULT.total_tokens
+    assert scratch["from_cache"] is False
+
+
+def test_a_cached_mixed_answer_is_replayed_as_is_without_the_setting(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """With repair off, a cache hit costs nothing, mixed or not."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    cache, stored = _mixed_cache()
+    ctx = _ctx(options=ProcessingOptions(), cache=cache)
+
+    with patch("photo_tagger.pipeline.content_cache_key", return_value="key"):
+        process_photo(image, ctx)
+
+    patched_pipeline["analyze"].assert_not_called()
+    assert stored["key"] is _MIXED_SCRIPT_RESULT
 
 
 def test_the_cache_stores_the_repaired_answer(

@@ -1002,7 +1002,8 @@ class GenerateWorker(QObject):
         The GUI's counterpart to the pipeline's ``--repair-language``, kept here rather than shared
         because the two call the agent differently (no sampling knobs here, and no batch usage to
         fold into). A failed repair keeps the original answer: the note over the fields still marks
-        it, and a proposal you can edit beats no proposal.
+        it, and a proposal you can edit beats no proposal. So does a repair that comes back mixed
+        again.
         """
         if not self._repair_language:
             return inference
@@ -1018,10 +1019,14 @@ class GenerateWorker(QObject):
             output_language=self._output_language,
         )
         try:
-            return analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
+            repaired = analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
         except Exception as exc:  # noqa: BLE001 - a failed repair must not cost the photo its proposal.
             logger.warning("gui_foreign_script_repair_failed", file=file_name, error=str(exc))
             return inference
+        # Mixed again: the original stays, as in the CLI, and the proposal counts both calls.
+        if find_in_result(repaired) is not None:
+            return inference.with_cost_of(repaired)
+        return repaired.with_cost_of(inference)
 
     def _generate_one(self, agent: object, path: Path, cache: InferenceCache | None) -> Proposal:
         """Read existing metadata, run the model (or hit the cache), and assemble a proposal."""
