@@ -5,8 +5,9 @@ icon: lucide/languages
 # Translations
 
 The desktop GUI is translated at runtime with GNU gettext. English is the source language. Brazilian
-Portuguese (`pt_BR`) ships complete. The CLI's `--help` text and the structured log events
-intentionally stay in English so scripts and bug reports remain grep-able.
+Portuguese (`pt_BR`) ships complete, except for one entry marked fuzzy (in need of review). gettext
+skips a fuzzy entry, so that one message shows in English. The CLI's `--help` text and the
+structured log events intentionally stay in English so scripts and bug reports remain grep-able.
 
 !!! note
 
@@ -37,7 +38,9 @@ it falls back to English. To pick one explicitly, use any of these (first match 
     ```
 
 Accepted values are `en`, `pt_BR` (any common spelling works: `pt-BR`, `pt_BR.UTF-8`, plain `pt`),
-or `auto` for the OS default. Unknown values quietly fall back to English.
+or `auto` for the OS default. An unknown value is skipped, and the next source in the list applies.
+After the list, the GUI tries the locale variables `LC_ALL`, `LC_MESSAGES`, and `LANG`, then the
+language of the operating system. If none of them names a supported language, it uses English.
 
 ## Contributing a translation
 
