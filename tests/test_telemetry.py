@@ -199,6 +199,21 @@ def test_first_run_notice_shows_once() -> None:
     assert telemetry.first_run_notice() is None
 
 
+def test_gui_notice_has_its_own_marker() -> None:
+    """A notice shown by the CLI does not stop the window from showing its own dialog once."""
+    assert telemetry.first_run_notice() == telemetry.FIRST_RUN_NOTICE
+    assert telemetry.notice_due(interface="gui") is True
+    assert telemetry.first_run_notice(interface="gui") == telemetry.FIRST_RUN_NOTICE
+    assert telemetry.notice_due(interface="gui") is False
+
+
+def test_notice_due_does_not_mark_the_notice_shown() -> None:
+    """Asking is not showing: the notice is still due after the question."""
+    assert telemetry.notice_due() is True
+    assert telemetry.notice_due() is True
+    assert telemetry.first_run_notice() == telemetry.FIRST_RUN_NOTICE
+
+
 def test_first_run_notice_returns_when_disclosure_version_changes(tmp_path: Path) -> None:
     """
     A marker from an older disclosure version does not suppress the updated notice.

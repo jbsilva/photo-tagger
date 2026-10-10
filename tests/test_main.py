@@ -1628,6 +1628,29 @@ def test_main_reports_unhandled_crashes_and_re_raises(tmp_path: Path) -> None:
     assert crashes[0]["interface"] == "cli"
 
 
+def test_a_first_run_crash_shows_the_notice_before_its_beacon(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A crash on the very first run is the first beacon, so the disclosure must come before it."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    notice_before_send: list[bool] = []
+
+    def fake_emit_crash(_exc: BaseException, **_kwargs: Any) -> None:  # noqa: ANN401
+        notice_before_send.append(not telemetry.notice_due())
+
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", side_effect=RuntimeError("boom")),
+        patch.object(telemetry, "emit_crash", side_effect=fake_emit_crash),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        main_module.main(["--input", str(image)])
+
+    assert notice_before_send == [True]
+    assert "anonymous usage stats" in capsys.readouterr().err
+
+
 def test_main_does_not_report_clean_exits_as_crashes() -> None:
     """SystemExit from normal error handling passes through without a crash beacon."""
     crashes: list[object] = []
@@ -3157,3 +3180,18 @@ def test_known_config_keys_cover_every_table_the_config_reads() -> None:
     assert "model_name" in known["provider"]
     assert "save_after_generating" in known["gui"]
     assert {"extensions", "workers", "recursive", "language", "exiftool_path"} <= known[""]
+
+
+def test_a_gui_crash_is_left_to_the_window_to_report(beacons: list[object]) -> None:
+    """The window reports its own crashes under its own consent, so the CLI does not add one."""
+    crashes: list[object] = []
+    app = MagicMock(side_effect=RuntimeError("boom"))
+    app.__iter__.return_value = iter(["gui", "set", "show"])
+    with (
+        patch.object(telemetry, "emit_crash", side_effect=lambda exc, **_k: crashes.append(exc)),
+        patch.object(main_module, "app", app),
+        pytest.raises(RuntimeError),
+    ):
+        main_module.main(["gui"])
+
+    assert crashes == []

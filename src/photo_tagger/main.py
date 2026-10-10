@@ -2292,11 +2292,17 @@ def main(argv: list[str] | None = None) -> None:
         exit_code, error = _INTERRUPTED_EXIT, exc
         raise
     except Exception as exc:
+        if _command_name(tokens) == "gui":
+            # The window reports its own crashes, under its own consent and notice.
+            raise
+        enabled = _telemetry_enabled_for(tokens)
+        # A crash on the very first run is still the first beacon, so the disclosure comes first.
+        _maybe_show_telemetry_notice(enabled=enabled)
         telemetry.emit_crash(
             exc,
             interface="cli",
             command=_command_name(tokens),
-            enabled=_telemetry_enabled_for(tokens),
+            enabled=enabled,
             block=True,
         )
         raise

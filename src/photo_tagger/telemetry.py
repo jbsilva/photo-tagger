@@ -141,6 +141,9 @@ _FLUSH_TIMEOUT_SECONDS = 2.5
 # config_file.py's XDG-style location.
 _INSTALL_ID_FILE = "install-id"
 _NOTICE_MARKER_FILE = "telemetry-notice-shown"
+# The GUI's own marker: its dialog lists more (idle time, screen size) and offers Turn It Off, so a
+# CLI user who later opens the window still sees it once.
+_GUI_NOTICE_MARKER_FILE = "telemetry-notice-shown-gui"
 _GUI_PREF_FILE = "gui-telemetry"
 # What that file holds: a hand-checked toggle, a cleared one, and the "on" that 0.9 wrote.
 _GUI_PREF_OPT_IN = "opt-in"
@@ -711,7 +714,20 @@ def install_id() -> str:
     return new_id
 
 
-def first_run_notice() -> str | None:
+def _notice_marker(interface: str) -> Path:
+    """Return the marker file that records the notice *interface* ("cli" or "gui") has shown."""
+    return _state_dir() / (_GUI_NOTICE_MARKER_FILE if interface == "gui" else _NOTICE_MARKER_FILE)
+
+
+def notice_due(*, interface: str = "cli") -> bool:
+    """Say whether *interface* has yet to show the current notice, without marking it shown."""
+    try:
+        return _notice_marker(interface).read_text(encoding="utf-8").strip() != str(NOTICE_VERSION)
+    except OSError:
+        return True
+
+
+def first_run_notice(*, interface: str = "cli") -> str | None:
     """
     Return :data:`FIRST_RUN_NOTICE` the first time telemetry is active, else ``None``.
 
@@ -721,12 +737,9 @@ def first_run_notice() -> str | None:
     show it. If the marker cannot be written the notice may reappear on a later run, which is
     harmless.
     """
-    marker = _state_dir() / _NOTICE_MARKER_FILE
-    try:
-        if marker.read_text(encoding="utf-8").strip() == str(NOTICE_VERSION):
-            return None
-    except OSError:
-        pass  # Missing marker: first run, show the notice below.
+    if not notice_due(interface=interface):
+        return None
+    marker = _notice_marker(interface)
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(f"{NOTICE_VERSION}\n", encoding="utf-8")

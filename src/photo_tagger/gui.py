@@ -7408,7 +7408,7 @@ class MainWindow(QMainWindow):
         """
         if not self._telemetry_consent().send:
             return
-        if telemetry.first_run_notice() is None:  # already shown on an earlier run
+        if telemetry.first_run_notice(interface="gui") is None:  # already shown on an earlier run
             return
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Information)
@@ -7819,7 +7819,17 @@ def launch(argv: list[str] | None = None) -> int:
         # The persisted toggle (or the config default) decides, as it does for the window itself;
         # emit_crash enforces the environment switches on top.
         enabled, opted_in = telemetry.gui_choice(config_enabled=load_defaults().telemetry.enabled)
-        telemetry.emit_crash(exc, interface="gui", enabled=enabled, opted_in=opted_in, block=block)
+        if telemetry.notice_due(interface="gui"):
+            # The window has not shown its disclosure yet, so nothing may be sent before it has.
+            return
+        telemetry.emit_crash(
+            exc,
+            interface="gui",
+            command="gui",
+            enabled=enabled,
+            opted_in=opted_in,
+            block=block,
+        )
 
     # Qt swallows exceptions raised inside slots (they reach sys.excepthook and the loop keeps
     # running), so an unhandled slot crash never propagates out of app.exec(). Chain a hook that
