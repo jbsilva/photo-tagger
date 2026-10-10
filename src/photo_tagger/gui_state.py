@@ -223,6 +223,9 @@ class PhotoItem:
     # read with the existing metadata. They fill the notice the detail pane says a save writes,
     # before the photo is ever generated.
     field_sources: FieldSources = field(default_factory=FieldSources)
+    # Apart from ``loaded``: a proposal fills the existing metadata but not these tags, so a photo
+    # generated before it was opened still needs them read.
+    field_sources_read: bool = False
     existing_sources: list[str] = field(default_factory=list)
     # Every title and description found, per field, the one in use first. What it adds over the two
     # fields above is the value a sidecar shadows, which the detail pane names rather than hide.

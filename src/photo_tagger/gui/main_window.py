@@ -1829,6 +1829,7 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             self._ensure_loaded(item)
+            self._ensure_field_sources(item)
             self._ensure_sources(item)
             self._detail.render_preview(item)
         finally:
@@ -1852,6 +1853,7 @@ class MainWindow(QMainWindow):
         item.existing_keywords = context.existing_keywords
         item.existing_copyright = context.existing_copyright
         item.field_sources = context.field_sources
+        item.field_sources_read = True
         item.loaded = True
         if not item.has_proposal:
             # Seed the editable copy from the existing values so a file can be edited and saved
@@ -1859,6 +1861,14 @@ class MainWindow(QMainWindow):
             item.title = title or ""
             item.description = description or ""
             item.keywords = keyword_lines(context.existing_keywords)
+
+    def _ensure_field_sources(self, item: PhotoItem) -> None:
+        """Read the tags the Copyright row needs, for a photo generated before it opened."""
+        if item.field_sources_read:
+            return
+        tags = field_tags_to_read(self._copyright_dialog.fields)
+        item.field_sources = read_field_sources([item.path], tags)[item.path]
+        item.field_sources_read = True
 
     def _ensure_sources(self, item: PhotoItem) -> None:
         if item.sources_read:
@@ -2202,6 +2212,7 @@ class MainWindow(QMainWindow):
                 self._scan_batch.discard(key)
                 self._scan_stale.add(key)
             item.loaded = False
+            item.field_sources_read = False
             item.sources_read = False
             self._refresh_status_cell(item)
             touched = True

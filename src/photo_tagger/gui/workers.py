@@ -80,6 +80,7 @@ if TYPE_CHECKING:
     from exiftool import ExifToolHelper
     from pydantic_ai import BinaryContent
 
+    from photo_tagger.metadata import FieldSources
     from photo_tagger.models import InferenceResult
     from photo_tagger.providers import ProviderName
     from photo_tagger.undo import UndoJournal
@@ -484,7 +485,7 @@ class SaveWorker(QObject):
                 self.file_done.emit(str(job.path), False)  # noqa: FBT003 - Qt signal argument
         self.finished.emit()
 
-    def _field_sources(self, helper: ExifToolHelper) -> dict[Path, dict[str, str]]:
+    def _field_sources(self, helper: ExifToolHelper) -> dict[Path, FieldSources]:
         """
         Read the tags the copyright templates need for the whole batch, in one call.
 

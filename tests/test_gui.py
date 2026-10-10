@@ -6575,6 +6575,39 @@ def test_save_writes_the_copyright_dated_by_the_photo(
     assert extra["XMP-dc:Creator"] == "Ada Lovelace"  # type: ignore[index]
 
 
+def test_a_photo_generated_before_it_was_opened_reads_its_copyright_tags(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proposal fills the existing metadata, not the tags the row needs, so opening reads them."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    sources = _taken(2011, XMP_Rights="(c) 2019 Someone Else")
+    _patch_gui(
+        monkeypatch,
+        "read_field_sources",
+        lambda paths, _tags: dict.fromkeys(paths, sources),
+    )
+    _add_dir(window, {"a": img})
+    _fill_copyright(window)
+    window._on_file_done(  # noqa: SLF001
+        Proposal(
+            path=img,
+            existing_title=None,
+            existing_description=None,
+            existing_keywords=KeywordSet(),
+            title="T",
+            description="D",
+            keywords=[],
+        ),
+    )
+
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
+
+    assert window._detail._planned_copyright.text() == "(keeps the notice it has)"  # noqa: SLF001
+
+
 def test_the_copyright_row_compares_the_file_with_what_a_save_writes(
     window: gui.MainWindow,
     tmp_path: Path,
