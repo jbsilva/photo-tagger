@@ -10,9 +10,19 @@ from PySide6.QtCore import QEvent, QObject, Qt, Signal
 # QMouseEvent only annotates ClickableLabel's Qt override, but it is imported at runtime on
 # purpose, for the reason given above MainWindow.closeEvent: Qt itself calls that override.
 from PySide6.QtGui import QMouseEvent  # noqa: TC002 - runtime on purpose, see the note above.
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPlainTextEdit, QTreeWidgetItem
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QPlainTextEdit,
+    QPushButton,
+    QTreeWidgetItem,
+)
 
 from photo_tagger.gui.common import (
+    CLOSE_LABEL,
     COL_NAME,
     COL_STATUS,
     COL_TAGGED,
@@ -20,6 +30,7 @@ from photo_tagger.gui.common import (
     IS_DIR_ROLE,
     STATUS_RANK_ROLE,
 )
+from photo_tagger.i18n import _
 
 
 if TYPE_CHECKING:
@@ -33,6 +44,25 @@ def readonly_box(min_height: int) -> QPlainTextEdit:
     box.setReadOnly(True)
     box.setMinimumHeight(min_height)
     return box
+
+
+def hint_label(text: str) -> QLabel:
+    """Return a dimmed note that wraps, the kind a dialog puts under its settings."""
+    label = QLabel(text)
+    label.setObjectName("hint")
+    label.setWordWrap(True)
+    return label
+
+
+def close_row(dialog: QDialog) -> QHBoxLayout:
+    """Return the row a settings dialog ends with: one default Close button, on the right."""
+    close = QPushButton(_(CLOSE_LABEL))
+    close.setDefault(True)
+    close.clicked.connect(dialog.accept)
+    buttons = QHBoxLayout()
+    buttons.addStretch(1)
+    buttons.addWidget(close)
+    return buttons
 
 
 def fit_text_height(box: QPlainTextEdit, *, min_h: int = 44, max_h: int = 140) -> None:

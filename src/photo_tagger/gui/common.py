@@ -56,3 +56,9 @@ PICK_A_FIELD = gettext_noop("Pick at least one field to write (Title, Descriptio
 # cannot drift apart; the use sites translate them with _() like the other module-level strings.
 CHOOSE_LABEL = gettext_noop("Choose...")
 CLOSE_LABEL = gettext_noop("Close")
+
+# The note under the settings a dialog keeps for the session only.
+SESSION_NOTE = gettext_noop(
+    "Kept for this session. Settings > Save Settings as Defaults writes them to the config file, "
+    "which CLI runs read too.",
+)

@@ -6910,19 +6910,19 @@ def test_window_paces_a_run_from_the_config_file(
 
     window = gui.MainWindow()
     try:
-        assert window._pacing_plan.duty_percent == 70  # noqa: SLF001, PLR2004 - window state.
-        assert window._pacing_plan.battery_floor == 30  # noqa: SLF001, PLR2004 - window state.
+        assert window._pacing_dialog.plan.duty_percent == 70  # noqa: SLF001, PLR2004 - window state.
+        assert window._pacing_dialog.plan.battery_floor == 30  # noqa: SLF001, PLR2004 - window state.
     finally:
         window.close()
 
 
 def test_pacing_dialog_edits_the_plan_the_next_run_follows(window: gui.MainWindow) -> None:
     """Editing a spin box changes the plan, so the next Generate rests by it."""
-    window._duty_spin.setValue(70)  # noqa: SLF001 - the dialog's own widget.
-    window._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's own widget.
-    window._work_minutes_spin.setValue(5.0)  # noqa: SLF001 - the dialog's own widget.
+    window._pacing_dialog._duty_spin.setValue(70)  # noqa: SLF001 - the dialog's own widget.
+    window._pacing_dialog._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's own widget.
+    window._pacing_dialog._work_minutes_spin.setValue(5.0)  # noqa: SLF001 - the dialog's own widget.
 
-    plan = window._pacing_plan  # noqa: SLF001 - window state.
+    plan = window._pacing_dialog.plan  # noqa: SLF001 - window state.
     assert plan.duty_percent == 70  # noqa: PLR2004 - the value under test.
     assert plan.battery_floor == 30  # noqa: PLR2004 - the value under test.
     assert plan.work_seconds == 300  # noqa: PLR2004 - five minutes, in seconds.
@@ -6941,8 +6941,8 @@ def test_pacing_dialog_starts_from_the_config_file(
 
     paced = gui.MainWindow()
     try:
-        assert paced._duty_spin.value() == 80  # noqa: SLF001, PLR2004 - the dialog's widget.
-        assert paced._work_minutes_spin.value() == 2.5  # noqa: SLF001, PLR2004 - ditto.
+        assert paced._pacing_dialog._duty_spin.value() == 80  # noqa: SLF001, PLR2004 - the dialog's widget.
+        assert paced._pacing_dialog._work_minutes_spin.value() == 2.5  # noqa: SLF001, PLR2004 - ditto.
     finally:
         paced.close()
 
@@ -6957,20 +6957,20 @@ def test_pacing_dialog_greys_out_the_windows_until_something_rests(
     they have nothing to shape, and a dialog that let them be edited would imply a run pauses when
     it does not.
     """
-    assert window._work_minutes_spin.isEnabled() is False  # noqa: SLF001 - the dialog's widget.
-    assert window._max_pause_spin.isEnabled() is False  # noqa: SLF001 - the dialog's widget.
+    assert window._pacing_dialog._work_minutes_spin.isEnabled() is False  # noqa: SLF001 - the dialog's widget.
+    assert window._pacing_dialog._max_pause_spin.isEnabled() is False  # noqa: SLF001 - the dialog's widget.
 
-    window._duty_spin.setValue(70)  # noqa: SLF001 - the dialog's widget.
+    window._pacing_dialog._duty_spin.setValue(70)  # noqa: SLF001 - the dialog's widget.
 
-    assert window._work_minutes_spin.isEnabled() is True  # noqa: SLF001 - the dialog's widget.
-    assert window._max_pause_spin.isEnabled() is True  # noqa: SLF001 - the dialog's widget.
+    assert window._pacing_dialog._work_minutes_spin.isEnabled() is True  # noqa: SLF001 - the dialog's widget.
+    assert window._pacing_dialog._max_pause_spin.isEnabled() is True  # noqa: SLF001 - the dialog's widget.
 
 
 def test_pacing_dialog_battery_floor_alone_enables_the_windows(window: gui.MainWindow) -> None:
     """Watching the battery is a reason to rest too, so the windows come alive for it."""
-    window._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
+    window._pacing_dialog._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
 
-    assert window._work_minutes_spin.isEnabled() is True  # noqa: SLF001 - the dialog's widget.
+    assert window._pacing_dialog._work_minutes_spin.isEnabled() is True  # noqa: SLF001 - the dialog's widget.
 
 
 def test_pacing_dialog_summary_follows_the_settings(window: gui.MainWindow) -> None:
@@ -6980,11 +6980,11 @@ def test_pacing_dialog_summary_follows_the_settings(window: gui.MainWindow) -> N
     Regression test: it was a fixed sentence saying a run works flat out, which stayed on screen
     after the duty cycle had been turned down and flatly contradicted the fields above it.
     """
-    assert "works flat out" in window._pacing_preview.text()  # noqa: SLF001 - the dialog's widget.
+    assert "works flat out" in window._pacing_dialog._pacing_preview.text()  # noqa: SLF001 - the dialog's widget.
 
-    window._duty_spin.setValue(90)  # noqa: SLF001 - the dialog's widget.
+    window._pacing_dialog._duty_spin.setValue(90)  # noqa: SLF001 - the dialog's widget.
 
-    summary = window._pacing_preview.text()  # noqa: SLF001 - the dialog's widget.
+    summary = window._pacing_dialog._pacing_preview.text()  # noqa: SLF001 - the dialog's widget.
     assert "works flat out" not in summary
     assert "Works 90% of the time" in summary
 
@@ -6996,8 +6996,8 @@ def test_pacing_dialog_keeps_the_resume_level_above_the_floor(window: gui.MainWi
     Regression test: both fields accepted 10, and the run then resumed at 25 because the plan
     substitutes a level above the floor. The dialog said one thing and the run did another.
     """
-    floor = window._battery_floor_spin  # noqa: SLF001 - the dialog's widget.
-    resume = window._battery_resume_spin  # noqa: SLF001 - the dialog's widget.
+    floor = window._pacing_dialog._battery_floor_spin  # noqa: SLF001 - the dialog's widget.
+    resume = window._pacing_dialog._battery_resume_spin  # noqa: SLF001 - the dialog's widget.
     assert resume.isEnabled() is False  # nothing to resume from yet
 
     floor.setValue(10)
@@ -7005,7 +7005,7 @@ def test_pacing_dialog_keeps_the_resume_level_above_the_floor(window: gui.MainWi
     assert resume.isEnabled() is True
     assert resume.minimum() == 11  # noqa: PLR2004 - one above the floor.
     assert resume.value() == 25  # noqa: PLR2004 - the margin the CLI would have picked.
-    assert window._pacing_plan.resume_percent == 25  # noqa: SLF001, PLR2004 - what the run does.
+    assert window._pacing_dialog.plan.resume_percent == 25  # noqa: SLF001, PLR2004 - what the run does.
 
     # Typing something too low is not possible: the spin box floor holds it up.
     resume.setValue(5)
@@ -7014,22 +7014,22 @@ def test_pacing_dialog_keeps_the_resume_level_above_the_floor(window: gui.MainWi
 
 def test_pacing_dialog_carries_the_resume_level_up_with_the_floor(window: gui.MainWindow) -> None:
     """Raising the floor past the resume level takes the resume level with it."""
-    window._battery_floor_spin.setValue(10)  # noqa: SLF001 - the dialog's widget.
-    window._battery_resume_spin.setValue(20)  # noqa: SLF001 - the dialog's widget.
+    window._pacing_dialog._battery_floor_spin.setValue(10)  # noqa: SLF001 - the dialog's widget.
+    window._pacing_dialog._battery_resume_spin.setValue(20)  # noqa: SLF001 - the dialog's widget.
 
-    window._battery_floor_spin.setValue(50)  # noqa: SLF001 - the dialog's widget.
+    window._pacing_dialog._battery_floor_spin.setValue(50)  # noqa: SLF001 - the dialog's widget.
 
-    assert window._battery_resume_spin.value() == 65  # noqa: SLF001, PLR2004 - floor plus margin.
+    assert window._pacing_dialog._battery_resume_spin.value() == 65  # noqa: SLF001, PLR2004 - floor plus margin.
 
 
 def test_pacing_dialog_clears_the_resume_level_when_the_floor_goes(window: gui.MainWindow) -> None:
     """Dropping the floor back to zero puts the resume field back to its inert state."""
-    window._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
+    window._pacing_dialog._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
 
-    window._battery_floor_spin.setValue(0)  # noqa: SLF001 - the dialog's widget.
+    window._pacing_dialog._battery_floor_spin.setValue(0)  # noqa: SLF001 - the dialog's widget.
 
-    assert window._battery_resume_spin.value() == 0  # noqa: SLF001 - nothing to resume from.
-    assert window._battery_resume_spin.isEnabled() is False  # noqa: SLF001 - the dialog's widget.
+    assert window._pacing_dialog._battery_resume_spin.value() == 0  # noqa: SLF001 - nothing to resume from.
+    assert window._pacing_dialog._battery_resume_spin.isEnabled() is False  # noqa: SLF001 - the dialog's widget.
 
 
 def test_pacing_dialog_warns_about_a_floor_near_full_instead_of_moving_it(
@@ -7042,20 +7042,20 @@ def test_pacing_dialog_warns_about_a_floor_near_full_instead_of_moving_it(
     99%" means resting after almost every window. That is worth saying and not worth overruling:
     silently returning a different number is the same trick the resume level used to play.
     """
-    floor = window._battery_floor_spin  # noqa: SLF001 - the dialog's widget.
+    floor = window._pacing_dialog._battery_floor_spin  # noqa: SLF001 - the dialog's widget.
     assert floor.maximum() == MAX_BATTERY_FLOOR
 
     floor.setValue(99)
 
     assert floor.value() == 99  # noqa: PLR2004 - exactly what was typed.
-    assert MIXED_SCRIPT_MARK in window._pacing_preview.text()  # noqa: SLF001 - the dialog's widget.
+    assert MIXED_SCRIPT_MARK in window._pacing_dialog._pacing_preview.text()  # noqa: SLF001 - the dialog's widget.
 
 
 def test_pacing_dialog_does_not_warn_about_an_ordinary_floor(window: gui.MainWindow) -> None:
     """A floor anyone would actually use carries no warning."""
-    window._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
+    window._pacing_dialog._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
 
-    assert MIXED_SCRIPT_MARK not in window._pacing_preview.text()  # noqa: SLF001 - the widget.
+    assert MIXED_SCRIPT_MARK not in window._pacing_dialog._pacing_preview.text()  # noqa: SLF001 - the widget.
 
 
 def test_worker_sends_the_configured_image_size(

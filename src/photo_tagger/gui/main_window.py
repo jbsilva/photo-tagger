@@ -114,6 +114,7 @@ from photo_tagger.gui.common import (
     PICK_A_FIELD,
     STATUS_RANK_ROLE,
 )
+from photo_tagger.gui.pacing import PacingDialog
 from photo_tagger.gui.style import app_icon, svg_icon
 from photo_tagger.gui.viewer import ImageViewerDialog
 from photo_tagger.gui.widgets import (
@@ -230,7 +231,6 @@ from photo_tagger.gui_state import (
     merged_config_text,
     navigation_shortcuts,
     new_paths,
-    pacing_summary,
     parse_keyword_lines,
     paths_under,
     photo_item_to_report_row,
@@ -300,7 +300,7 @@ from photo_tagger.metadata import (
     write_metadata_everywhere,
 )
 from photo_tagger.notify import APP_NAME, notify
-from photo_tagger.pacing import MAX_BATTERY_FLOOR, SECONDS_PER_MINUTE, PacingPlan
+from photo_tagger.pacing import SECONDS_PER_MINUTE
 from photo_tagger.pipeline import FAILURE_OTHER
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
@@ -637,10 +637,6 @@ class MainWindow(QMainWindow):
         # End-of-run desktop alert, resolved the same way the CLI resolves its two flags: a config
         # that asks only for the sound is asking for the notification that carries it.
         self._notify_enabled, self._notify_sound = resolve_notify(self._defaults.display)
-        # How hard a run may push the machine, from the config file's [pacing] table and editable
-        # in Settings > Pacing. The window rests exactly as a CLI run does, so an overnight batch
-        # here is as gentle as one there.
-        self._pacing_plan = to_pacing_plan(self._defaults.pacing)
         # The size the model sees, from [inference] jpeg_dimensions. The window used to hardcode
         # its preview size here, which silently ignored the configured value and gave CLI and GUI
         # runs different answers (and separate cache namespaces) for the same photo.
@@ -689,7 +685,8 @@ class MainWindow(QMainWindow):
         """
         self._keyword_rules_dialog = self._build_keyword_rules_dialog()
         self._copyright_dialog = self._build_copyright_dialog()
-        self._pacing_dialog = self._build_pacing_dialog()
+        # How hard a run may push the machine, from the config file's [pacing] table.
+        self._pacing_dialog = PacingDialog(self, to_pacing_plan(self._defaults.pacing))
         self._builder_dialog = self._build_vocabulary_dialog()
         self._undo_dialog = self._build_undo_dialog()
         self._watch_dialog = self._build_watch_dialog()
@@ -1290,6 +1287,7 @@ class MainWindow(QMainWindow):
 
     def _current_config_values(self) -> GuiConfigValues:
         """Collect the GUI's current choices that persist to the config file (never the API key)."""
+        pacing = self._pacing_dialog.plan
         return GuiConfigValues(
             provider_name=self._provider_name(),
             model_name=self._model.currentText().strip(),
@@ -1319,11 +1317,11 @@ class MainWindow(QMainWindow):
             marked=self._marked_box.currentData(),
             preserve_copyright=self._preserve_copyright_box.isChecked(),
             save_after_generating=self._autosave_action.isChecked(),
-            duty=self._pacing_plan.duty_percent,
-            battery_floor=self._pacing_plan.battery_floor,
-            battery_resume=self._pacing_plan.battery_resume,
-            work_minutes=self._pacing_plan.work_seconds / SECONDS_PER_MINUTE,
-            max_pause_minutes=self._pacing_plan.max_pause_seconds / SECONDS_PER_MINUTE,
+            duty=pacing.duty_percent,
+            battery_floor=pacing.battery_floor,
+            battery_resume=pacing.battery_resume,
+            work_minutes=pacing.work_seconds / SECONDS_PER_MINUTE,
+            max_pause_minutes=pacing.max_pause_seconds / SECONDS_PER_MINUTE,
         )
 
     def _config_target(self) -> Path:
@@ -4306,7 +4304,7 @@ class MainWindow(QMainWindow):
                 vocabulary=self._vocabulary,
                 vocabulary_strict=self._vocabulary_strict,
                 repair_language=self._repair_language,
-                pacing=self._pacing_plan,
+                pacing=self._pacing_dialog.plan,
                 jpeg_dimensions=self._model_image_size,
                 refresh=refresh,
             ),
@@ -4798,181 +4796,6 @@ class MainWindow(QMainWindow):
         self._session_gap_box.setValue(self._session_gap)
         self._refresh_vocabulary_label()
         self._keyword_rules_dialog.exec()
-
-    # --- copyright ---------------------------------------------------------------------------
-
-    # --- pacing: how hard a run may push the machine -----------------------------------------
-
-    def _build_pacing_dialog(self) -> QDialog:
-        """Build the dialog that decides how much of the time a run is allowed to work."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle(_("Pacing"))
-        dialog.setMinimumWidth(620)
-        box = QVBoxLayout(dialog)
-        # Broken by hand: a QLabel sizes itself to its longest line, so one long sentence would
-        # open the dialog as wide as the sentence is.
-        blurb = QLabel(
-            _("A model at full tilt can draw more power than the charger supplies.")
-            + "\n"
-            + _("Resting now and then lets the battery catch up and the fans wind down."),
-        )
-        blurb.setWordWrap(True)
-        box.addWidget(blurb)
-        box.addLayout(self._build_pacing_form())
-
-        # What the settings above add up to, in the terms a person actually asked about: how long
-        # the run stops for, and how often. A percentage does not answer that on its own.
-        self._pacing_preview = QLabel()
-        self._pacing_preview.setWordWrap(True)
-        self._pacing_preview.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse,
-        )
-        box.addWidget(self._pacing_preview)
-
-        note = QLabel(
-            _(
-                "A rest falls between photos, never in the middle of one. Kept for this session; "
-                "Settings > Save Settings as Defaults writes it to the config file, which CLI "
-                "runs read too.",
-            ),
-        )
-        note.setObjectName("hint")
-        note.setWordWrap(True)
-        box.addWidget(note)
-
-        close = QPushButton(_(CLOSE_LABEL))
-        close.setDefault(True)
-        close.clicked.connect(dialog.accept)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(close)
-        box.addLayout(buttons)
-        self._refresh_pacing()
-        return dialog
-
-    def _build_pacing_form(self) -> QFormLayout:
-        """Build the five rows the Pacing dialog edits, seeded from the config file."""
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        plan = self._pacing_plan
-
-        self._duty_spin = QSpinBox()
-        self._duty_spin.setRange(1, 100)
-        self._duty_spin.setSuffix(" %")
-        self._duty_spin.setValue(plan.duty_percent)
-        self._duty_spin.setToolTip(
-            tooltip(
-                "Share of the time a run may work. 100 works flat out. 70 rests about three "
-                "minutes of every ten, which is usually enough to stop a laptop losing charge.",
-            ),
-        )
-        form.addRow(_("Work only"), self._duty_spin)
-
-        self._battery_floor_spin = QSpinBox()
-        # Up to one short of full, so a resume level always fits above it. A floor in the nineties
-        # is a poor idea rather than an impossible one (see CAUTION_BATTERY_FLOOR), and the summary
-        # says so instead of the box quietly refusing the number that was typed.
-        self._battery_floor_spin.setRange(0, MAX_BATTERY_FLOOR)
-        self._battery_floor_spin.setSuffix(" %")
-        self._battery_floor_spin.setValue(plan.battery_floor)
-        self._battery_floor_spin.setToolTip(
-            tooltip(
-                "Rest until the charge comes back whenever the battery falls this low. 0 never "
-                "looks at the battery. Only rests while a charger is plugged in, since on "
-                "battery power a rest recharges nothing.",
-            ),
-        )
-        form.addRow(_("Rest below"), self._battery_floor_spin)
-
-        self._battery_resume_spin = QSpinBox()
-        self._battery_resume_spin.setRange(0, 100)
-        self._battery_resume_spin.setSuffix(" %")
-        self._battery_resume_spin.setValue(plan.battery_resume)
-        self._battery_resume_spin.setToolTip(
-            tooltip(
-                "Charge that ends the rest. It has to sit above the floor, or the run would rest "
-                "again as soon as it resumed, so raising the floor pushes this up with it.",
-            ),
-        )
-        form.addRow(_("Resume at"), self._battery_resume_spin)
-
-        self._work_minutes_spin = QDoubleSpinBox()
-        self._work_minutes_spin.setRange(0.1, 240.0)
-        self._work_minutes_spin.setDecimals(1)
-        self._work_minutes_spin.setSuffix(_(" min"))
-        self._work_minutes_spin.setValue(plan.work_seconds / SECONDS_PER_MINUTE)
-        self._work_minutes_spin.setToolTip(
-            tooltip(
-                "How long a run works between rests. Resting after every photo would be too "
-                "short to charge anything and gives the model server time to unload the model.",
-            ),
-        )
-        form.addRow(_("Work for"), self._work_minutes_spin)
-
-        self._max_pause_spin = QDoubleSpinBox()
-        self._max_pause_spin.setRange(0.1, 240.0)
-        self._max_pause_spin.setDecimals(1)
-        self._max_pause_spin.setSuffix(_(" min"))
-        self._max_pause_spin.setValue(plan.max_pause_seconds / SECONDS_PER_MINUTE)
-        self._max_pause_spin.setToolTip(
-            tooltip(
-                "Longest a single rest may last. Bounds the wait for a battery that is charging "
-                "slowly, and keeps a rest under the idle timeout that unloads a model.",
-            ),
-        )
-        form.addRow(_("Rest at most"), self._max_pause_spin)
-
-        for spin in (
-            self._duty_spin,
-            self._battery_floor_spin,
-            self._battery_resume_spin,
-            self._work_minutes_spin,
-            self._max_pause_spin,
-        ):
-            spin.valueChanged.connect(self._refresh_pacing)
-        return form
-
-    def _hold_resume_above_the_floor(self) -> None:
-        """
-        Keep the resume level above the floor, so the pair can only ever mean something.
-
-        Resuming at or below the charge that started the rest would rest again a photo later, and
-        the plan quietly substitutes a level above the floor when asked for one that low. Better
-        that the dialog never asks: the floor becomes the spin box's lower bound, and a floor raised
-        past the resume level carries it up to the same margin the CLI would have picked.
-        """
-        floor = self._battery_floor_spin.value()
-        spin = self._battery_resume_spin
-        with QSignalBlocker(spin):
-            if floor <= 0:
-                spin.setMinimum(0)
-                spin.setValue(0)
-                return
-            too_low = spin.value() <= floor
-            spin.setMinimum(floor + 1)
-            if too_low:
-                spin.setValue(PacingPlan(battery_floor=floor).resume_percent)
-
-    def _refresh_pacing(self) -> None:
-        """
-        Re-read the dialog into the plan the next run follows.
-
-        A field is greyed out while nothing would read it: the two windows shape a rest, so they
-        wait for something to ask for one, and the resume level waits for a floor to resume from.
-        """
-        self._hold_resume_above_the_floor()
-        self._pacing_plan = PacingPlan(
-            duty_percent=self._duty_spin.value(),
-            battery_floor=self._battery_floor_spin.value(),
-            battery_resume=self._battery_resume_spin.value(),
-            work_seconds=self._work_minutes_spin.value() * SECONDS_PER_MINUTE,
-            max_pause_seconds=self._max_pause_spin.value() * SECONDS_PER_MINUTE,
-        )
-        rests = self._pacing_plan.rests
-        self._battery_resume_spin.setEnabled(self._pacing_plan.battery_floor > 0)
-        for spin in (self._work_minutes_spin, self._max_pause_spin):
-            spin.setEnabled(rests)
-        self._pacing_preview.setText(pacing_summary(self._pacing_plan))
 
     def _show_pacing(self) -> None:
         """Open the Pacing dialog; a run already in flight keeps the plan it started with."""
