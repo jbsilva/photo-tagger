@@ -541,13 +541,14 @@ IP addresses, error messages, or anything else that identifies you. The dataclas
 
 Where it goes: our own Cloudflare Worker at `telemetry.tagger.photo`. No third-party analytics
 service is involved, and the collector's full source (and the queries run against it) lives in
-[`telemetry/`](telemetry/). Events are kept with no expiry date, so trends can be compared across
-releases. Sending happens on a background thread with a short timeout and is wrapped so it can never
-crash or slow down a run.
+[`telemetry/`](telemetry/). The Analytics Engine copy of each event expires after three months. The
+D1 copy has no expiry date, so trends can be compared across releases. Sending happens on a
+background thread and is wrapped so it can never crash a run. At exit, the CLI waits at most 2.5
+seconds for each beacon.
 
 How to disable it (any one of these):
 
-- pass `--no-telemetry` on the command line
+- pass `--no-telemetry` to `tag` or `watch` (the other commands do not take this flag)
 - set `PHOTO_TAGGER_TELEMETRY=0` (or the cross-tool `DO_NOT_TRACK=1`) in your environment
 - put `enabled = false` under `[telemetry]` in your configuration file
 - in the desktop app, clear **Settings > Send Anonymous Telemetry**. The first-run dialog also

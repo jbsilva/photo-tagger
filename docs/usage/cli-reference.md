@@ -491,9 +491,9 @@ photo-tagger sends one anonymous beacon per run, and one on a crash. It is opt-o
 photos, paths, filenames, tags, or error messages. See [Telemetry](../telemetry.md) for the exact
 payload and every way to switch it off.
 
-| Flag                             | Default     | Env var                                   | Description                                                                                                                                                                                                    |
-| -------------------------------- | ----------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--telemetry` / `--no-telemetry` | on (`true`) | `PHOTO_TAGGER_TELEMETRY` / `DO_NOT_TRACK` | Send anonymous usage stats and crash reports. An opt-out anywhere wins over an opt-in. `PHOTO_TAGGER_TELEMETRY=0` turns it off, and `PHOTO_TAGGER_TELEMETRY=1` overrules `DO_NOT_TRACK` for photo-tagger only. |
+| Flag                             | Default     | Env var                                   | Description                                                                                                                                                                                                        |
+| -------------------------------- | ----------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--telemetry` / `--no-telemetry` | on (`true`) | `PHOTO_TAGGER_TELEMETRY` / `DO_NOT_TRACK` | Send anonymous usage stats and crash reports. In the CLI, any opt-out wins over an opt-in. `PHOTO_TAGGER_TELEMETRY=0` turns it off, and `PHOTO_TAGGER_TELEMETRY=1` overrules `DO_NOT_TRACK` for photo-tagger only. |
 
 ## Artifacts
 
