@@ -24,9 +24,7 @@ from PySide6.QtCore import QPoint, QSize, Qt, QThread, QTimer, QUrl, qVersion
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
-    QBrush,
     QCloseEvent,
-    QColor,
     QDesktopServices,
     QDragEnterEvent,
     QDropEvent,
@@ -34,13 +32,11 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QCheckBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
-    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -52,7 +48,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QToolButton,
-    QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -73,19 +68,13 @@ from photo_tagger.csv_report import write_report
 from photo_tagger.discovery import load_skip_list, skip_list_matches
 from photo_tagger.errors import ConfigFileError, DiscoveryError
 from photo_tagger.gui.common import (
-    COL_NAME,
-    COL_STATUS,
-    COL_TAGGED,
-    COL_TYPE,
     CONFIG_SAVE_ERROR_TITLE,
     DEFAULT_CACHE_FILE,
-    DIR_MARK,
     DOCS_URL,
     IS_DIR_ROLE,
     LOG_FOLDER,
     PATH_ROLE,
     PICK_A_FIELD,
-    STATUS_RANK_ROLE,
     config_target,
 )
 from photo_tagger.gui.connection import ConnectionBar
@@ -94,6 +83,7 @@ from photo_tagger.gui.detail_pane import DetailPane
 from photo_tagger.gui.folder_grid import FolderGrid
 from photo_tagger.gui.keyword_rules import KeywordRulesDialog
 from photo_tagger.gui.pacing import PacingDialog
+from photo_tagger.gui.photo_tree import PhotoTree
 from photo_tagger.gui.save_options import SaveOptionsMenu
 from photo_tagger.gui.settings_menu import SettingsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
@@ -103,8 +93,6 @@ from photo_tagger.gui.vocabulary_builder import VocabularyBuilderDialog
 from photo_tagger.gui.watch_dialog import WatchDialog
 from photo_tagger.gui.widgets import (
     InputWatcher,
-    SortableTreeItem,
-    check_state,
 )
 from photo_tagger.gui.workers import (
     GenerateWorker,
@@ -134,7 +122,6 @@ from photo_tagger.gui_state import (
     SELECT_ONLY,
     SELECT_UNCHECK,
     WORKING,
-    FolderNode,
     GenerateOptions,
     GuiConfigValues,
     HarmonizeResult,
@@ -151,7 +138,6 @@ from photo_tagger.gui_state import (
     apply_selection,
     apply_write_result,
     build_save_job,
-    build_tree,
     capture_year,
     config_toml_text,
     deselect_paths,
@@ -161,15 +147,11 @@ from photo_tagger.gui_state import (
     failure_summary,
     field_tags_to_read,
     file_dialog_name_filters,
-    file_type_label,
-    flat_labels,
-    foreign_terms_note,
     harmonize_summary,
     keys_by_check,
     keyword_lines,
     load_sidecar_overrides,
     location_crumb,
-    mark_mixed_script,
     matches_extension,
     matches_name_pattern,
     merged_config_text,
@@ -190,15 +172,10 @@ from photo_tagger.gui_state import (
     review_summary,
     save_options_for,
     search_summary,
-    status_sort_rank,
     status_summary,
-    tagged_legend,
-    tagged_summary,
-    tagged_tooltip,
     tooltip,
     vocabulary_summary,
     watch_status_text,
-    wrap_tooltip,
     writes_nothing,
 )
 from photo_tagger.gui_usage import (
@@ -254,9 +231,6 @@ _RETRY_PASS_DELAY_MS = 5000
 # clock without being busywork.
 _TIMING_TICK_MS = 500
 
-# Status colors: failures pop red, saved photos settle green; other states use the palette.
-_STATUS_COLOR = {FAILED: QColor("#f85149"), SAVED: QColor("#3fb950")}
-
 _PAGE_EMPTY = 0  # right-pane stack index for the idle "add or pick a photo" placeholder
 _PAGE_DETAIL = 1  # right-pane stack index for one photo's detail
 _PAGE_GRID = 2  # right-pane stack index for a folder's thumbnail grid
@@ -272,15 +246,6 @@ _EMPTY_PICK = gettext_noop(
     "Select a photo to review it.\n\n"
     "Generate proposes a title, description, and keywords you can edit before saving.",
 )
-
-# Short status word shown in the tree's second column.
-_STATUS_LABEL = {
-    PENDING: "",
-    WORKING: gettext_noop("working..."),
-    READY: gettext_noop("ready"),
-    SAVED: gettext_noop("saved ✓"),
-    FAILED: gettext_noop("failed ✗"),
-}
 
 # The field-aware "deselect already-tagged" menu, mirroring the CLI's --skip-tagged but letting
 # the user pick which fields count as "done". Each entry pairs a menu label with the criterion it
@@ -423,7 +388,6 @@ class MainWindow(QMainWindow):
         self._raw_config = load_config()
         self._defaults = load_defaults(self._raw_config)
         self._items: dict[str, PhotoItem] = {}
-        self._init_tree_row_index()
         # The Select menu's last name pattern, so refining one is a small edit, not a retype.
         self._last_name_pattern = ""
         self._init_navigation()
@@ -599,22 +563,6 @@ class MainWindow(QMainWindow):
         # What the vocabulary did over the run in flight, for its closing summary line.
         self._vocabulary_mapped = 0
         self._vocabulary_dropped: dict[str, int] = {}
-
-    def _init_tree_row_index(self) -> None:
-        """
-        Seed the path -> tree row lookup the whole window reads.
-
-        Walking the tree for a row is not an option: the only widget-side walker,
-        QTreeWidgetItemIterator, is never destroyed by PySide, so each walk leaves an iterator
-        registered with QTreeModel pointing at whatever row it stopped on. The next teardown frees
-        that row and the removal after it dereferences the dangling pointer. An index also turns the
-        per-photo status refresh from a full walk into a dict hit.
-
-        _rebuild_tree owns both dicts and drops them before it empties the tree, so no row is
-        reachable from Python while Qt is tearing it down.
-        """
-        self._folder_rows: dict[str, QTreeWidgetItem] = {}
-        self._leaf_rows: dict[str, QTreeWidgetItem] = {}
 
     def _init_navigation(self) -> None:
         """
@@ -829,37 +777,13 @@ class MainWindow(QMainWindow):
         )
 
     def _build_tree_panel(self) -> QWidget:
+        """Build the left panel: the add, select, and remove row, the search, the list, the scan."""
         panel = QWidget()
         box = QVBoxLayout(panel)
         box.addLayout(self._build_tree_controls())
         box.addLayout(self._build_search_row())
 
-        self._tree = QTreeWidget()
-        self._tree.setHeaderLabels([_("Photos"), _("Type"), _("Status"), _("Tagged")])
-        # Extended: shift+click selects a range, Cmd/Ctrl+click adds single rows, and
-        # shift+arrows grow the selection from the keyboard.
-        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        header = self._tree.header()
-        header.setStretchLastSection(False)
-        for column, width in (
-            (COL_NAME, 250),
-            (COL_TYPE, 64),
-            (COL_STATUS, 80),
-            (COL_TAGGED, 56),
-        ):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
-            self._tree.setColumnWidth(column, width)
-        # Click a header to sort by any column; folders stay grouped above files.
-        self._tree.setSortingEnabled(True)
-        self._tree.sortByColumn(COL_NAME, Qt.SortOrder.AscendingOrder)
-        header.setToolTip(
-            tooltip(
-                "Click a column header to sort. Type: file extension, +xmp when a sidecar "
-                "exists.\nTagged: metadata already on the file ({legend}).",
-                legend=tagged_legend(),
-            ),
-        )
-        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree = PhotoTree(self, self._items)
         self._tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.currentItemChanged.connect(self._on_current_changed)
@@ -1380,13 +1304,12 @@ class MainWindow(QMainWindow):
         leaves = []
         for item in items:
             item.selected = checked
-            leaf = self._leaf_for(item.path)
+            leaf = self._tree.set_checked(item.path, checked=checked)
             if leaf is not None:
-                leaf.setCheckState(0, check_state(checked))
                 leaves.append(leaf)
         # Folder tristates re-derive after every leaf is set, walking each chain upward.
         for leaf in leaves:
-            self._sync_ancestors(leaf)
+            self._tree.sync_ancestors(leaf)
         self._folder_grid.sync_checks()
         self._syncing = False
         self._update_status()
@@ -1397,10 +1320,9 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         self._syncing = True
-        leaf = self._leaf_for(Path(key))
+        leaf = self._tree.set_checked(Path(key), checked=item.selected)
         if leaf is not None:
-            leaf.setCheckState(0, check_state(item.selected))
-            self._sync_ancestors(leaf)
+            self._tree.sync_ancestors(leaf)
         self._syncing = False
         self._update_status()
 
@@ -1410,7 +1332,7 @@ class MainWindow(QMainWindow):
             items = [self._items[chosen] for chosen in selected if chosen in self._items]
             menu: QMenu | None = self._build_bulk_context_menu(items)
         else:
-            menu = self._build_tree_context_menu(self._leaf_for(Path(key)))
+            menu = self._build_tree_context_menu(self._tree.leaf_for(Path(key)))
         if menu is not None:
             menu.exec(where)
 
@@ -2092,38 +2014,11 @@ class MainWindow(QMainWindow):
             ).format(n=len(rows), name=target.name),
         )
 
-    def _empty_tree(self) -> None:
-        """
-        Drop the row index, then take the rows out one at a time.
-
-        Deliberately not ``QTreeWidget.clear()``. PySide's clear() hands each top-level row back to
-        Python and deletes only the ones nothing references; C++ frees the rest after detaching them
-        from the model, so it never emits the removals. Any QTreeWidgetItemIterator still registered
-        with QTreeModel is left pointing at freed memory, and the next removal reads it. A context
-        menu holding the row the user right-clicked is enough to arm that.
-
-        takeTopLevelItem always goes through QTreeModel::beginRemoveItems, which tells every
-        registered iterator what is going away. The index goes first so no row is reachable from
-        Python while Qt is tearing it down.
-        """
-        self._folder_rows.clear()
-        self._leaf_rows.clear()
-        while self._tree.topLevelItemCount():
-            self._tree.takeTopLevelItem(0)
-
     def _rebuild_tree(self) -> None:
         self._syncing = True
         # Build with sorting off so items do not shuffle on every insert; re-enabling at the
         # end re-applies whatever column/direction the header is currently set to.
-        self._tree.setSortingEnabled(False)
-        self._empty_tree()
-        paths = self._visible_paths()
-        if self._flat_list():
-            self._add_flat_rows(paths)
-        else:
-            for node in build_tree(paths):
-                self._add_folder_node(self._tree, node)
-        self._tree.setSortingEnabled(True)
+        self._tree.rebuild(self._visible_paths(), flat=self._flat_list())
         self._folder_grid.sync_checks()
         # Photos that just left the list have to leave the history with them, or Back would try to
         # open a row that no longer exists. Folders go too when their last photo did.
@@ -2134,51 +2029,10 @@ class MainWindow(QMainWindow):
         # (dragging photos in, Check All, Uncheck Already Tagged) do not kick the user out of
         # the photo or folder they are reviewing.
         if self._current is not None:
-            self._select_tree_entry(str(self._current.path), is_dir=False)
+            self._tree.select_row(str(self._current.path), is_dir=False)
         elif self._folder_grid.folder is not None and self._right.currentIndex() == _PAGE_GRID:
-            self._select_tree_entry(str(self._folder_grid.folder), is_dir=True)
+            self._tree.select_row(str(self._folder_grid.folder), is_dir=True)
         self._syncing = False
-
-    def _select_tree_entry(self, path: str, *, is_dir: bool) -> None:
-        """Re-highlight the tree row for *path* (callers hold ``_syncing``)."""
-        rows = self._folder_rows if is_dir else self._leaf_rows
-        entry = rows.get(path)
-        if entry is not None:
-            self._tree.setCurrentItem(entry)
-
-    def _add_flat_rows(self, paths: list[Path]) -> None:
-        """Add every photo as a top-level row, so a column sort runs across the whole list."""
-        labels = flat_labels(paths)
-        for path in paths:
-            leaf = self._add_leaf(self._tree, path, labels[path])
-            # The label is relative to the folder the photos share, so the full path is worth
-            # a tooltip here in a way it is not under a folder row that already names it.
-            leaf.setToolTip(COL_NAME, str(path))
-
-    def _add_folder_node(self, parent: object, node: FolderNode) -> None:
-        folder_item = SortableTreeItem(parent, [node.label, ""])
-        folder_item.setData(0, PATH_ROLE, str(node.path))
-        folder_item.setData(0, IS_DIR_ROLE, DIR_MARK)
-        folder_item.setFlags(folder_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        folder_item.setExpanded(True)
-        self._folder_rows[str(node.path)] = folder_item
-        for sub in node.folders:
-            self._add_folder_node(folder_item, sub)
-        for path in node.files:
-            self._add_leaf(folder_item, path, path.name)
-        self._sync_folder_check(folder_item)
-
-    def _add_leaf(self, parent: object, path: Path, label: str) -> SortableTreeItem:
-        """Add one photo's row under *parent*, showing it as *label*."""
-        item = self._items[str(path)]
-        leaf = SortableTreeItem(parent, [label, file_type_label(path), "", ""])
-        leaf.setData(0, PATH_ROLE, str(path))
-        # Files leave IS_DIR_ROLE unset (None), which reads as "not a folder".
-        leaf.setFlags(leaf.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        leaf.setCheckState(0, check_state(item.selected))
-        self._leaf_rows[str(path)] = leaf
-        self._render_status_cells(leaf, item)
-        return leaf
 
     # --- tree interaction ------------------------------------------------------------------
 
@@ -2186,44 +2040,10 @@ class MainWindow(QMainWindow):
         if self._syncing or column != 0:
             return
         self._syncing = True
-        if bool(item.data(0, IS_DIR_ROLE)):
-            self._set_descendants_checked(item, item.checkState(0))
-        else:
-            path = item.data(0, PATH_ROLE)
-            if path is not None:
-                self._items[path].selected = item.checkState(0) == Qt.CheckState.Checked
-        # Whichever kind of row was toggled, every folder above it may have gone mixed.
-        self._sync_ancestors(item)
+        self._tree.apply_check(item)
         self._folder_grid.sync_checks()
         self._syncing = False
         self._update_status()
-
-    def _set_descendants_checked(self, folder_item: QTreeWidgetItem, state: Qt.CheckState) -> None:
-        for index in range(folder_item.childCount()):
-            child = folder_item.child(index)
-            child.setCheckState(0, state)
-            if bool(child.data(0, IS_DIR_ROLE)):
-                self._set_descendants_checked(child, state)
-            else:
-                path = child.data(0, PATH_ROLE)
-                if path is not None:
-                    self._items[path].selected = state == Qt.CheckState.Checked
-
-    def _sync_ancestors(self, item: QTreeWidgetItem) -> None:
-        """Re-derive the tristate of every folder above *item* (callers hold ``_syncing``)."""
-        parent = item.parent()
-        while parent is not None:
-            self._sync_folder_check(parent)
-            parent = parent.parent()
-
-    def _sync_folder_check(self, folder_item: QTreeWidgetItem) -> None:
-        states = {folder_item.child(i).checkState(0) for i in range(folder_item.childCount())}
-        if states == {Qt.CheckState.Checked}:
-            folder_item.setCheckState(0, Qt.CheckState.Checked)
-        elif states == {Qt.CheckState.Unchecked}:
-            folder_item.setCheckState(0, Qt.CheckState.Unchecked)
-        else:
-            folder_item.setCheckState(0, Qt.CheckState.PartiallyChecked)
 
     def _on_current_changed(self, current: QTreeWidgetItem | None, _previous: object) -> None:
         if self._syncing:
@@ -2309,15 +2129,10 @@ class MainWindow(QMainWindow):
         """
         self._syncing = True
         try:
-            self._tree.setCurrentItem(self._row_for(location))
+            self._tree.setCurrentItem(self._tree.row_for(location))
         finally:
             self._syncing = False
         self._open_location(location)
-
-    def _row_for(self, location: Location) -> QTreeWidgetItem | None:
-        """Return the tree row *location* stands for, or None when it has none."""
-        rows = self._folder_rows if location.is_dir else self._leaf_rows
-        return rows.get(str(location.path))
 
     def _location_exists(self, location: Location) -> bool:
         """
@@ -2344,7 +2159,7 @@ class MainWindow(QMainWindow):
         if self._flat_list():
             return folder
         while True:
-            if str(folder) in self._folder_rows:
+            if self._tree.has_folder_row(folder):
                 return folder
             if folder.parent == folder:
                 return None
@@ -2403,7 +2218,7 @@ class MainWindow(QMainWindow):
 
     def _on_grid_photo_activated(self, key: str) -> None:
         """Open the photo whose thumbnail was clicked, the way picking its tree row would."""
-        leaf = self._leaf_for(Path(key))
+        leaf = self._tree.leaf_for(Path(key))
         if leaf is not None:
             self._tree.setCurrentItem(leaf)  # routes to the detail page
 
@@ -2587,7 +2402,7 @@ class MainWindow(QMainWindow):
             if ok
             else _("Failed to save {name}.").format(name=name),
         )
-        self._resort()
+        self._tree.resort()
         self._update_status()
 
     def _save_selected(self) -> None:
@@ -2673,7 +2488,7 @@ class MainWindow(QMainWindow):
         # ready-again rather than stuck.
         self._reset_working()
         self._save_jobs = {}
-        self._resort()
+        self._tree.resort()
         self._teardown_save_thread()
         if self._save_journal is not None and self._save_journal.entries:
             logger.info(
@@ -2915,7 +2730,7 @@ class MainWindow(QMainWindow):
                 self._settings_menu.notify_run_finished(self._status.text())
         cancelled = self._cancelling
         self._cancelling = False
-        self._resort()
+        self._tree.resort()
         self._teardown_thread()
         if cancelled:
             # Same reasoning as the cancelled save: harmonizing and then saving unattended is
@@ -3473,41 +3288,10 @@ class MainWindow(QMainWindow):
     # --- helpers ---------------------------------------------------------------------------
 
     def _refresh_status_cell(self, item: PhotoItem) -> None:
-        leaf = self._leaf_for(item.path)
-        if leaf is not None:
-            self._render_status_cells(leaf, item)
+        """Repaint *item*'s state wherever it shows: its tree row, and its grid thumbnail."""
+        self._tree.refresh(item)
         # Keep the folder grid's badge overlay in step with the tree.
         self._folder_grid.refresh(item)
-
-    def _render_status_cells(self, leaf: QTreeWidgetItem, item: PhotoItem) -> None:
-        """Paint the Status and Tagged columns for *item*'s row."""
-        label = _(_STATUS_LABEL[item.status]) if _STATUS_LABEL[item.status] else ""
-        if item.status == READY and item.from_cache:
-            label = _("ready (cached)")
-        leaf.setText(COL_STATUS, mark_mixed_script(label, item.foreign_terms))
-        leaf.setData(COL_STATUS, STATUS_RANK_ROLE, status_sort_rank(item.status))
-        color = _STATUS_COLOR.get(item.status)
-        leaf.setData(
-            COL_STATUS,
-            Qt.ItemDataRole.ForegroundRole,
-            QBrush(color) if color is not None else None,
-        )
-        # Surface on hover what the cell only had room to mark: the failure reason, or the words
-        # that made the text mixed. Model errors can be a paragraph long, hence the wrap.
-        hover = item.error if item.status == FAILED else foreign_terms_note(item.foreign_terms)
-        leaf.setToolTip(COL_STATUS, wrap_tooltip(hover) if hover else "")
-        if item.known_fields is not None:
-            leaf.setText(COL_TAGGED, tagged_summary(item.known_fields))
-            leaf.setToolTip(COL_TAGGED, wrap_tooltip(tagged_tooltip(item.known_fields)))
-
-    def _resort(self) -> None:
-        """Re-apply the active sort so changed statuses settle when sorting by the Status column."""
-        header = self._tree.header()
-        self._tree.sortItems(header.sortIndicatorSection(), header.sortIndicatorOrder())
-
-    def _leaf_for(self, path: Path) -> QTreeWidgetItem | None:
-        """Return the tree row for the photo at *path*, or None when it is not listed."""
-        return self._leaf_rows.get(str(path))
 
     def _selected_count(self) -> int:
         """How many photos are currently checked (used in deselect feedback)."""
@@ -3517,8 +3301,7 @@ class MainWindow(QMainWindow):
         if self._items:
             summary = status_summary(self._items.values())
             if self._search.text().strip():
-                # _leaf_rows holds exactly the photos the last rebuild drew.
-                shown = search_summary(len(self._leaf_rows), len(self._items))
+                shown = search_summary(self._tree.shown_count(), len(self._items))
                 summary = f"{shown} · {summary}"
             self._status.setText(summary)
         # Retry only makes sense when something actually failed (and no run is in flight).

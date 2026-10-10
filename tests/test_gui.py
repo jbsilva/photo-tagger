@@ -227,7 +227,7 @@ def _select(window: gui.MainWindow, item: QTreeWidgetItem | None) -> None:
 
 def _check_state(window: gui.MainWindow, path: Path) -> Qt.CheckState:
     """Return the rendered checkbox state of *path*'s tree leaf (asserting it exists)."""
-    leaf = window._leaf_for(path)  # noqa: SLF001
+    leaf = window._tree.leaf_for(path)  # noqa: SLF001
     assert leaf is not None
     return leaf.checkState(0)
 
@@ -400,7 +400,7 @@ def test_run_generation_commits_and_passes_the_open_photos_hint(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_generation(monkeypatch)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001 - open the photo so the field is live
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001 - open the photo so the field is live
     window._detail._hint.setText("The animal is a deer")  # noqa: SLF001
 
     window._run_generation([window._items[str(img)]])  # noqa: SLF001
@@ -450,10 +450,10 @@ def test_unchecking_a_subfolder_repaints_its_ancestors(
     sub = tmp_path / "sub"
     sub.mkdir()
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg"), "b": _jpeg(sub / "b.jpg")})
-    top_row = window._folder_rows[str(tmp_path)]  # noqa: SLF001
+    top_row = window._tree._folder_rows[str(tmp_path)]  # noqa: SLF001
     assert top_row.checkState(0) == Qt.CheckState.Checked
 
-    window._folder_rows[str(sub)].setCheckState(0, Qt.CheckState.Unchecked)  # noqa: SLF001
+    window._tree._folder_rows[str(sub)].setCheckState(0, Qt.CheckState.Unchecked)  # noqa: SLF001
 
     # "a" is still checked and "b" is not, so the top folder is neither on nor off.
     assert top_row.checkState(0) == Qt.CheckState.PartiallyChecked
@@ -472,7 +472,7 @@ def test_remove_selected_file_drops_one(window: gui.MainWindow, tmp_path: Path) 
     """Removing a single file leaf leaves the rest in place."""
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a, "b": _jpeg(tmp_path / "b.jpg")})
-    leaf = window._leaf_for(a)  # noqa: SLF001
+    leaf = window._tree.leaf_for(a)  # noqa: SLF001
     assert leaf is not None
     window._tree.setCurrentItem(leaf)  # noqa: SLF001
     window._remove_selected()  # noqa: SLF001
@@ -541,10 +541,10 @@ def test_row_index_covers_every_folder_and_leaf(window: gui.MainWindow, tmp_path
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(nested / "b.jpg")
     _add_dir(window, {"a": a, "b": b})
-    assert set(window._leaf_rows) == {str(a), str(b)}  # noqa: SLF001
-    assert set(window._folder_rows) == {str(tmp_path), str(nested)}  # noqa: SLF001
-    window._select_tree_entry(str(nested), is_dir=True)  # noqa: SLF001
-    assert window._tree.currentItem() is window._folder_rows[str(nested)]  # noqa: SLF001
+    assert set(window._tree._leaf_rows) == {str(a), str(b)}  # noqa: SLF001
+    assert set(window._tree._folder_rows) == {str(tmp_path), str(nested)}  # noqa: SLF001
+    window._tree.select_row(str(nested), is_dir=True)  # noqa: SLF001
+    assert window._tree.currentItem() is window._tree._folder_rows[str(nested)]  # noqa: SLF001
 
 
 def test_a_rebuild_replaces_every_indexed_row(window: gui.MainWindow, tmp_path: Path) -> None:
@@ -560,14 +560,14 @@ def test_a_rebuild_replaces_every_indexed_row(window: gui.MainWindow, tmp_path: 
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
     _add_dir(window, {"a": a, "b": b})
-    stale_folder = window._folder_rows[str(tmp_path)]  # noqa: SLF001
-    stale_leaf = window._leaf_rows[str(b)]  # noqa: SLF001
+    stale_folder = window._tree._folder_rows[str(tmp_path)]  # noqa: SLF001
+    stale_leaf = window._tree._leaf_rows[str(b)]  # noqa: SLF001
 
     window._remove_items([str(a)])  # noqa: SLF001
 
-    assert set(window._leaf_rows) == {str(b)}  # noqa: SLF001
-    assert window._leaf_rows[str(b)] is not stale_leaf  # noqa: SLF001
-    assert window._folder_rows[str(tmp_path)] is not stale_folder  # noqa: SLF001
+    assert set(window._tree._leaf_rows) == {str(b)}  # noqa: SLF001
+    assert window._tree._leaf_rows[str(b)] is not stale_leaf  # noqa: SLF001
+    assert window._tree._folder_rows[str(tmp_path)] is not stale_folder  # noqa: SLF001
     assert isValid(stale_folder), "the old row was freed while Python still held it"
     assert stale_folder.treeWidget() is None
     assert stale_leaf.treeWidget() is None
@@ -594,19 +594,19 @@ def test_the_tree_is_emptied_row_by_row_never_with_clear(
 
     assert not forbidden, "_rebuild_tree fell back to QTreeWidget.clear()"
     assert window._tree.topLevelItemCount() == 1  # noqa: SLF001
-    assert set(window._leaf_rows) == {str(a), str(b)}  # noqa: SLF001
+    assert set(window._tree._leaf_rows) == {str(a), str(b)}  # noqa: SLF001
 
 
 def test_emptying_the_tree_drops_the_rows_and_the_index(
     window: gui.MainWindow,
     tmp_path: Path,
 ) -> None:
-    """_empty_tree leaves nothing behind in the widget or the lookup."""
+    """Emptying the tree leaves nothing behind in the widget or the lookup."""
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
-    window._empty_tree()  # noqa: SLF001
+    window._tree.empty()  # noqa: SLF001
     assert window._tree.topLevelItemCount() == 0  # noqa: SLF001
-    assert not window._folder_rows  # noqa: SLF001
-    assert not window._leaf_rows  # noqa: SLF001
+    assert not window._tree._folder_rows  # noqa: SLF001
+    assert not window._tree._leaf_rows  # noqa: SLF001
 
 
 @pytest.mark.parametrize(
@@ -1004,9 +1004,9 @@ def test_search_narrows_the_tree_to_the_matches(window: gui.MainWindow, tmp_path
 
     _search(window, "DSC")
 
-    assert set(window._leaf_rows) == {str(first), str(second)}  # noqa: SLF001
+    assert set(window._tree._leaf_rows) == {str(first), str(second)}  # noqa: SLF001
     # The folders holding a match survive; nothing else does.
-    assert set(window._folder_rows) == {  # noqa: SLF001
+    assert set(window._tree._folder_rows) == {  # noqa: SLF001
         str(tmp_path),
         str(first.parent),
         str(second.parent),
@@ -1022,10 +1022,10 @@ def test_search_matches_wildcards_and_clears(window: gui.MainWindow, tmp_path: P
     window._add_inputs([edit])  # noqa: SLF001
 
     _search(window, "*_edit.jpg")
-    assert set(window._leaf_rows) == {str(edit)}  # noqa: SLF001
+    assert set(window._tree._leaf_rows) == {str(edit)}  # noqa: SLF001
 
     _search(window, "")
-    assert set(window._leaf_rows) == {str(first), str(second), str(edit)}  # noqa: SLF001
+    assert set(window._tree._leaf_rows) == {str(first), str(second), str(edit)}  # noqa: SLF001
     assert "Showing" not in window._status.text()  # noqa: SLF001
 
 
@@ -1039,8 +1039,8 @@ def test_search_narrows_the_flat_list_too(window: gui.MainWindow, tmp_path: Path
 
     _search(window, "DSC")
 
-    assert set(window._leaf_rows) == {str(first), str(second)}  # noqa: SLF001
-    assert window._folder_rows == {}  # noqa: SLF001
+    assert set(window._tree._leaf_rows) == {str(first), str(second)}  # noqa: SLF001
+    assert window._tree._folder_rows == {}  # noqa: SLF001
 
 
 def test_search_hides_photos_without_dropping_them_from_a_run(
@@ -1061,7 +1061,7 @@ def test_search_hides_photos_without_dropping_them_from_a_run(
 
     _search(window, "DSC")
 
-    assert str(hidden) not in window._leaf_rows  # noqa: SLF001 - off screen
+    assert str(hidden) not in window._tree._leaf_rows  # noqa: SLF001 - off screen
     assert window._items[str(hidden)].selected is True  # noqa: SLF001 - still checked
     started: list[list[str]] = []
     monkeypatch.setattr(
@@ -1073,7 +1073,7 @@ def test_search_hides_photos_without_dropping_them_from_a_run(
     window._generate()  # noqa: SLF001
 
     assert sorted(started[0]) == ["DSC_0042.jpg", "DSC_0042.jpg", "sunset.jpg"]
-    assert str(first) in window._leaf_rows  # noqa: SLF001
+    assert str(first) in window._tree._leaf_rows  # noqa: SLF001
 
 
 def test_view_button_offers_the_two_layouts_with_tree_active(window: gui.MainWindow) -> None:
@@ -1107,7 +1107,7 @@ def test_flat_list_puts_every_photo_at_one_level(window: gui.MainWindow, tmp_pat
 
     rows = _top_rows(window)
     assert all(row.data(0, IS_DIR_ROLE) is None for row in rows)
-    assert window._folder_rows == {}  # noqa: SLF001
+    assert window._tree._folder_rows == {}  # noqa: SLF001
     assert sorted(row.text(0) for row in rows) == [
         str(Path("shoot1") / "DSC_0042.jpg"),
         str(Path("shoot2") / "DSC_0042.jpg"),
@@ -1119,7 +1119,7 @@ def test_flat_list_toggles_back_to_the_folder_tree(window: gui.MainWindow, tmp_p
     first, _second = _add_two_shoots(window, tmp_path)
     window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
 
-    leaf = window._leaf_for(first)  # noqa: SLF001
+    leaf = window._tree.leaf_for(first)  # noqa: SLF001
     assert leaf is not None
     leaf.setCheckState(0, Qt.CheckState.Unchecked)
     assert window._items[str(first)].selected is False  # noqa: SLF001
@@ -1128,27 +1128,27 @@ def test_flat_list_toggles_back_to_the_folder_tree(window: gui.MainWindow, tmp_p
 
     assert _check_state(window, first) == Qt.CheckState.Unchecked
     # The folder rows are back, and the one holding the unchecked photo says so.
-    folder_row = window._folder_rows[str(first.parent)]  # noqa: SLF001
+    folder_row = window._tree._folder_rows[str(first.parent)]  # noqa: SLF001
     assert folder_row.checkState(0) == Qt.CheckState.Unchecked
 
 
 def test_flat_list_keeps_the_open_photo_selected(window: gui.MainWindow, tmp_path: Path) -> None:
     """Flipping the view is not navigation: the photo being reviewed stays open and highlighted."""
     first, _second = _add_two_shoots(window, tmp_path)
-    _select(window, window._leaf_for(first))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(first))  # noqa: SLF001
 
     window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
 
     assert window._current is not None  # noqa: SLF001
     assert window._current.path == first  # noqa: SLF001
-    assert window._tree.currentItem() is window._leaf_for(first)  # noqa: SLF001
+    assert window._tree.currentItem() is window._tree.leaf_for(first)  # noqa: SLF001
 
 
 def test_flat_list_still_opens_the_enclosing_folder(window: gui.MainWindow, tmp_path: Path) -> None:
     """With no folder rows to click, Go > Enclosing Folder still reaches the thumbnail grid."""
     first, _second = _add_two_shoots(window, tmp_path)
     window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
-    _select(window, window._leaf_for(first))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(first))  # noqa: SLF001
 
     window._go_up()  # noqa: SLF001
 
@@ -1162,8 +1162,8 @@ def test_history_survives_the_switch_to_the_flat_list(
 ) -> None:
     """A grid visited before the switch is still on the trail once its folder row is gone."""
     first, _second = _add_two_shoots(window, tmp_path)
-    _select(window, window._folder_rows[str(first.parent)])  # noqa: SLF001 - opens the grid
-    _select(window, window._leaf_for(first))  # noqa: SLF001
+    _select(window, window._tree._folder_rows[str(first.parent)])  # noqa: SLF001 - opens the grid
+    _select(window, window._tree.leaf_for(first))  # noqa: SLF001
 
     window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
     window._go_back()  # noqa: SLF001
@@ -1389,7 +1389,7 @@ def test_selecting_a_photo_loads_and_populates(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=["Beach"])
     _add_dir(window, {"a": img})
-    leaf = window._leaf_for(img)  # noqa: SLF001
+    leaf = window._tree.leaf_for(img)  # noqa: SLF001
     assert leaf is not None
     window._tree.setCurrentItem(leaf)  # noqa: SLF001 - triggers _on_current_changed
 
@@ -1409,14 +1409,14 @@ def test_edits_and_hint_survive_navigating_between_photos(
     files = {"a": _jpeg(tmp_path / "a.jpg"), "b": _jpeg(tmp_path / "b.jpg")}
     _add_dir(window, files)
 
-    _select(window, window._leaf_for(files["a"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["a"]))  # noqa: SLF001
     window._detail._hint.setText("The animal is a deer")  # noqa: SLF001
-    _select(window, window._leaf_for(files["b"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["b"]))  # noqa: SLF001
 
     assert window._items[str(files["a"])].hint == "The animal is a deer"  # noqa: SLF001
     assert window._detail._hint.text() == ""  # noqa: SLF001 - photo b has no hint of its own
 
-    _select(window, window._leaf_for(files["a"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["a"]))  # noqa: SLF001
     assert window._detail._hint.text() == "The animal is a deer"  # noqa: SLF001
 
 
@@ -1429,7 +1429,7 @@ def test_hierarchy_preview_updates_from_keywords(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._save_options_menu.overwrite_actions[FIELD_KEYWORDS].setChecked(True)  # noqa: SLF001
     window._detail._keywords.setPlainText("Duck<Bird<Animal")  # noqa: SLF001 - triggers textChanged
     assert window._detail._hierarchy.toPlainText() == "Animal\n└─ Bird\n   └─ Duck"  # noqa: SLF001
@@ -1451,7 +1451,7 @@ def test_save_current_writes_and_marks_saved(
 
     monkeypatch.setattr(metadata, "write_metadata", fake_write)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._detail._title.setText("New Title")  # noqa: SLF001
     window._detail._keywords.setPlainText("Eagle\nSky")  # noqa: SLF001
     # Scanned and found bare, so the column may trust what the save wrote.
@@ -1464,7 +1464,7 @@ def test_save_current_writes_and_marks_saved(
     # The save wrote title, description (seeded from the file), and keywords, so the Tagged
     # column reflects all three without waiting for a rescan.
     assert item.known_fields == {FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS}
-    leaf = window._leaf_for(img)  # noqa: SLF001
+    leaf = window._tree.leaf_for(img)  # noqa: SLF001
     assert leaf is not None
     assert leaf.text(COL_TAGGED) == "TDK"
 
@@ -1490,7 +1490,7 @@ def test_save_writes_both_targets_and_journals_each(
     assert journal is not None
     monkeypatch.setattr(window, "_single_save_journal", lambda: journal)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._save_options_menu.sidecar_actions["both"].setChecked(True)  # noqa: SLF001
     window._save_current()  # noqa: SLF001
 
@@ -1517,7 +1517,7 @@ def test_save_keeps_a_caption_whose_overwrite_entry_is_off(
 
     monkeypatch.setattr(metadata, "write_metadata", fake_write)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._save_options_menu.overwrite_actions[FIELD_DESCRIPTION].setChecked(False)  # noqa: SLF001
     window._detail._description.setPlainText("A new caption.")  # noqa: SLF001
     window._detail._keywords.setPlainText("Eagle")  # noqa: SLF001
@@ -1547,7 +1547,7 @@ def test_detail_pane_names_the_caption_a_sidecar_shadows(
         },
     )
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     assert window._detail._existing_description.toPlainText() == "A real caption."  # noqa: SLF001
     note = window._detail._description_source.text()  # noqa: SLF001
@@ -1584,7 +1584,7 @@ def test_detail_columns_line_up_row_by_row(
     _add_dir(window, {"a": img})
     window.resize(1200, 900)
     window.show()
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     QApplication.processEvents()
 
     rows = (
@@ -1608,7 +1608,7 @@ def test_detail_pane_hides_the_source_note_for_a_field_no_file_carries(
         captions={FIELD_TITLE: [], FIELD_DESCRIPTION: []},
     )
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     # isHidden, not isVisible: nothing is visible in a window the test never shows, but only an
     # explicit hide sets isHidden.
@@ -1640,7 +1640,7 @@ def test_opening_a_photo_seeds_the_new_column_like_the_existing_one(
         ),
     )
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     # Both columns render the same way, so they can be read line by line.
     assert window._detail._keywords.toPlainText() == window._detail._existing_keywords.toPlainText()  # noqa: SLF001
@@ -1657,7 +1657,7 @@ def test_selecting_shows_metadata_source(
     _stub_reads(monkeypatch, keywords=["Beach"])
     _patch_gui(monkeypatch, "read_metadata_sources", lambda _p: ["XMP sidecar"])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     assert window._detail._existing_source.text() == "(from XMP sidecar)"  # noqa: SLF001
 
 
@@ -1702,10 +1702,10 @@ def test_removing_the_open_photo_returns_to_the_empty_state(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001 - open it -> detail page
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001 - open it -> detail page
     assert window._right.currentIndex() == main_window._PAGE_DETAIL  # noqa: SLF001
 
-    window._tree.setCurrentItem(window._leaf_for(img))  # noqa: SLF001
+    window._tree.setCurrentItem(window._tree.leaf_for(img))  # noqa: SLF001
     window._remove_selected()  # noqa: SLF001
 
     assert window._current is None  # noqa: SLF001
@@ -1743,7 +1743,7 @@ def test_export_csv_writes_report(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=["Beach"])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._detail._title.setText("New Title")  # noqa: SLF001
     window._detail._keywords.setPlainText("Eagle\nSky")  # noqa: SLF001
 
@@ -1859,7 +1859,7 @@ def test_save_marks_failed_when_write_fails(
     _stub_reads(monkeypatch, keywords=[])
     monkeypatch.setattr(metadata, "write_metadata", lambda *_a, **_k: False)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._save_current()  # noqa: SLF001
     assert window._items[str(img)].status == FAILED  # noqa: SLF001
 
@@ -1885,7 +1885,7 @@ def test_save_marks_failed_when_write_raises(
 
     monkeypatch.setattr(metadata, "write_metadata", boom)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._save_current()  # noqa: SLF001 - must not raise
     assert window._items[str(img)].status == FAILED  # noqa: SLF001
 
@@ -2128,7 +2128,7 @@ def test_save_writes_only_title_and_description_when_keywords_unchecked(
     _stub_reads(monkeypatch, keywords=["Beach"])
     captured = _capture_write(monkeypatch)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._detail._title.setText("New Title")  # noqa: SLF001
     window._detail._description.setPlainText("New description.")  # noqa: SLF001
     window._detail._keywords.setPlainText("Eagle")  # noqa: SLF001
@@ -2152,7 +2152,7 @@ def test_save_skips_title_when_title_unchecked(
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._detail._title.setText("New Title")  # noqa: SLF001
     window._save_options_menu.write_title.setChecked(False)  # noqa: SLF001
 
@@ -2172,7 +2172,7 @@ def test_save_with_no_write_fields_nags_and_writes_nothing(
     wrote: list[int] = []
     monkeypatch.setattr(metadata, "write_metadata", lambda *_a, **_k: wrote.append(1) or True)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     options = window._save_options_menu  # noqa: SLF001
     for checkbox in (options.write_title, options.write_description, options.write_keywords):
         checkbox.setChecked(False)
@@ -2193,7 +2193,7 @@ def test_save_keeps_the_exiftool_backup_by_default(
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
 
@@ -2211,7 +2211,7 @@ def test_unchecking_backup_writes_without_an_original_copy(
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._save_options_menu.backup.setChecked(False)  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
@@ -2228,7 +2228,7 @@ def test_unchecking_write_keywords_disables_overwrite_and_blanks_diff(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=["Beach"])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     window._save_options_menu.write_keywords.setChecked(False)  # noqa: SLF001 - fires _on_write_field_toggled
 
@@ -2250,7 +2250,7 @@ def test_file_failure_surfaces_reason_on_the_open_photo(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001 - open the photo
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001 - open the photo
 
     window._on_file_failed(str(img), "model unreachable")  # noqa: SLF001
 
@@ -2259,7 +2259,7 @@ def test_file_failure_surfaces_reason_on_the_open_photo(
     assert item.error == "model unreachable"
     assert not window._detail._error_banner.isHidden()  # noqa: SLF001
     assert "model unreachable" in window._detail._error_banner.text()  # noqa: SLF001
-    leaf = window._leaf_for(img)  # noqa: SLF001
+    leaf = window._tree.leaf_for(img)  # noqa: SLF001
     assert leaf is not None
     assert leaf.toolTip(2) == "model unreachable"  # Status column
 
@@ -2274,11 +2274,11 @@ def test_opening_a_healthy_photo_hides_the_error_banner(
     b = _jpeg(tmp_path / "b.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": a, "b": b})
-    _select(window, window._leaf_for(a))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(a))  # noqa: SLF001
     window._on_file_failed(str(a), "boom")  # noqa: SLF001
     assert not window._detail._error_banner.isHidden()  # noqa: SLF001
 
-    _select(window, window._leaf_for(b))  # noqa: SLF001 - healthy photo
+    _select(window, window._tree.leaf_for(b))  # noqa: SLF001 - healthy photo
     assert window._detail._error_banner.isHidden()  # noqa: SLF001
 
 
@@ -2323,7 +2323,7 @@ def test_retrying_the_open_photo_clears_its_banner(
     # Stub the whole generation path so the background worker does no real I/O.
     _stub_generation(monkeypatch)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     window._on_file_failed(str(img), "boom")  # noqa: SLF001
     assert not window._detail._error_banner.isHidden()  # noqa: SLF001
 
@@ -2752,8 +2752,8 @@ def test_back_and_forward_walk_between_two_photos(
 ) -> None:
     """Back returns to the photo seen before this one, and Forward comes back to it."""
     files = _open_grid(window, tmp_path, monkeypatch)
-    _select(window, window._leaf_for(files["a.jpg"]))  # noqa: SLF001
-    _select(window, window._leaf_for(files["b.jpg"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["a.jpg"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["b.jpg"]))  # noqa: SLF001
 
     window._go_back()  # noqa: SLF001
     assert window._current is window._items[str(files["a.jpg"])]  # noqa: SLF001
@@ -2769,8 +2769,8 @@ def test_back_keeps_the_edits_typed_before_leaving(
 ) -> None:
     """Stepping back commits the open photo's fields, like any other navigation."""
     files = _open_grid(window, tmp_path, monkeypatch)
-    _select(window, window._leaf_for(files["a.jpg"]))  # noqa: SLF001
-    _select(window, window._leaf_for(files["b.jpg"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["a.jpg"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["b.jpg"]))  # noqa: SLF001
     window._detail._hint.setText("the second frame")  # noqa: SLF001
 
     window._go_back()  # noqa: SLF001
@@ -2790,7 +2790,7 @@ def test_nav_arrows_are_disabled_until_there_is_somewhere_to_go(
     files = _open_grid(window, tmp_path, monkeypatch)
     assert not window._back_button.isEnabled()  # noqa: SLF001 - the grid is the first place
 
-    _select(window, window._leaf_for(files["a.jpg"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["a.jpg"]))  # noqa: SLF001
     assert window._back_button.isEnabled()  # noqa: SLF001
     assert not window._forward_button.isEnabled()  # noqa: SLF001
 
@@ -2805,7 +2805,7 @@ def test_nav_arrows_name_their_target_and_the_crumb_says_where_you_are(
 ) -> None:
     """The hints name the place they lead to, so the arrows are not two mystery buttons."""
     files = _open_grid(window, tmp_path, monkeypatch)
-    _select(window, window._leaf_for(files["a.jpg"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["a.jpg"]))  # noqa: SLF001
 
     assert tmp_path.name in window._back_button.toolTip()  # noqa: SLF001
     assert "a.jpg" in window._crumb.text()  # noqa: SLF001
@@ -2824,7 +2824,7 @@ def test_back_skips_a_photo_that_left_the_list(
     """Removing a photo takes it out of the trail, so Back never opens a dead row."""
     files = _open_grid(window, tmp_path, monkeypatch, names=("a.jpg", "b.jpg", "c.jpg"))
     for name in ("a.jpg", "b.jpg", "c.jpg"):
-        _select(window, window._leaf_for(files[name]))  # noqa: SLF001
+        _select(window, window._tree.leaf_for(files[name]))  # noqa: SLF001
 
     window._remove_items([str(files["b.jpg"])])  # noqa: SLF001
     window._go_back()  # noqa: SLF001
@@ -2839,7 +2839,7 @@ def test_removing_the_open_photo_leaves_back_pointing_at_it_no_more(
 ) -> None:
     """The pane empties, and Back returns to the grid rather than the removed photo."""
     files = _open_grid(window, tmp_path, monkeypatch)
-    _select(window, window._leaf_for(files["a.jpg"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["a.jpg"]))  # noqa: SLF001
 
     window._remove_items([str(files["a.jpg"])])  # noqa: SLF001
     assert window._right.currentIndex() == main_window._PAGE_EMPTY  # noqa: SLF001
@@ -2856,7 +2856,7 @@ def test_clearing_the_list_empties_the_trail(
 ) -> None:
     """Clear List leaves nowhere to go back to, so both arrows go gray again."""
     files = _open_grid(window, tmp_path, monkeypatch)
-    _select(window, window._leaf_for(files["a.jpg"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["a.jpg"]))  # noqa: SLF001
 
     window._clear()  # noqa: SLF001
 
@@ -2880,7 +2880,7 @@ def test_enclosing_folder_opens_the_grid_of_the_open_photo(
 ) -> None:
     """A photo picked straight from the tree can still jump up to its contact sheet."""
     files = _open_grid(window, tmp_path, monkeypatch)
-    _select(window, window._leaf_for(files["a.jpg"]))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(files["a.jpg"]))  # noqa: SLF001
 
     window._go_up()  # noqa: SLF001
 
@@ -3044,7 +3044,7 @@ def test_generate_current_targets_only_the_open_photo(
     _jpeg(tmp_path / "b.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": a})  # both files added; all checked by default
-    _select(window, window._leaf_for(a))  # noqa: SLF001 - open "a"
+    _select(window, window._tree.leaf_for(a))  # noqa: SLF001 - open "a"
 
     captured: list[list[Path]] = []
     monkeypatch.setattr(
@@ -3682,7 +3682,7 @@ def test_details_toggle_summarizes_keyword_changes(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=["Beach"])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     window._detail._keywords.setPlainText("Beach\nEagle")  # noqa: SLF001 - one new keyword
     assert "+1" in window._detail._details_toggle.text()  # noqa: SLF001
@@ -3744,7 +3744,7 @@ def test_generate_menus_offer_one_time_skip_cache(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001 - so "this photo" has a target
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001 - so "this photo" has a target
 
     calls: list[tuple[int, bool]] = []
     monkeypatch.setattr(
@@ -3912,11 +3912,11 @@ def test_bulk_context_menu_checks_unchecks_and_removes(
     c = _jpeg(tmp_path / "c.jpg")
     _add_dir(window, {"a": a, "b": b, "c": c})
     for path in (a, b):
-        leaf = window._leaf_for(path)  # noqa: SLF001
+        leaf = window._tree.leaf_for(path)  # noqa: SLF001
         assert leaf is not None
         leaf.setSelected(True)
 
-    leaf_a = window._leaf_for(a)  # noqa: SLF001
+    leaf_a = window._tree.leaf_for(a)  # noqa: SLF001
     menu = window._build_tree_context_menu(leaf_a)  # noqa: SLF001
     assert menu is not None
     actions = {action.text(): action for action in menu.actions() if action.text()}
@@ -3948,11 +3948,11 @@ def test_bulk_menu_check_only_and_skip_cache(
     c = _jpeg(tmp_path / "c.jpg")
     _add_dir(window, {"a": a, "b": b, "c": c})
     for path in (a, b):
-        leaf = window._leaf_for(path)  # noqa: SLF001
+        leaf = window._tree.leaf_for(path)  # noqa: SLF001
         assert leaf is not None
         leaf.setSelected(True)
 
-    menu = window._build_tree_context_menu(window._leaf_for(a))  # noqa: SLF001
+    menu = window._build_tree_context_menu(window._tree.leaf_for(a))  # noqa: SLF001
     assert menu is not None
     actions = {action.text(): action for action in menu.actions() if action.text()}
 
@@ -3996,7 +3996,7 @@ def test_single_row_right_click_keeps_the_per_photo_menu(
     a = _jpeg(tmp_path / "a.jpg")
     _jpeg(tmp_path / "b.jpg")
     _add_dir(window, {"a": a})
-    leaf = window._leaf_for(a)  # noqa: SLF001
+    leaf = window._tree.leaf_for(a)  # noqa: SLF001
     assert leaf is not None
     window._tree.setCurrentItem(leaf)  # noqa: SLF001 - selects just this row
 
@@ -4016,7 +4016,7 @@ def test_remove_selected_drops_every_selected_row(
     c = _jpeg(tmp_path / "c.jpg")
     _add_dir(window, {"a": a, "b": b, "c": c})
     for path in (a, c):
-        leaf = window._leaf_for(path)  # noqa: SLF001
+        leaf = window._tree.leaf_for(path)  # noqa: SLF001
         assert leaf is not None
         leaf.setSelected(True)
 
@@ -4058,8 +4058,8 @@ def test_type_column_shows_extension_and_sidecar(window: gui.MainWindow, tmp_pat
     b = _jpeg(tmp_path / "b.jpg")
     (tmp_path / "a.xmp").write_text("<x/>", encoding="utf-8")
     _add_dir(window, {"a": a, "b": b})
-    leaf_a = window._leaf_for(a)  # noqa: SLF001
-    leaf_b = window._leaf_for(b)  # noqa: SLF001
+    leaf_a = window._tree.leaf_for(a)  # noqa: SLF001
+    leaf_b = window._tree.leaf_for(b)  # noqa: SLF001
     assert leaf_a is not None
     assert leaf_b is not None
     assert leaf_a.text(1) == "jpg+xmp"
@@ -4070,7 +4070,7 @@ def test_scan_results_fill_the_tagged_column(window: gui.MainWindow, tmp_path: P
     """A finished metadata scan paints the Tagged column and records the fields."""
     img = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": img})
-    leaf = window._leaf_for(img)  # noqa: SLF001
+    leaf = window._tree.leaf_for(img)  # noqa: SLF001
     assert leaf is not None
     assert leaf.text(3) == ""  # unknown until the scan reports
 
@@ -4289,7 +4289,7 @@ def test_failed_status_is_painted_red(window: gui.MainWindow, tmp_path: Path) ->
     img = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": img})
     window._on_file_failed(str(img), "boom")  # noqa: SLF001
-    leaf = window._leaf_for(img)  # noqa: SLF001
+    leaf = window._tree.leaf_for(img)  # noqa: SLF001
     assert leaf is not None
     brush = leaf.data(2, Qt.ItemDataRole.ForegroundRole)
     assert brush is not None
@@ -4309,7 +4309,7 @@ def test_context_menu_on_failed_photo_offers_retry(
     _add_dir(window, {"a": img})
     window._items[str(img)].status = FAILED  # noqa: SLF001
 
-    menu = window._build_tree_context_menu(window._leaf_for(img))  # noqa: SLF001
+    menu = window._build_tree_context_menu(window._tree.leaf_for(img))  # noqa: SLF001
     assert menu is not None
     texts = [action.text() for action in menu.actions() if action.text()]
 
@@ -4657,7 +4657,7 @@ def test_cached_proposal_shows_in_the_status_column(
             from_cache=True,
         ),
     )
-    leaf = window._leaf_for(img)  # noqa: SLF001
+    leaf = window._tree.leaf_for(img)  # noqa: SLF001
     assert leaf is not None
     assert leaf.text(2) == "ready (cached)"
 
@@ -4671,7 +4671,7 @@ def test_description_boxes_grow_only_with_content(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     short = window._detail._description.minimumHeight()  # noqa: SLF001 - setFixedHeight sets min=max
     window._detail._description.setPlainText("line\n" * 40)  # noqa: SLF001
@@ -5922,7 +5922,7 @@ def test_saving_writes_the_vocabulary_spelling_verbatim(
     _add_dir(window, {"a": photo})
     window._keyword_rules_dialog.load_vocabulary(_keyword_file(tmp_path, "gegenlicht\n"))  # noqa: SLF001
     captured = _capture_write(monkeypatch)
-    _select(window, window._leaf_for(photo))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(photo))  # noqa: SLF001
     window._detail._keywords.setPlainText("gegenlicht")  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
@@ -5951,7 +5951,7 @@ def test_photo_by_photo_saves_share_one_journal(
 
     monkeypatch.setattr(metadata, "write_metadata", fake_write)
     for path in (a, b):
-        _select(window, window._leaf_for(path))  # noqa: SLF001
+        _select(window, window._tree.leaf_for(path))  # noqa: SLF001
         window._save_current()  # noqa: SLF001
 
     journals = list_journals()
@@ -5977,7 +5977,7 @@ def test_a_batch_save_gets_its_own_journal(
 
     monkeypatch.setattr(metadata, "write_metadata", fake_write)
     _stub_save_helper(monkeypatch)
-    _select(window, window._leaf_for(photo))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(photo))  # noqa: SLF001
     window._save_current()  # noqa: SLF001 - one photo by hand first
 
     window._save_selected()  # noqa: SLF001 - then the batch
@@ -6058,7 +6058,7 @@ def test_preview_click_opens_the_viewer(
     a = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": a})
-    _select(window, window._leaf_for(a))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(a))  # noqa: SLF001
 
     opened: list[Path] = []
     monkeypatch.setattr(
@@ -6351,7 +6351,7 @@ def test_save_writes_the_copyright_dated_by_the_photo(
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011)),
     )
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
 
     window._save_current()  # noqa: SLF001
@@ -6375,7 +6375,7 @@ def test_the_copyright_row_compares_the_file_with_what_a_save_writes(
     )
     _patch_gui(monkeypatch, "read_image_context", lambda _p, **_k: context)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     assert window._detail._existing_copyright.text() == "(c) 2019 Someone Else"  # noqa: SLF001
     assert window._detail._planned_copyright.text() == "(not written)"  # noqa: SLF001
@@ -6399,7 +6399,7 @@ def test_the_copyright_row_says_none_for_a_photo_without_one(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     assert window._detail._existing_copyright.text() == "(none)"  # noqa: SLF001
 
@@ -6420,7 +6420,7 @@ def test_a_saved_notice_takes_the_photo_out_of_no_copyright(
     )
     _add_dir(window, {"a": img})
     window._on_scan_done({str(img): set()})  # noqa: SLF001
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
 
     window._save_current()  # noqa: SLF001
@@ -6445,7 +6445,7 @@ def test_save_reads_the_photo_right_before_the_write(
 
     _patch_gui(monkeypatch, "read_field_sources", fake_read)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
 
     window._save_current()  # noqa: SLF001
@@ -6466,7 +6466,7 @@ def test_save_writes_nothing_extra_without_a_copyright(
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
 
@@ -6488,7 +6488,7 @@ def test_a_copyright_alone_is_enough_to_save(
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2025)),
     )
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
     options = window._save_options_menu  # noqa: SLF001
     for action in (options.write_title, options.write_description, options.write_keywords):
@@ -6526,7 +6526,7 @@ def test_save_selected_stamps_a_copyright_on_photos_never_generated(
     item = window._items[str(fresh)]  # noqa: SLF001
     item.has_proposal = True
     item.title = "New Title"
-    _select(window, window._leaf_for(tagged))  # noqa: SLF001 - opened, so its fields are seeded
+    _select(window, window._tree.leaf_for(tagged))  # noqa: SLF001 - opened, so its fields are seeded
     _fill_copyright(window)
 
     window._save_selected()  # noqa: SLF001
@@ -6788,7 +6788,7 @@ def test_the_status_column_marks_a_mixed_script_photo(
     item.foreign_terms = ["陶笛"]
     window._refresh_status_cell(item)  # noqa: SLF001
 
-    leaf = window._leaf_for(flagged)  # noqa: SLF001
+    leaf = window._tree.leaf_for(flagged)  # noqa: SLF001
     assert leaf is not None
     assert leaf.text(COL_STATUS) == "ready ⚠"
     assert "陶笛" in leaf.toolTip(COL_STATUS)
@@ -6841,7 +6841,7 @@ def test_write_copyright_toggle_skips_the_block(
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2025)),
     )
     _add_dir(window, {"a": img})
-    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
     window._save_options_menu.write_copyright.setChecked(False)  # noqa: SLF001
 
