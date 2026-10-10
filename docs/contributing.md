@@ -25,7 +25,8 @@ The code follows a few conventions that the linters and reviewers expect:
 - Plain, simple language in comments and docstrings. Explain the *why*, not the *what*.
 - Small, focused functions: if a function grows deeply nested or hard to test, refactor it before
     you add more to it. Extract helpers and split responsibilities.
-- Never use an em-dash. Use a regular hyphen or rephrase the sentence.
+- Never use an em-dash or an en-dash. Rephrase with a colon, a semicolon, parentheses, or two
+    sentences. A spaced hyphen is not a substitute.
 
 [`pyproject.toml`](https://github.com/jbsilva/photo-tagger/blob/main/pyproject.toml) holds the ruff
 configuration that enforces formatting and most of these rules.
