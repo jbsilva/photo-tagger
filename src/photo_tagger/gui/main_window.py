@@ -93,14 +93,13 @@ from photo_tagger.gui.style import app_icon, svg_icon
 from photo_tagger.gui.threads import join_thread, release_thread, start_in_thread
 from photo_tagger.gui.undo_dialog import UndoDialog
 from photo_tagger.gui.vocabulary_builder import VocabularyBuilderDialog
-from photo_tagger.gui.watch_dialog import WatchDialog
+from photo_tagger.gui.watch_controller import WatchController
 from photo_tagger.gui.widgets import InputWatcher, busy_cursor
 from photo_tagger.gui.workers import (
     GenerateWorker,
     HarmonizeWorker,
     MetadataScanWorker,
     SaveWorker,
-    WatchWorker,
 )
 from photo_tagger.gui_state import (
     DEFAULT_GUI_EXTENSIONS,
@@ -162,7 +161,6 @@ from photo_tagger.gui_state import (
     status_summary,
     tooltip,
     vocabulary_summary,
-    watch_status_text,
     with_notice_written,
     write_save_job,
 )
@@ -194,7 +192,7 @@ from photo_tagger.metadata import (
     read_image_context,
     read_metadata_sources,
 )
-from photo_tagger.pacing import SECONDS_PER_MINUTE, Pacer, build_pacer
+from photo_tagger.pacing import SECONDS_PER_MINUTE
 from photo_tagger.providers import get_backend
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
 from photo_tagger.undo import open_journal
@@ -266,10 +264,8 @@ _SCAN_STOP_TIMEOUT_MS = 3000
 # How long a metadata scan must run before the window reports it. A local folder is read well
 # inside this, so the usual case never shows a progress bar at all; a network share blows past it.
 _SCAN_PROGRESS_DELAY_MS = 700
-# The same grace period for the folder watcher, which reacts to a stop within a fraction of a
-# second unless it is inside a slow poll (a huge folder, or a network share).
-_WATCH_STOP_TIMEOUT_MS = 3000
-# And for shoot harmonization, whose batched capture-time read has no stop hook either.
+# The same grace period for shoot harmonization, whose batched capture-time read has no stop hook
+# either.
 _HARMONIZE_STOP_TIMEOUT_MS = 3000
 
 
@@ -283,7 +279,7 @@ class MainWindow(QMainWindow):
 
     Each of those parts, and each dialog, is a class of its own. What stays here is what they
     share: the photos, what the right pane has open, the metadata scan behind the Tagged column,
-    the generate-then-save chain and the watch that feeds it, and the telemetry the window reports.
+    the generate-then-save chain that the folder watch feeds, and the telemetry the window reports.
     """
 
     def __init__(self) -> None:
@@ -393,15 +389,30 @@ class MainWindow(QMainWindow):
         self._undo_dialog.status.connect(self._status.setText)
         self._undo_dialog.used.connect(self._count)
         self._undo_dialog.undone.connect(self._on_undone)
-        self._watch_dialog = WatchDialog(self, recursive=self._recursive.isChecked())
+        self._watch = WatchController(
+            self,
+            recursive=self._recursive.isChecked(),
+            extensions=lambda: self._extensions.text().strip(),
+            add_photos=self._add_inputs,
+            photo=self._items.get,
+            # Looked up on each call, so a test that patches _busy on the window reaches here too.
+            busy=lambda: self._busy(),  # noqa: PLW0108 - a bound method would pin the original.
+            closing=lambda: self._closing,
+            pacing_plan=lambda: self._pacing_dialog.plan,
+        )
+        self._watch.status.connect(self._status.setText)
+        self._watch.used.connect(self._count)
+        self._watch.generate_requested.connect(
+            lambda items: self._run_generation(items, trigger=TRIGGER_WATCH),
+        )
 
     def _init_worker_state(self) -> None:
         """
         Seed the handles for every background job the window runs.
 
         Each job has its own thread so one never waits on another: generation, saving, grid
-        thumbnails, the metadata scan, shoot harmonization, and the watcher. The vocabulary build
-        belongs to its dialog.
+        thumbnails, the metadata scan, shoot harmonization, and the watcher. The watcher belongs to
+        its WatchController, and the vocabulary build to its dialog.
         """
         self._thread: QThread | None = None
         self._worker: GenerateWorker | None = None
@@ -448,15 +459,6 @@ class MainWindow(QMainWindow):
         self._scan_stale: set[str] = set()
         self._harmonize_thread: QThread | None = None
         self._harmonize_worker: HarmonizeWorker | None = None
-        self._watch_thread: QThread | None = None
-        self._watch_worker: WatchWorker | None = None
-        # What the running watch was started with, and what it has picked up. None while idle.
-        self._watch_settings: WatchSettings | None = None
-        # One pacer for every batch of the watch (see _pacer_for), built at its first batch.
-        self._watch_pacer: Pacer | None = None
-        self._watch_added = 0
-        # Photos the watch added while a run was already in flight, generated when it frees up.
-        self._watch_pending: list[str] = []
         # The status line a run owns while it works, restored after every pacing rest.
         self._run_status_text = ""
 
@@ -581,13 +583,7 @@ class MainWindow(QMainWindow):
             ),
         )
         menu.addSeparator()
-        self._watch_action = menu.addAction(_("Watch Folder..."), self._toggle_watch)
-        self._watch_action.setToolTip(
-            tooltip(
-                "Tag photos as they arrive: point it at the folder your card reader or sync client "
-                "fills, and each new photo joins the list and is generated for review.",
-            ),
-        )
+        menu.addAction(self._watch.action)
         menu.addSeparator()
         undo = menu.addAction(_("Undo Writes..."), self._show_undo_dialog)
         undo.setToolTip(
@@ -2448,7 +2444,7 @@ class MainWindow(QMainWindow):
             # user stopped it from writing. The watch itself keeps running, so what it queued
             # meanwhile goes ahead, as after a Cancel between the steps of a chain.
             self._finish_run(telemetry.OUTCOME_CANCELLED)
-            self._continue_watch()
+            self._watch.take_queued()
             return
         # Same as a finished generation: the alert is for the run nobody was watching.
         self._settings_menu.notify_run_finished(self._status.text())
@@ -2555,7 +2551,7 @@ class MainWindow(QMainWindow):
                 vocabulary_strict=self._keyword_rules_dialog.strict,
                 repair_language=self._settings_menu.repair_language,
                 pacing=self._pacing_dialog.plan,
-                pacer=self._pacer_for(trigger),
+                pacer=self._watch.pacer_for(trigger),
                 jpeg_dimensions=self._model_image_size,
                 refresh=refresh,
             ),
@@ -2663,7 +2659,7 @@ class MainWindow(QMainWindow):
             # Same reasoning as the cancelled save: harmonizing and then saving unattended is
             # more work on the batch the user just stopped. What the watch queued meanwhile is not.
             self._finish_run(telemetry.OUTCOME_CANCELLED)
-            self._continue_watch()
+            self._watch.take_queued()
             return
         self._after_generation()
 
@@ -2727,7 +2723,7 @@ class MainWindow(QMainWindow):
         self._set_running(running=False)
         self._status.setText(_("Cancelled. Nothing else was generated or saved."))
         self._finish_run(telemetry.OUTCOME_CANCELLED)
-        self._continue_watch()
+        self._watch.take_queued()
 
     def _batch_items(self) -> list[PhotoItem]:
         """List the photos of the run the chain is working through, skipping any since removed."""
@@ -2788,8 +2784,7 @@ class MainWindow(QMainWindow):
 
     def _wants_chained_save(self) -> bool:
         """Report whether a setting asks a finished generation to write its photos by itself."""
-        watching = self._watch_settings is not None and self._watch_settings.save
-        return watching or self._autosave_action.isChecked()
+        return self._watch.saves or self._autosave_action.isChecked()
 
     def _chained_save_targets(self) -> list[PhotoItem]:
         """
@@ -2801,8 +2796,7 @@ class MainWindow(QMainWindow):
         """
         if not self._wants_chained_save() or not self._write_fields_chosen():
             return []
-        watching = self._watch_settings is not None and self._watch_settings.save
-        return photos_to_write(self._items.values() if watching else self._batch_items())
+        return photos_to_write(self._items.values() if self._watch.saves else self._batch_items())
 
     def _continue_after_run(self) -> None:
         """After a finished run: write what nobody will review, then take what the watch found."""
@@ -2822,7 +2816,7 @@ class MainWindow(QMainWindow):
         # Nothing more is chained, so whatever the run was, it is over.
         self._set_running(running=False)
         self._finish_run()
-        self._continue_watch()
+        self._watch.take_queued()
 
     def _reset_working(self) -> int:
         """
@@ -2975,137 +2969,6 @@ class MainWindow(QMainWindow):
             self._harmonize_thread = None
         self._harmonize_worker = None
 
-    # --- watching a folder ------------------------------------------------------------------------
-
-    def _toggle_watch(self) -> None:
-        """Stop the running watch, or open the dialog to start one."""
-        if self._watch_settings is not None:
-            self._stop_watch()
-            return
-        settings = self._watch_dialog.ask(extensions=self._extensions.text().strip())
-        if settings is not None:
-            self._start_watch(settings)
-
-    def _start_watch(self, settings: WatchSettings) -> None:
-        """Poll *settings*' folders on a background thread until the watch is stopped."""
-        if self._watch_thread is not None:
-            return
-        self._count("watch_start")
-        self._watch_settings = settings
-        self._watch_added = 0
-        self._watch_pending = []
-        self._watch_worker = WatchWorker(settings)
-        self._watch_worker.batch.connect(self._on_watch_batch)
-        self._watch_worker.finished.connect(self._on_watch_finished)
-        self._watch_thread = start_in_thread(self, self._watch_worker)
-        self._watch_action.setText(_("Stop Watching"))
-        self._status.setText(watch_status_text(settings, added=0))
-        logger.info(
-            "gui_watch_started",
-            folders=[str(folder) for folder in settings.folders],
-            interval=settings.interval,
-            generate=settings.generate,
-            save=settings.save,
-        )
-
-    def _pacer_for(self, trigger: str) -> Pacer | None:
-        """
-        Return the watch's pacer for a batch it started, None for any other run.
-
-        A watch shares one across its batches, as the CLI does, so a work window spans them and a
-        stream of short batches still rests. A new plan, or a cancelled run (Stop cancels the pacer
-        too), starts it afresh.
-        """
-        if trigger != TRIGGER_WATCH or self._watch_settings is None:
-            return None
-        plan = self._pacing_dialog.plan
-        pacer = self._watch_pacer
-        if pacer is None or pacer.cancelled or pacer.plan != plan:
-            self._watch_pacer = build_pacer(plan)
-        return self._watch_pacer
-
-    def _on_watch_batch(self, paths: list[Path]) -> None:
-        """Add the photos a poll found and queue them for generation when asked to."""
-        settings = self._watch_settings
-        if settings is None or self._closing:
-            # A batch delivered while the window is going away has nothing left to be added to.
-            return
-        fresh = self._add_inputs(list(paths))
-        if not fresh:
-            return
-        self._watch_added += len(fresh)
-        self._status.setText(watch_status_text(settings, added=self._watch_added))
-        if not settings.generate:
-            return
-        self._watch_pending += [str(path) for path in fresh]
-        if not self._busy():
-            self._generate_watched()
-
-    def _generate_watched(self) -> None:
-        """Run the model on the photos the watch queued, skipping any already dealt with."""
-        if self._busy():
-            # Draining the queue now would lose it: _run_generation refuses to start mid-run.
-            return
-        queued, self._watch_pending = self._watch_pending, []
-        targets = [
-            item
-            for key in queued
-            if (item := self._items.get(key)) is not None and item.status == PENDING
-        ]
-        if targets:
-            self._run_generation(targets, trigger=TRIGGER_WATCH)
-
-    def _continue_watch(self) -> None:
-        """Take whatever the watch picked up while the last run was busy."""
-        if self._watch_settings is None or self._busy() or not self._watch_pending:
-            return
-        self._generate_watched()
-
-    def _on_watch_finished(self) -> None:
-        """Clean up after a watch that ended on its own (an error, or a stop already asked for)."""
-        if self._closing:
-            return
-        self._stop_watch()
-
-    def _stop_watch(self) -> None:
-        """End the watch and put the menu action back to offering a new one."""
-        if self._watch_settings is None and self._watch_thread is None:
-            # Already stopped: the worker's own finished signal arrives just after a Stop click,
-            # and re-running this would overwrite whatever the status bar says by then.
-            return
-        self._count("watch_stop")
-        if self._watch_worker is not None:
-            self._watch_worker.stop()
-        self._teardown_watch_thread()
-        self._watch_settings = None
-        self._watch_pacer = None
-        self._watch_pending = []
-        if not self._closing:
-            self._watch_action.setText(_("Watch Folder..."))
-            self._status.setText(_("Stopped watching."))
-
-    def _teardown_watch_thread(self) -> None:
-        """
-        Stop waiting on the watch thread (detaching it after a timeout) and release its worker.
-
-        The worker is cut loose first, as the scan's and harmonization's are: a detached one can
-        still deliver a batch, and its finished signal would then stop whatever watch runs by then.
-        """
-        if self._watch_worker is not None:
-            self._watch_worker.disconnect(self)
-            self._watch_worker.deleteLater()
-        if self._watch_thread is not None:
-            # A poll of a huge folder, or of a network share that is not answering, can outlast
-            # the timeout. The worker only lists directories, so leaving it to finish costs
-            # nothing, and detaching spares the caller (a Stop click, or closeEvent) the wait.
-            release_thread(
-                self._watch_thread,
-                timeout_ms=_WATCH_STOP_TIMEOUT_MS,
-                detached_event="gui_watch_stop_timed_out",
-            )
-            self._watch_thread = None
-        self._watch_worker = None
-
     # --- closing ----------------------------------------------------------------------------------
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override.
@@ -3144,14 +3007,13 @@ class MainWindow(QMainWindow):
             self._worker.stop()
         if self._save_worker is not None:
             self._save_worker.stop()
-        if self._watch_worker is not None:
-            self._watch_worker.stop()
+        self._watch.stop_worker()
         self._folder_grid.stop_thumbs(blocking=True)
         self._stop_scan()
         self._teardown_thread()
         self._teardown_save_thread()
         self._teardown_harmonize_thread()
-        self._teardown_watch_thread()
+        self._watch.teardown()
         self._builder_dialog.shutdown()
         self._report_close(unsaved=unsaved)
         super().closeEvent(event)
@@ -3227,7 +3089,7 @@ class MainWindow(QMainWindow):
         """Snapshot the window's settings as the bounded values telemetry reports."""
         connection = self._connection_bar.connection()
         backend = get_backend(connection.provider)
-        watching = self._watch_settings or WatchSettings()
+        watching = self._watch.settings or WatchSettings()
         vocabulary = self._keyword_rules_dialog.vocabulary
         return window_settings(
             self._current_config_values(),

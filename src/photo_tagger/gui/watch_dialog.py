@@ -30,9 +30,9 @@ class WatchDialog(QDialog):
     """
     Ask for the folder to watch and how to treat what lands in it.
 
-    Only the question lives here: the watch itself runs in the window, because each new photo
-    joins the window's list and its generate-then-save chain. The dialog is kept for the window's
-    lifetime, so the folder typed last time is still there the next time it opens.
+    Only the question lives here: the watch itself runs in the WatchController, which hands each
+    new photo to the window's list and its generate-then-save chain. The dialog is kept for the
+    window's lifetime, so the folder typed last time is still there the next time it opens.
     """
 
     def __init__(self, parent: QWidget, *, recursive: bool) -> None:

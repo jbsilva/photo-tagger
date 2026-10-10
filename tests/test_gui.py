@@ -5713,18 +5713,18 @@ def test_a_detached_watch_cannot_reach_the_next_one(
     )
     batches: list[object] = []
     stale.batch.connect(batches.append)  # a slot outside the window stays connected
-    stale.batch.connect(window._on_watch_batch)  # noqa: SLF001
-    stale.finished.connect(window._on_watch_finished)  # noqa: SLF001
-    window._watch_thread = _FakeScanThread(finishes_in_time=False)  # noqa: SLF001
-    window._watch_worker = stale  # noqa: SLF001
-    window._teardown_watch_thread()  # noqa: SLF001
+    stale.batch.connect(window._watch._on_batch)  # noqa: SLF001
+    stale.finished.connect(window._watch._on_finished)  # noqa: SLF001
+    window._watch._thread = _FakeScanThread(finishes_in_time=False)  # noqa: SLF001
+    window._watch._worker = stale  # noqa: SLF001
+    window._watch.teardown()  # noqa: SLF001
 
     newer = WatchSettings(folders=(tmp_path,), extensions="jpg", interval=0.0, settle=0.0)
-    window._watch_settings = newer  # noqa: SLF001
+    window._watch._settings = newer  # noqa: SLF001
     stale.batch.emit([_jpeg(tmp_path / "a.jpg")])
     stale.finished.emit()
 
-    assert window._watch_settings is newer  # noqa: SLF001
+    assert window._watch._settings is newer  # noqa: SLF001
     assert window._items == {}  # noqa: SLF001
     assert len(batches) == 1
 
@@ -5744,9 +5744,9 @@ def test_watching_adds_new_photos_and_generates_them(
         "_run_generation",
         lambda items, **_k: generated.append([item.path for item in items]),
     )
-    window._watch_settings = WatchSettings(folders=(tmp_path,), extensions="jpg")  # noqa: SLF001
+    window._watch._settings = WatchSettings(folders=(tmp_path,), extensions="jpg")  # noqa: SLF001
 
-    window._on_watch_batch([photo])  # noqa: SLF001
+    window._watch._on_batch([photo])  # noqa: SLF001
 
     assert str(photo) in window._items  # noqa: SLF001
     assert generated == [[photo]]
@@ -5769,14 +5769,14 @@ def test_watching_queues_photos_that_land_mid_run(
         lambda items, **_k: generated.append([item.path for item in items]),
     )
     monkeypatch.setattr(window, "_busy", lambda: True)
-    window._watch_settings = WatchSettings(folders=(tmp_path,), extensions="jpg")  # noqa: SLF001
+    window._watch._settings = WatchSettings(folders=(tmp_path,), extensions="jpg")  # noqa: SLF001
 
-    window._on_watch_batch([photo])  # noqa: SLF001
+    window._watch._on_batch([photo])  # noqa: SLF001
     assert generated == []
-    assert window._watch_pending == [str(photo)]  # noqa: SLF001
+    assert window._watch._pending == [str(photo)]  # noqa: SLF001
 
     monkeypatch.setattr(window, "_busy", lambda: False)
-    window._continue_watch()  # noqa: SLF001
+    window._watch.take_queued()  # noqa: SLF001
     assert generated == [[photo]]
 
 
@@ -5791,7 +5791,7 @@ def test_watching_can_save_without_reviewing(
         window._items[str(path)].status = READY  # noqa: SLF001
     saved: list[int] = []
     monkeypatch.setattr(window, "_run_save", lambda items: saved.append(len(items)))
-    window._watch_settings = WatchSettings(folders=(tmp_path,), save=True)  # noqa: SLF001
+    window._watch._settings = WatchSettings(folders=(tmp_path,), save=True)  # noqa: SLF001
 
     window._continue_after_run()  # noqa: SLF001
 
@@ -5806,16 +5806,16 @@ def test_cancelling_a_save_does_not_restart_it_under_a_watch(
     """
     Cancel must stop the batch, not pause it for one event-loop turn.
 
-    _reset_working puts the photos the save never reached back to READY, which is precisely what
-    _continue_watch treats as "unsaved, write them", so an unattended watch used to rewrite them
-    immediately and the cancel wrote every file anyway.
+    _reset_working puts the photos the save never reached back to READY, which is precisely what a
+    chained save under the watch treats as "unsaved, write them", so an unattended watch used to
+    rewrite them immediately and the cancel wrote every file anyway.
     """
     a, b = _two_ready_photos(window, tmp_path, monkeypatch)
     for path in (a, b):
         window._items[str(path)].status = WORKING  # noqa: SLF001 - a save is mid-batch
     saved: list[int] = []
     monkeypatch.setattr(window, "_run_save", lambda items: saved.append(len(items)))
-    window._watch_settings = WatchSettings(folders=(tmp_path,), save=True)  # noqa: SLF001
+    window._watch._settings = WatchSettings(folders=(tmp_path,), save=True)  # noqa: SLF001
     window._cancelling = True  # noqa: SLF001 - the user pressed Cancel
 
     window._on_save_finished()  # noqa: SLF001
@@ -5835,7 +5835,7 @@ def test_watching_leaves_saving_to_the_user_by_default(
         window._items[str(path)].status = READY  # noqa: SLF001
     saved: list[int] = []
     monkeypatch.setattr(window, "_run_save", lambda items: saved.append(len(items)))
-    window._watch_settings = WatchSettings(folders=(tmp_path,))  # noqa: SLF001
+    window._watch._settings = WatchSettings(folders=(tmp_path,))  # noqa: SLF001
 
     window._continue_after_run()  # noqa: SLF001
 
@@ -5847,16 +5847,16 @@ def test_starting_and_stopping_a_watch_flips_the_menu_action(
     tmp_path: Path,
 ) -> None:
     """One menu entry both starts and stops the watch, and says which it will do."""
-    window._start_watch(  # noqa: SLF001
+    window._watch.start(  # noqa: SLF001
         WatchSettings(folders=(tmp_path,), extensions="jpg", interval=1.0),
     )
-    assert window._watch_action.text() == "Stop Watching"  # noqa: SLF001
+    assert window._watch.action.text() == "Stop Watching"  # noqa: SLF001
 
-    window._toggle_watch()  # noqa: SLF001
+    window._watch.toggle()  # noqa: SLF001
 
-    assert window._watch_settings is None  # noqa: SLF001
-    assert window._watch_thread is None  # noqa: SLF001
-    assert window._watch_action.text() == "Watch Folder..."  # noqa: SLF001
+    assert window._watch._settings is None  # noqa: SLF001
+    assert window._watch._thread is None  # noqa: SLF001
+    assert window._watch.action.text() == "Watch Folder..."  # noqa: SLF001
     assert "Stopped watching." in window._status.text()  # noqa: SLF001
 
 
@@ -5867,14 +5867,14 @@ def test_the_watch_dialog_starts_the_watch_it_describes(
 ) -> None:
     """What the dialog holds when Start is pressed is the watch that runs."""
     started: list[WatchSettings] = []
-    monkeypatch.setattr(window, "_start_watch", started.append)
+    monkeypatch.setattr(window._watch, "start", started.append)  # noqa: SLF001
     window._extensions.setText("jpg,cr3")  # noqa: SLF001
-    dialog = window._watch_dialog  # noqa: SLF001
+    dialog = window._watch._dialog  # noqa: SLF001
     dialog._folder.setText(str(tmp_path))  # noqa: SLF001
     dialog._save.setChecked(True)  # noqa: SLF001
     monkeypatch.setattr(dialog, "exec", lambda: QDialog.DialogCode.Accepted)
 
-    window._toggle_watch()  # noqa: SLF001
+    window._watch.toggle()  # noqa: SLF001
 
     assert len(started) == 1
     assert started[0].folders == (tmp_path,)
@@ -5888,10 +5888,10 @@ def test_cancelling_the_watch_dialog_starts_nothing(
 ) -> None:
     """Cancel means no watch, whatever the dialog holds."""
     started: list[WatchSettings] = []
-    monkeypatch.setattr(window, "_start_watch", started.append)
-    monkeypatch.setattr(window._watch_dialog, "exec", lambda: QDialog.DialogCode.Rejected)  # noqa: SLF001
+    monkeypatch.setattr(window._watch, "start", started.append)  # noqa: SLF001
+    monkeypatch.setattr(window._watch._dialog, "exec", lambda: QDialog.DialogCode.Rejected)  # noqa: SLF001
 
-    window._toggle_watch()  # noqa: SLF001
+    window._watch.toggle()  # noqa: SLF001
 
     assert started == []
 
@@ -5907,12 +5907,12 @@ def test_starting_a_watch_needs_a_folder(
         "warning",
         lambda _parent, title, _text: warned.append(title),
     )
-    window._watch_dialog._folder.setText("")  # noqa: SLF001
+    window._watch._dialog._folder.setText("")  # noqa: SLF001
 
-    window._watch_dialog._on_start()  # noqa: SLF001
+    window._watch._dialog._on_start()  # noqa: SLF001
 
     assert warned == ["Pick a folder"]
-    assert window._watch_settings is None  # noqa: SLF001
+    assert window._watch._settings is None  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -6401,16 +6401,16 @@ def test_a_watch_batch_carries_on_with_the_watch_s_pacer(
 def test_the_watch_shares_one_pacer_and_renews_a_spent_one(window: gui.MainWindow) -> None:
     """Every batch of one watch gets the same pacer; a cancelled one is replaced."""
     window._pacing_dialog._duty_spin.setValue(50)  # noqa: SLF001
-    assert window._pacer_for(TRIGGER_WATCH) is None  # noqa: SLF001 - no watch running
-    window._watch_settings = object()  # noqa: SLF001 - any running watch
+    assert window._watch.pacer_for(TRIGGER_WATCH) is None  # noqa: SLF001 - no watch running
+    window._watch._settings = object()  # noqa: SLF001 - any running watch
 
-    first = window._pacer_for(TRIGGER_WATCH)  # noqa: SLF001
+    first = window._watch.pacer_for(TRIGGER_WATCH)  # noqa: SLF001
     assert first is not None
-    assert window._pacer_for(TRIGGER_WATCH) is first  # noqa: SLF001
-    assert window._pacer_for(TRIGGER_BATCH) is None  # noqa: SLF001
+    assert window._watch.pacer_for(TRIGGER_WATCH) is first  # noqa: SLF001
+    assert window._watch.pacer_for(TRIGGER_BATCH) is None  # noqa: SLF001
 
     first.cancel()
-    assert window._pacer_for(TRIGGER_WATCH) is not first  # noqa: SLF001
+    assert window._watch.pacer_for(TRIGGER_WATCH) is not first  # noqa: SLF001
 
 
 def test_a_watch_batch_s_extra_pass_keeps_the_watch_trigger(
@@ -6479,14 +6479,14 @@ def test_a_cancelled_generation_lets_the_watch_queue_go_ahead(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Photos the watch queued during the run were not part of what Cancel stopped."""
-    window._watch_settings = WatchSettings(folders=(tmp_path,), extensions="jpg")  # noqa: SLF001
-    window._watch_pending = ["queued.jpg"]  # noqa: SLF001
+    window._watch._settings = WatchSettings(folders=(tmp_path,), extensions="jpg")  # noqa: SLF001
+    window._watch._pending = ["queued.jpg"]  # noqa: SLF001
     window._cancelling = True  # noqa: SLF001
     drained: list[int] = []
-    monkeypatch.setattr(window, "_generate_watched", lambda: drained.append(1))
+    monkeypatch.setattr(window._watch, "_generate_queued", lambda: drained.append(1))  # noqa: SLF001
 
     window._on_generate_finished()  # noqa: SLF001
-    window._watch_settings = None  # noqa: SLF001
+    window._watch._settings = None  # noqa: SLF001
 
     assert drained == [1]
 
