@@ -125,6 +125,8 @@ cmd = "ruff format ."
 [tool.poe.tasks.typecheck]
 help = "Strict type check with zuban"
 cmd = "zuban check"
+# zuban checks tests/ too, and pytest is not in the default groups.
+executor = { group = "test" }
 
 [tool.poe.tasks.pycroscope]
 help = "Semi-static analysis with pycroscope"
