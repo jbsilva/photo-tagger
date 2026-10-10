@@ -1397,16 +1397,19 @@ def _run_retry_phase(
     *,
     et: ExifToolHelper | None,
     workers: int,
-) -> tuple[int, list[Path]]:
+) -> tuple[int, list[Path], bool]:
     """
     Pause, then retry *pending*, skipping failures already known unrecoverable.
 
-    Returns ``(retry_successes, still_failing)``. Failures classify_failure/execute_process
-    already flagged as permanent (see _is_permanent_failure) skip the pass entirely, and the
-    delay before it: nothing about waiting and asking again fixes a rejected credential, and
-    doing so anyway would double the batch's wall-clock time and outbound requests for a photo
-    that cannot succeed. A Ctrl-C during the pre-retry pause is treated the same as one mid-pass:
-    nothing in the retryable set was attempted, so it all stays pending for the summary.
+    Returns ``(retry_successes, still_failing, interrupted)``. A Ctrl-C in the pause or the pass
+    reports itself, so a watch stops on it as it would on one in the first pass.
+
+    Failures classify_failure/execute_process already flagged as permanent (see
+    _is_permanent_failure) skip the pass entirely, and the delay before it: nothing about waiting
+    and asking again fixes a rejected credential, and doing so anyway would double the batch's
+    wall-clock time and outbound requests for a photo that cannot succeed. A Ctrl-C during the
+    pre-retry pause is treated the same as one mid-pass: nothing in the retryable set was
+    attempted, so it all stays pending for the summary.
     """
     permanent = [path for path in pending if path in ctx.permanently_failed]
     retryable = [path for path in pending if path not in ctx.permanently_failed]
@@ -1417,7 +1420,7 @@ def _run_retry_phase(
             ctx.progress(path, False)  # noqa: FBT003 - progress callback's own signature
 
     if not retryable:
-        return 0, permanent
+        return 0, permanent, False
 
     if _RETRY_PASS_DELAY_SECONDS > 0:
         logger.info("pausing_before_retry_pass", seconds=_RETRY_PASS_DELAY_SECONDS)
@@ -1425,16 +1428,16 @@ def _run_retry_phase(
             time.sleep(_RETRY_PASS_DELAY_SECONDS)
         except KeyboardInterrupt:
             logger.warning("batch_interrupted_by_user", remaining=len(retryable))
-            return 0, retryable + permanent
+            return 0, retryable + permanent, True
 
-    retry_successes, still_failing_from_retry, _ = _run_pass(
+    retry_successes, still_failing_from_retry, interrupted = _run_pass(
         retryable,
         ctx,
         retry=True,
         et=et,
         workers=workers,
     )
-    return retry_successes, still_failing_from_retry + permanent
+    return retry_successes, still_failing_from_retry + permanent, interrupted
 
 
 def _log_totals(totals: BatchTotals, *, workers: int) -> None:
@@ -1583,7 +1586,7 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
                 retry_successes = 0
                 still_failing = pending
             else:
-                retry_successes, still_failing = _run_retry_phase(
+                retry_successes, still_failing, interrupted = _run_retry_phase(
                     pending,
                     ctx,
                     et=et,
@@ -1629,6 +1632,7 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
         except Exception as exc:  # noqa: BLE001 - summary writers must not abort the run.
             logger.exception("on_complete_callback_failed", error=str(exc))
 
-    if totals.success < len(image_files):
+    # An interrupted batch is an error even when every photo got done, so a watch stops on it.
+    if totals.interrupted or totals.success < len(image_files):
         raise BatchError(totals)
     return totals

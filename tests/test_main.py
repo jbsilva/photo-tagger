@@ -2187,6 +2187,33 @@ def test_watch_keeps_going_after_a_batch_with_failures(tmp_path: Path) -> None:
     assert len(calls) == expected_batches
 
 
+def test_watch_stops_after_an_interrupted_batch(tmp_path: Path) -> None:
+    """
+    A Ctrl-C mid-batch ends the watch instead of waiting for the next import.
+
+    run_batch absorbs the interrupt to write its summary, so the watch reads it off the totals.
+    """
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    _settled_photo(inbox / "a.cr3")
+    calls: list[list[Path]] = []
+
+    def interrupted_process(image_files: list[Path], _setup: object) -> None:
+        calls.append(list(image_files))
+        _settled_photo(inbox / "b.cr3")
+        raise BatchError(BatchTotals(total_files=1, interrupted=True))
+
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(main_module, "_process_batch", side_effect=interrupted_process),
+        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+    ):
+        _run_app(["watch", "--input", str(inbox)])
+
+    assert len(calls) == 1
+
+
 def test_watch_applies_the_batch_filters(tmp_path: Path) -> None:
     """--skip-tagged and friends filter each batch, and an empty one is not processed."""
     inbox = tmp_path / "inbox"

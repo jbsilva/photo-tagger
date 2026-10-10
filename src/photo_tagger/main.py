@@ -2172,6 +2172,9 @@ def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one
             try:
                 _process_batch(image_files, setup)
             except BatchError as exc:
+                # run_batch turns a Ctrl-C into an interrupted batch, and that must end the watch.
+                if _was_interrupted(exc):
+                    raise KeyboardInterrupt from exc
                 # One bad batch must not end the watch: the next photo to land deserves its turn.
                 logger.error("watch_batch_had_failures", error=str(exc))
     except KeyboardInterrupt:
@@ -2179,6 +2182,12 @@ def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one
     finally:
         setup.close()
         beacons.emit(beacons.session())
+
+
+def _was_interrupted(error: BatchError) -> bool:
+    """Say whether *error* reports a batch that a Ctrl-C cut short."""
+    totals = error.args[0] if error.args else None
+    return isinstance(totals, BatchTotals) and totals.interrupted
 
 
 def _telemetry_enabled_for(tokens: list[str]) -> bool:

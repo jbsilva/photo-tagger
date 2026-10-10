@@ -2689,6 +2689,23 @@ def test_run_batch_without_a_pacer_reports_no_rest(tmp_path: Path) -> None:
     assert totals.rests_taken == 0
 
 
+def test_run_batch_interrupted_after_every_photo_still_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interrupted batch is an error even with every photo done, so a watch stops on it."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    monkeypatch.setattr("photo_tagger.pipeline._run_pass", lambda *_a, **_k: (1, [], True))
+
+    options = ProcessingOptions()
+
+    with pytest.raises(BatchError) as exc_info:
+        run_batch([image], agent=_FAKE_AGENT, options=options)
+
+    assert exc_info.value.args[0].interrupted
+
+
 def test_execute_process_skips_a_photo_when_the_rest_is_cancelled(
     tmp_path: Path,
 ) -> None:
@@ -2757,3 +2774,22 @@ def test_run_batch_reports_only_its_own_rests(tmp_path: Path) -> None:
 
     assert totals.rested_seconds == 0
     assert totals.rests_taken == 0
+
+
+def test_a_ctrl_c_in_the_retry_pass_marks_the_batch_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A watch stops on an interrupted batch, so the retry pass must report its Ctrl-C too."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    passes = iter([(0, [image], False), (0, [image], True)])
+    monkeypatch.setattr("photo_tagger.pipeline._run_pass", lambda *_a, **_k: next(passes))
+    monkeypatch.setattr("photo_tagger.pipeline._RETRY_PASS_DELAY_SECONDS", 0)
+
+    options = ProcessingOptions()
+
+    with pytest.raises(BatchError) as exc_info:
+        run_batch([image], agent=_FAKE_AGENT, options=options)
+
+    assert exc_info.value.args[0].interrupted
