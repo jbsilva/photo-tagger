@@ -876,6 +876,99 @@ def test_stopping_the_scan_abandons_the_waiting_uncheck(
     assert window._scan_row.isHidden()  # noqa: SLF001
 
 
+def _stopping_scan(window: gui.MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """
+    Put *window* in a scan that Stop is winding down, and record the scans started after it.
+
+    While a scan thread exists, the real _start_metadata_scan runs, which only notes the request.
+    Once it is gone, a start is recorded and stands in for a new scan thread.
+    """
+    started: list[int] = []
+
+    def start() -> None:
+        if window._scan_thread is not None:  # noqa: SLF001
+            gui.MainWindow._start_metadata_scan(window)  # noqa: SLF001
+            return
+        started.append(1)
+        window._scan_thread = _FakeScanThread(finishes_in_time=True)  # noqa: SLF001
+
+    monkeypatch.setattr(window, "_start_metadata_scan", start)
+    window._scan_thread = _FakeScanThread(finishes_in_time=True)  # noqa: SLF001
+    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
+    window._cancel_scan()  # noqa: SLF001
+    return started
+
+
+def test_an_uncheck_picked_while_the_scan_stops_waits_for_a_new_scan(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pick made after Stop is a new request: it is not dropped with the stopped scan."""
+    a = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": a})
+    started = _stopping_scan(window, monkeypatch)
+    criterion = _criterion({FIELD_TITLE}, match_all=True, phrase="a title")
+
+    window._deselect_tagged(criterion)  # noqa: SLF001
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert started == [1]
+    assert window._scan_pending is criterion  # noqa: SLF001
+    assert "Stopped reading metadata" not in window._status.text()  # noqa: SLF001
+
+
+def test_a_photo_added_while_the_scan_stops_is_scanned(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stop ends the scan it was pressed on, not the reading of photos added after it."""
+    started = _stopping_scan(window, monkeypatch)
+
+    _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert started == [1]
+
+
+def test_an_uncheck_stopped_stays_dropped_when_a_photo_restarts_the_scan(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A photo added after Stop restarts the scan, but not the uncheck Stop was pressed on."""
+    _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
+    started: list[int] = []
+    monkeypatch.setattr(window, "_start_metadata_scan", lambda: started.append(1))
+    window._deselect_tagged(  # noqa: SLF001
+        _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
+    )
+    started.clear()
+    started = _stopping_scan(window, monkeypatch)
+
+    other = tmp_path / "more"
+    other.mkdir()
+    _add_dir(window, {"b": _jpeg(other / "b.jpg")})
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert started == [1]
+    assert window._scan_pending is None  # noqa: SLF001
+    assert "Stopped reading metadata" in window._status.text()  # noqa: SLF001
+
+
+def test_a_stopped_scan_with_nothing_asked_after_it_stays_stopped(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a new request, Stop means stop: no scan starts again by itself."""
+    started = _stopping_scan(window, monkeypatch)
+
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert started == []
+
+
 def test_removing_the_unscanned_photos_settles_a_waiting_uncheck(
     window: gui.MainWindow,
     tmp_path: Path,

@@ -437,6 +437,10 @@ class MainWindow(QMainWindow):
         # the user stopped that scan. Both None/False while no one is waiting on a scan.
         self._scan_pending: TaggedCriterion | None = None
         self._scan_cancelled = False
+        # A scan was asked for while Stop wound the last one down: a new request, not the old one.
+        self._scan_again = False
+        # The waiting uncheck was picked after Stop, so it is a new one, not the one Stop dropped.
+        self._scan_picked_after_stop = False
         # The photos the running scan was handed, and the ones a finished scan could not read (see
         # _on_scan_finished): those are not handed out again until they leave the list.
         self._scan_batch: set[str] = set()
@@ -1380,6 +1384,7 @@ class MainWindow(QMainWindow):
             self._apply_tagged_criterion(criterion)
             return
         self._scan_pending = criterion  # a second pick replaces one that is still waiting
+        self._scan_picked_after_stop = self._scan_cancelled
         self._status.setText(
             _("Reading metadata before unchecking photos with {phrase}...").format(
                 phrase=_(criterion.phrase),
@@ -1526,7 +1531,10 @@ class MainWindow(QMainWindow):
     def _start_metadata_scan(self) -> None:
         """Scan photos with an unknown Tagged state in the background, one batch at a time."""
         if self._scan_thread is not None:
-            return  # a scan is running; _on_scan_finished re-checks for stragglers
+            # A running scan picks up stragglers when it finishes. One that is stopping would not,
+            # so a photo added or an uncheck picked now asks it to start again.
+            self._scan_again = self._scan_again or self._scan_cancelled
+            return
         # A photo a scan already tried and could not read stays unknown; asking again straight away
         # would only fail again, and restart the scan forever.
         pending = [
@@ -1590,7 +1598,14 @@ class MainWindow(QMainWindow):
             # on; the window is going away, so there is nothing left to restart a scan for.
             return
         stopped = self._scan_cancelled
+        again, self._scan_again = self._scan_again, False
+        picked_after_stop, self._scan_picked_after_stop = self._scan_picked_after_stop, False
         self._stop_scan()
+        if stopped and again and not picked_after_stop and self._scan_pending is not None:
+            # Stop drops the uncheck it was pressed on, even when a photo added since then starts
+            # the scan again. Only an uncheck picked after Stop waits for that new scan.
+            self._scan_pending = None
+            self._status.setText(_("Stopped reading metadata. No photo was unchecked."))
         if not stopped:
             # A scan that ran to its end read every photo it could; those still unknown are
             # unreadable, so the restart below leaves them out. A stopped scan tried nothing more.
@@ -1599,14 +1614,17 @@ class MainWindow(QMainWindow):
                 for key in self._scan_batch
                 if (item := self._items.get(key)) is not None and item.known_fields is None
             }
+        if not stopped or again:
+            self._scan_cancelled = False
             self._start_metadata_scan()
         if self._scan_thread is None:
             # Nothing left unknown (or the user stopped it): the scan is over for now.
-            self._end_scan(stopped=stopped)
+            self._end_scan(stopped=stopped and not again)
 
     def _end_scan(self, *, stopped: bool) -> None:
         """Put the scan row away and settle whatever was waiting on the scan."""
         self._scan_cancelled = False
+        self._scan_again = False
         self._hide_scan_row()
         criterion, self._scan_pending = self._scan_pending, None
         if criterion is None:
