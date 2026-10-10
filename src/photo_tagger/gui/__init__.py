@@ -3,7 +3,7 @@
 # this Qt package (PySide6 is absent) and would also misread shiboken's runtime-generated
 # attributes. Every module here carries the same two headers (this line pair and the one below),
 # which exclude it from pycroscope and zuban the same way the package is excluded from coverage;
-# the Qt-free logic that is worth analyzing lives in gui_state.py and gui_usage.py.
+# the Qt-free logic that is worth analyzing lives in gui_state/ and gui_usage.py.
 # static analysis: ignore
 """
 PySide6 desktop frontend for photo-tagger.

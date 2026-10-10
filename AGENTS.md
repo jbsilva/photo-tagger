@@ -57,7 +57,7 @@ module owns one part of that pipeline:
   it writes, and runs `create_agent` and `analyze_image_with_ai` on threads of its own, not
   `run_batch`. `gui/main_window.py` holds the window, `gui/workers.py` holds the background jobs,
   and `gui/app.py` holds `launch`. Each part of the window has a module of its own: a dialog, a
-  menu, or a pane such as `detail_pane.py` or `folder_grid.py`. `gui_state.py` holds its Qt-free
+  menu, or a pane such as `detail_pane.py` or `folder_grid.py`. `gui_state/` holds its Qt-free
   logic, with unit tests. `gui_usage.py` holds its Qt-free usage tracking for telemetry (runs,
   sessions, busy and idle time, edits before a save). The GUI only adds to the pipeline: no pipeline
   code knows about Qt. PySide6 is in the `[gui]` extra, and the code imports it lazily.
@@ -96,8 +96,8 @@ people maintain by hand agree with it.
 - Write the reason after a `# noqa` code without a comma. Ruff ignores the text, but SonarQube reads
   it as more codes and reports rule S7632. Example: `# noqa: PLR0913 - every kwarg is one knob.`
 
-- GUI code has special rules. Put testable GUI logic in `gui_state.py` (plain Python, with normal
-  coverage). The `gui/` package is the Qt shell, and three tools leave it out:
+- GUI code has special rules. Put testable GUI logic in the `gui_state` package (plain Python, with
+  normal coverage). The `gui/` package is the Qt shell, and three tools leave it out:
 
   - Coverage leaves it out through `[tool.coverage.run].omit` and `sonar.coverage.exclusions`. Thus
     SonarQube does not count its lines (untested in CI) against the coverage of new code.

@@ -47,7 +47,7 @@ on `main`. Table cells cannot hard-wrap, so the link targets live in the referen
 | [`main.py`][main]                   | The cyclopts entry point: the `tag()` default command (orchestration) plus the `doctor`, `watch`, and `undo` commands. It resolves the batch, acquires the lock, runs the batch, emits NDJSON, and writes the summary.                                                                                                                                                                                                                                       |
 | [`cli_options.py`][cli_options]     | The CLI schema: the seven `@dataclass` flag groups, their defaults from the configuration file (`load_defaults`), and the `ProcessingOptions` mapping.                                                                                                                                                                                                                                                                                                       |
 | [`gui/`][gui]                       | The optional PySide6 desktop frontend (`photo-tagger gui`), a review-before-write window. A background `QThread` generates proposals with `create_agent`/`analyze_image_with_ai`, not with `run_batch`. The window writes on demand, and batch saves run on a second `QThread`. `main_window.py` holds the window and `workers.py` holds the background jobs. The CLI imports the package lazily. We exclude it from coverage and from the static analyzers. |
-| [`gui_state.py`][gui_state]         | The GUI's Qt-free logic (per-photo `PhotoItem` state, the folder tree, keyword parsing and diffing, and the hierarchy preview). Its unit tests run without a display or PySide6.                                                                                                                                                                                                                                                                             |
+| [`gui_state/`][gui_state]           | The GUI's Qt-free logic, one module per part of the window: per-photo state (`items`), saving, selection and filters, the folder tree, keyword views, and the settings file. Its unit tests run without a display or PySide6.                                                                                                                                                                                                                                |
 | [`config.py`][config]               | Defaults, provider base URLs and keys, tag names, and the system and user prompts.                                                                                                                                                                                                                                                                                                                                                                           |
 | [`config_file.py`][config_file]     | The TOML loader: `find_config_file`, `load_config`, `apply_overrides`.                                                                                                                                                                                                                                                                                                                                                                                       |
 | [`providers.py`][providers]         | The backend registry. A `ProviderBackend` (Strategy) for each backend bundles its listing URL, listing parser, and provider factory. Every backend reuses one copy of the shared HTTP plumbing. The module also hosts the `openai` backend.                                                                                                                                                                                                                  |
@@ -104,8 +104,8 @@ what to write (a `SaveJob` per photo). The worker then reuses one ExifTool proce
 batch.
 
 Both workers reach the UI thread only through Qt signals. As a result, the pipeline and the building
-blocks stay free of any Qt dependency. The Qt-free parts of the GUI live in
-[`gui_state.py`][gui_state], so this logic stays testable without a display.
+blocks stay free of any Qt dependency. The Qt-free parts of the GUI live in the
+[`gui_state`][gui_state] package, so this logic stays testable without a display.
 
 ## Detail pages
 
@@ -128,7 +128,7 @@ blocks stay free of any Qt dependency. The Qt-free parts of the GUI live in
 [discovery]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/discovery.py
 [errors]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/errors.py
 [gui]: https://github.com/jbsilva/photo-tagger/tree/main/src/photo_tagger/gui
-[gui_state]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/gui_state.py
+[gui_state]: https://github.com/jbsilva/photo-tagger/tree/main/src/photo_tagger/gui_state
 [image_io]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/image_io.py
 [keywords]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/keywords.py
 [locking]: https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/locking.py

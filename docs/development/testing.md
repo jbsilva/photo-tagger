@@ -85,8 +85,8 @@ uv run poe test -m integration
 The project tests the optional desktop GUI in two layers. As a result, the suite stays green whether
 or not you installed the `gui` extra:
 
-- `tests/test_gui_state.py` covers the Qt-free logic in `gui_state.py`. It imports no PySide6, so it
-    always runs and counts toward coverage like any other module.
+- `tests/test_gui_state.py` covers the Qt-free logic in the `gui_state` package. It imports no
+    PySide6, so it always runs and counts toward coverage like any other module.
 - `tests/test_gui.py` exercises the real window and worker. It calls
     `pytest.importorskip("PySide6")`. If the extra is absent (the default CI run), pytest skips the
     whole file. It uses Qt's `offscreen` platform to build widgets without a display server.
@@ -101,7 +101,7 @@ uv run poe test-gui
 The `gui/` package itself is the Qt event-loop shell. The offscreen GUI tests do drive its widgets
 and workers. But coverage cannot measure the event loop, and the runtime attributes from `shiboken`
 confuse the static tools. For these reasons, `[tool.coverage.run].omit` in `pyproject.toml` excludes
-the whole package from coverage. Keep testable logic in `gui_state.py` (covered), not in `gui/`
+the whole package from coverage. Keep testable logic in `gui_state` (covered), not in `gui/`
 (omitted). See [Code quality](code-quality.md) for why the project also excludes `gui/` from the
 type checker and static analyzer.
 

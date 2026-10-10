@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-10 15:08+0200\n"
+"POT-Creation-Date: 2026-10-10 15:13+0200\n"
 "PO-Revision-Date: 2026-07-10 22:30+0200\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language: pt_BR\n"
@@ -18,462 +18,6 @@ msgstr ""
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
-
-#: src/photo_tagger/gui_state.py:126
-msgid "English"
-msgstr "Inglês"
-
-#: src/photo_tagger/gui_state.py:127
-msgid "Brazilian Portuguese"
-msgstr "Português do Brasil"
-
-#: src/photo_tagger/gui_state.py:128
-msgid "Dutch"
-msgstr "Holandês"
-
-#: src/photo_tagger/gui_state.py:129
-msgid "French"
-msgstr "Francês"
-
-#: src/photo_tagger/gui_state.py:130
-msgid "German"
-msgstr "Alemão"
-
-#: src/photo_tagger/gui_state.py:131
-msgid "Italian"
-msgstr "Italiano"
-
-#: src/photo_tagger/gui_state.py:132
-msgid "Japanese"
-msgstr "Japonês"
-
-#: src/photo_tagger/gui_state.py:133
-msgid "Korean"
-msgstr "Coreano"
-
-#: src/photo_tagger/gui_state.py:134
-msgid "Portuguese"
-msgstr "Português"
-
-#: src/photo_tagger/gui_state.py:135
-msgid "Russian"
-msgstr "Russo"
-
-#: src/photo_tagger/gui_state.py:136
-msgid "Simplified Chinese"
-msgstr "Chinês Simplificado"
-
-#: src/photo_tagger/gui_state.py:137
-msgid "Spanish"
-msgstr "Espanhol"
-
-#: src/photo_tagger/gui/save_options.py:86 src/photo_tagger/gui_state.py:758
-msgid "into the image file"
-msgstr "no arquivo de imagem"
-
-#: src/photo_tagger/gui/save_options.py:85 src/photo_tagger/gui_state.py:759
-msgid "to an XMP sidecar"
-msgstr "em um sidecar XMP"
-
-#: src/photo_tagger/gui/save_options.py:88 src/photo_tagger/gui_state.py:760
-msgid "into the image file and an XMP sidecar"
-msgstr "no arquivo de imagem e em um sidecar XMP"
-
-#: src/photo_tagger/gui_state.py:774
-#, python-brace-format
-msgid "{type} {target}"
-msgstr "{type} {target}"
-
-#: src/photo_tagger/gui_state.py:791
-msgid "Nothing is written. Fill in a name or a notice above."
-msgstr "Nada é gravado. Preencha um nome ou um aviso acima."
-
-#: src/photo_tagger/gui_state.py:795
-#, python-brace-format
-msgid "Writes {n} tag. On a photo taken in {year}:"
-msgid_plural "Writes {n} tags. On a photo taken in {year}:"
-msgstr[0] "Grava {n} tag. Em uma foto tirada em {year}:"
-msgstr[1] "Grava {n} tags. Em uma foto tirada em {year}:"
-
-#: src/photo_tagger/gui_state.py:851
-#, python-brace-format
-msgid ""
-"EXIF only allows plain ASCII before Exif 3.0, so some software will show "
-"{tags} wrongly. XMP carries the same text either way."
-msgstr ""
-"O EXIF só aceita ASCII simples antes do Exif 3.0, então alguns programas "
-"vão mostrar {tags} de forma errada. O XMP carrega o mesmo texto de "
-"qualquer jeito."
-
-#: src/photo_tagger/gui_state.py:900
-msgid "image file"
-msgstr "arquivo de imagem"
-
-#: src/photo_tagger/gui_state.py:901
-msgid "XMP sidecar"
-msgstr "sidecar XMP"
-
-#: src/photo_tagger/gui_state.py:922
-#, python-brace-format
-msgid "from {source}"
-msgstr "do {source}"
-
-#: src/photo_tagger/gui_state.py:924
-#, python-brace-format
-msgid "shadows \"{value}\" in the {source}"
-msgstr "encobre \"{value}\" no {source}"
-
-#: src/photo_tagger/gui_state.py:962
-#, python-brace-format
-msgid "Mixed script, worth a look: {terms}"
-msgstr "Escrita misturada, vale conferir: {terms}"
-
-#: src/photo_tagger/gui_state.py:1582
-msgid "(no change)"
-msgstr "(sem mudanças)"
-
-#: src/photo_tagger/gui_state.py:1664
-msgid "No vocabulary: keywords are written as the model wrote them."
-msgstr "Sem vocabulário: as palavras-chave são gravadas como o modelo as escreveu."
-
-#: src/photo_tagger/gui_state.py:1665
-#, python-brace-format
-msgid "{n} keyword"
-msgid_plural "{n} keywords"
-msgstr[0] "{n} palavra-chave"
-msgstr[1] "{n} palavras-chave"
-
-#: src/photo_tagger/gui_state.py:1668
-#, python-brace-format
-msgid "{terms} from {name}."
-msgstr "{terms} de {name}."
-
-#: src/photo_tagger/gui_state.py:1682
-#, python-brace-format
-msgid "{n} photo mixes writing systems (Select > Check Only > Status)."
-msgid_plural "{n} photos mix writing systems (Select > Check Only > Status)."
-msgstr[0] ""
-"{n} foto mistura sistemas de escrita (Selecionar > Marcar Apenas > "
-"Status)."
-msgstr[1] ""
-"{n} fotos misturam sistemas de escrita (Selecionar > Marcar Apenas > "
-"Status)."
-
-#: src/photo_tagger/gui_state.py:1699
-#, python-brace-format
-msgid "{n} photo failed (Retry Failed to try again)."
-msgid_plural "{n} photos failed (Retry Failed to try again)."
-msgstr[0] "{n} foto falhou (use Repetir Falhas para tentar de novo)."
-msgstr[1] "{n} fotos falharam (use Repetir Falhas para tentar de novo)."
-
-#: src/photo_tagger/gui_state.py:1716
-#, python-brace-format
-msgid "{n} keyword rewritten"
-msgid_plural "{n} keywords rewritten"
-msgstr[0] "{n} palavra-chave reescrita"
-msgstr[1] "{n} palavras-chave reescritas"
-
-#: src/photo_tagger/gui_state.py:1725
-#, python-brace-format
-msgid "{n} keyword dropped ({terms})"
-msgid_plural "{n} keywords dropped ({terms})"
-msgstr[0] "{n} palavra-chave descartada ({terms})"
-msgstr[1] "{n} palavras-chave descartadas ({terms})"
-
-#: src/photo_tagger/gui_state.py:1732
-#, python-brace-format
-msgid "Vocabulary: {summary}."
-msgstr "Vocabulário: {summary}."
-
-#: src/photo_tagger/gui_state.py:1787
-msgid "Nothing to harmonize yet: generate some photos first."
-msgstr "Nada a harmonizar ainda: gere algumas fotos primeiro."
-
-#: src/photo_tagger/gui_state.py:1788
-#, python-brace-format
-msgid "{n} shoot"
-msgid_plural "{n} shoots"
-msgstr[0] "{n} sessão"
-msgstr[1] "{n} sessões"
-
-#: src/photo_tagger/gui_state.py:1791
-#, python-brace-format
-msgid "{shoots}: the keywords already agreed."
-msgstr "{shoots}: as palavras-chave já concordavam."
-
-#: src/photo_tagger/gui_state.py:1793
-#, python-brace-format
-msgid "{shoots}: harmonized the keywords on {n} photo."
-msgid_plural "{shoots}: harmonized the keywords on {n} photos."
-msgstr[0] "{shoots}: palavras-chave harmonizadas em {n} foto."
-msgstr[1] "{shoots}: palavras-chave harmonizadas em {n} fotos."
-
-#: src/photo_tagger/gui_state.py:1807
-msgid "restored"
-msgstr "restaurado"
-
-#: src/photo_tagger/gui_state.py:1808
-msgid "deleted"
-msgstr "apagado"
-
-#: src/photo_tagger/gui_state.py:1809
-msgid "no longer there"
-msgstr "não está mais lá"
-
-#: src/photo_tagger/gui_state.py:1810
-msgid "changed since the run"
-msgstr "alterado desde a execução"
-
-#: src/photo_tagger/gui_state.py:1811
-msgid "no backup to restore from"
-msgstr "sem backup para restaurar"
-
-#: src/photo_tagger/gui_state.py:1812
-msgid "failed"
-msgstr "falhou"
-
-#: src/photo_tagger/gui_state.py:1835 src/photo_tagger/gui_state.py:1986
-#, python-brace-format
-msgid "{n} file"
-msgid_plural "{n} files"
-msgstr[0] "{n} arquivo"
-msgstr[1] "{n} arquivos"
-
-#: src/photo_tagger/gui/undo_dialog.py:148 src/photo_tagger/gui_state.py:1849
-msgid "That run recorded no writes."
-msgstr "Essa execução não registrou nenhuma gravação."
-
-#: src/photo_tagger/gui_state.py:1852
-#, python-brace-format
-msgid "Put back {n} file"
-msgid_plural "Put back {n} files"
-msgstr[0] "{n} arquivo restaurado"
-msgstr[1] "{n} arquivos restaurados"
-
-#: src/photo_tagger/gui_state.py:1855
-#, python-brace-format
-msgid "{restored}; left {left} alone."
-msgstr "{restored}; sem mexer em {left}."
-
-#: src/photo_tagger/gui_state.py:1876
-msgid "What undoing would do:"
-msgstr "O que desfazer faria:"
-
-#: src/photo_tagger/gui_state.py:1876
-msgid "What was undone:"
-msgstr "O que foi desfeito:"
-
-#: src/photo_tagger/gui_state.py:1906
-#, python-brace-format
-msgid "Watching {folders} for new photos..."
-msgstr "Monitorando {folders} em busca de novas fotos..."
-
-#: src/photo_tagger/gui_state.py:1908
-#, python-brace-format
-msgid "Watching {folders}: {n} photo added so far."
-msgid_plural "Watching {folders}: {n} photos added so far."
-msgstr[0] "Monitorando {folders}: {n} foto adicionada até agora."
-msgstr[1] "Monitorando {folders}: {n} fotos adicionadas até agora."
-
-#: src/photo_tagger/gui_state.py:1938
-#, python-brace-format
-msgid "Retrying {n} photo that failed..."
-msgid_plural "Retrying {n} photos that failed..."
-msgstr[0] "Repetindo {n} foto que falhou..."
-msgstr[1] "Repetindo {n} fotos que falharam..."
-
-#: src/photo_tagger/gui_state.py:1943
-#, python-brace-format
-msgid "Retrying {n} photo that mixed writing systems..."
-msgid_plural "Retrying {n} photos that mixed writing systems..."
-msgstr[0] "Repetindo {n} foto que misturou sistemas de escrita..."
-msgstr[1] "Repetindo {n} fotos que misturaram sistemas de escrita..."
-
-#: src/photo_tagger/gui_state.py:1988
-#, python-brace-format
-msgid ""
-"{files} · {selected} selected · {generated} generated · {saved} saved · "
-"{failed} failed"
-msgstr ""
-"{files} · {selected} selecionadas · {generated} geradas · {saved} salvas "
-"· {failed} com falha"
-
-#: src/photo_tagger/gui_state.py:2006
-#, python-brace-format
-msgid "Showing {shown} of {total} photo"
-msgid_plural "Showing {shown} of {total} photos"
-msgstr[0] "Mostrando {shown} de {total} foto"
-msgstr[1] "Mostrando {shown} de {total} fotos"
-
-#: src/photo_tagger/gui_state.py:2047
-#, python-brace-format
-msgid "{elapsed} elapsed"
-msgstr "{elapsed} decorrido"
-
-#: src/photo_tagger/gui_state.py:2048
-#, python-brace-format
-msgid "{elapsed} elapsed · {remaining} left"
-msgstr "{elapsed} decorrido · {remaining} restante"
-
-#: src/photo_tagger/gui_state.py:2069
-#, python-brace-format
-msgid "Resting up to {duration} so the battery charges back to {percent}%."
-msgstr "Descansando até {duration} para a bateria voltar a {percent}%."
-
-#: src/photo_tagger/gui_state.py:2073
-#, python-brace-format, python-format
-msgid "Resting {duration}: this run works {percent}% of the time."
-msgstr "Descansando {duration}: esta execução trabalha {percent}% do tempo."
-
-#: src/photo_tagger/gui_state.py:2090
-#, python-brace-format
-msgid "{n} second"
-msgid_plural "{n} seconds"
-msgstr[0] "{n} segundo"
-msgstr[1] "{n} segundos"
-
-#: src/photo_tagger/gui_state.py:2092
-#, python-brace-format
-msgid "{n} minute"
-msgid_plural "{n} minutes"
-msgstr[0] "{n} minuto"
-msgstr[1] "{n} minutos"
-
-#: src/photo_tagger/gui_state.py:2103
-msgid "Left as it is, a run works flat out."
-msgstr "Como está, a execução trabalha sem parar."
-
-#: src/photo_tagger/gui_state.py:2108
-#, python-brace-format, python-format
-msgid ""
-"Works {percent}% of the time: about {rest} of rest after every {work} of "
-"work."
-msgstr ""
-"Trabalha {percent}% do tempo: cerca de {rest} de descanso a cada {work} "
-"de trabalho."
-
-#: src/photo_tagger/gui_state.py:2118
-#, python-brace-format
-msgid ""
-"Whenever the battery falls to {floor}%, rests until it is back to "
-"{resume}%, for at most {cap}."
-msgstr ""
-"Sempre que a bateria cair a {floor}%, descansa até voltar a {resume}%, "
-"por no máximo {cap}."
-
-#: src/photo_tagger/gui_state.py:2129
-#, python-brace-format
-msgid ""
-"{mark} A plugged-in laptop is rarely that full, so the run would rest "
-"after nearly every window and wait out the cap each time."
-msgstr ""
-"{mark} Um notebook na tomada raramente está tão cheio, então a execução "
-"descansaria depois de quase toda janela e esperaria o limite acabar todas"
-" as vezes."
-
-#: src/photo_tagger/gui_state.py:2153
-msgid "Reveal in Finder"
-msgstr "Revelar no Finder"
-
-#: src/photo_tagger/gui_state.py:2155
-msgid "Show in Explorer"
-msgstr "Mostrar no Explorer"
-
-#: src/photo_tagger/gui_state.py:2156
-msgid "Show in File Manager"
-msgstr "Mostrar no Gerenciador de Arquivos"
-
-#: src/photo_tagger/gui_state.py:2217
-#, python-brace-format
-msgid "Your file types ({patterns})"
-msgstr "Seus tipos de arquivo ({patterns})"
-
-#: src/photo_tagger/gui_state.py:2220
-#, python-brace-format
-msgid "All known image formats ({patterns})"
-msgstr "Todos os formatos de imagem conhecidos ({patterns})"
-
-#: src/photo_tagger/gui_state.py:2222
-msgid "All files (*)"
-msgstr "Todos os arquivos (*)"
-
-#: src/photo_tagger/gui/save_options.py:306
-#: src/photo_tagger/gui/save_options.py:338 src/photo_tagger/gui_state.py:2231
-msgid "title"
-msgstr "título"
-
-#: src/photo_tagger/gui/save_options.py:307
-#: src/photo_tagger/gui/save_options.py:339 src/photo_tagger/gui_state.py:2232
-msgid "description"
-msgstr "descrição"
-
-#: src/photo_tagger/gui/save_options.py:308
-#: src/photo_tagger/gui/select_menu.py:82 src/photo_tagger/gui_state.py:2233
-msgid "keywords"
-msgstr "palavras-chave"
-
-#: src/photo_tagger/gui_state.py:2234
-msgid "copyright"
-msgstr "direitos autorais"
-
-#: src/photo_tagger/gui_state.py:2248
-msgctxt "Tagged column letter"
-msgid "T"
-msgstr "T"
-
-#: src/photo_tagger/gui_state.py:2250
-msgctxt "Tagged column letter"
-msgid "D"
-msgstr "D"
-
-#: src/photo_tagger/gui_state.py:2252
-msgctxt "Tagged column letter"
-msgid "K"
-msgstr "K"
-
-#: src/photo_tagger/gui_state.py:2254
-msgctxt "Tagged column letter"
-msgid "C"
-msgstr "C"
-
-#: src/photo_tagger/gui_state.py:2295
-#, python-brace-format
-msgid "Already on the file: {fields}"
-msgstr "Já no arquivo: {fields}"
-
-#: src/photo_tagger/gui_state.py:2295
-msgid "nothing"
-msgstr "nada"
-
-#: src/photo_tagger/gui_state.py:2513
-msgid ""
-"Turned off by PHOTO_TAGGER_TELEMETRY or PHOTO_TAGGER_NO_TELEMETRY in your"
-" environment. Remove it to choose here."
-msgstr ""
-"Desativada por PHOTO_TAGGER_TELEMETRY ou PHOTO_TAGGER_NO_TELEMETRY no seu"
-" ambiente. Remova a variável para escolher aqui."
-
-#: src/photo_tagger/gui_state.py:2518
-msgid ""
-"DO_NOT_TRACK is set in your environment, so nothing is sent. Check this "
-"to send anyway, for Photo Tagger only."
-msgstr ""
-"DO_NOT_TRACK está definida no seu ambiente, então nada é enviado. Marque "
-"esta opção para enviar mesmo assim, só para o Photo Tagger."
-
-#: src/photo_tagger/gui_state.py:2524
-msgid "Sending even though DO_NOT_TRACK is set, because you turned this on here."
-msgstr ""
-"Enviando mesmo com DO_NOT_TRACK definida, porque você ativou esta opção "
-"aqui."
-
-#: src/photo_tagger/gui_state.py:2527
-msgid ""
-"Sending even though DO_NOT_TRACK is set, because PHOTO_TAGGER_TELEMETRY=1"
-" is set."
-msgstr ""
-"Enviando mesmo com DO_NOT_TRACK definida, porque PHOTO_TAGGER_TELEMETRY=1"
-" está definida."
 
 #: src/photo_tagger/gui/common.py:48
 msgid "(none)"
@@ -2149,9 +1693,24 @@ msgstr ""
 msgid "Replace existing keywords instead of merging the new ones in."
 msgstr "Substitui as palavras-chave existentes em vez de mesclar as novas."
 
+#: src/photo_tagger/gui/save_options.py:85
+#: src/photo_tagger/gui_state/saving.py:311
+msgid "to an XMP sidecar"
+msgstr "em um sidecar XMP"
+
+#: src/photo_tagger/gui/save_options.py:86
+#: src/photo_tagger/gui_state/saving.py:310
+msgid "into the image file"
+msgstr "no arquivo de imagem"
+
 #: src/photo_tagger/gui/save_options.py:87
 msgid "to a sidecar for RAW, into the image file otherwise"
 msgstr "em um sidecar XMP para RAW e no arquivo de imagem nos demais"
+
+#: src/photo_tagger/gui/save_options.py:88
+#: src/photo_tagger/gui_state/saving.py:312
+msgid "into the image file and an XMP sidecar"
+msgstr "no arquivo de imagem e em um sidecar XMP"
 
 #: src/photo_tagger/gui/save_options.py:116
 msgid "Save Options"
@@ -2237,6 +1796,24 @@ msgstr ""
 #: src/photo_tagger/gui/save_options.py:246
 msgid "Nothing to write yet. Fill in Settings > Copyright first."
 msgstr "Nada a gravar ainda. Preencha Configurações > Direitos autorais primeiro."
+
+#: src/photo_tagger/gui/save_options.py:306
+#: src/photo_tagger/gui/save_options.py:338
+#: src/photo_tagger/gui_state/columns.py:54
+msgid "title"
+msgstr "título"
+
+#: src/photo_tagger/gui/save_options.py:307
+#: src/photo_tagger/gui/save_options.py:339
+#: src/photo_tagger/gui_state/columns.py:55
+msgid "description"
+msgstr "descrição"
+
+#: src/photo_tagger/gui/save_options.py:308
+#: src/photo_tagger/gui/select_menu.py:82
+#: src/photo_tagger/gui_state/columns.py:56
+msgid "keywords"
+msgstr "palavras-chave"
 
 #: src/photo_tagger/gui/save_options.py:313
 msgid "your copyright"
@@ -2683,6 +2260,11 @@ msgstr "Escolha uma execução primeiro."
 msgid "Could not read that run"
 msgstr "Não foi possível ler essa execução"
 
+#: src/photo_tagger/gui/undo_dialog.py:148
+#: src/photo_tagger/gui_state/undo_view.py:76
+msgid "That run recorded no writes."
+msgstr "Essa execução não registrou nenhuma gravação."
+
 #: src/photo_tagger/gui/undo_dialog.py:156
 #, python-brace-format
 msgid "Preview: {summary}"
@@ -3064,6 +2646,432 @@ msgstr[1] "Lendo as palavras-chave de {n} fotos..."
 #, python-brace-format
 msgid "Organizing {n} keyword(s) with {model}..."
 msgstr "Organizando {n} palavra(s)-chave com {model}..."
+
+#: src/photo_tagger/gui_state/columns.py:57
+msgid "copyright"
+msgstr "direitos autorais"
+
+#: src/photo_tagger/gui_state/columns.py:71
+msgctxt "Tagged column letter"
+msgid "T"
+msgstr "T"
+
+#: src/photo_tagger/gui_state/columns.py:73
+msgctxt "Tagged column letter"
+msgid "D"
+msgstr "D"
+
+#: src/photo_tagger/gui_state/columns.py:75
+msgctxt "Tagged column letter"
+msgid "K"
+msgstr "K"
+
+#: src/photo_tagger/gui_state/columns.py:77
+msgctxt "Tagged column letter"
+msgid "C"
+msgstr "C"
+
+#: src/photo_tagger/gui_state/columns.py:118
+#, python-brace-format
+msgid "Already on the file: {fields}"
+msgstr "Já no arquivo: {fields}"
+
+#: src/photo_tagger/gui_state/columns.py:118
+msgid "nothing"
+msgstr "nada"
+
+#: src/photo_tagger/gui_state/connection.py:22
+msgid "English"
+msgstr "Inglês"
+
+#: src/photo_tagger/gui_state/connection.py:23
+msgid "Brazilian Portuguese"
+msgstr "Português do Brasil"
+
+#: src/photo_tagger/gui_state/connection.py:24
+msgid "Dutch"
+msgstr "Holandês"
+
+#: src/photo_tagger/gui_state/connection.py:25
+msgid "French"
+msgstr "Francês"
+
+#: src/photo_tagger/gui_state/connection.py:26
+msgid "German"
+msgstr "Alemão"
+
+#: src/photo_tagger/gui_state/connection.py:27
+msgid "Italian"
+msgstr "Italiano"
+
+#: src/photo_tagger/gui_state/connection.py:28
+msgid "Japanese"
+msgstr "Japonês"
+
+#: src/photo_tagger/gui_state/connection.py:29
+msgid "Korean"
+msgstr "Coreano"
+
+#: src/photo_tagger/gui_state/connection.py:30
+msgid "Portuguese"
+msgstr "Português"
+
+#: src/photo_tagger/gui_state/connection.py:31
+msgid "Russian"
+msgstr "Russo"
+
+#: src/photo_tagger/gui_state/connection.py:32
+msgid "Simplified Chinese"
+msgstr "Chinês Simplificado"
+
+#: src/photo_tagger/gui_state/connection.py:33
+msgid "Spanish"
+msgstr "Espanhol"
+
+#: src/photo_tagger/gui_state/copyright.py:89
+msgid "Nothing is written. Fill in a name or a notice above."
+msgstr "Nada é gravado. Preencha um nome ou um aviso acima."
+
+#: src/photo_tagger/gui_state/copyright.py:93
+#, python-brace-format
+msgid "Writes {n} tag. On a photo taken in {year}:"
+msgid_plural "Writes {n} tags. On a photo taken in {year}:"
+msgstr[0] "Grava {n} tag. Em uma foto tirada em {year}:"
+msgstr[1] "Grava {n} tags. Em uma foto tirada em {year}:"
+
+#: src/photo_tagger/gui_state/copyright.py:149
+#, python-brace-format
+msgid ""
+"EXIF only allows plain ASCII before Exif 3.0, so some software will show "
+"{tags} wrongly. XMP carries the same text either way."
+msgstr ""
+"O EXIF só aceita ASCII simples antes do Exif 3.0, então alguns programas "
+"vão mostrar {tags} de forma errada. O XMP carrega o mesmo texto de "
+"qualquer jeito."
+
+#: src/photo_tagger/gui_state/files.py:66
+msgid "Reveal in Finder"
+msgstr "Revelar no Finder"
+
+#: src/photo_tagger/gui_state/files.py:68
+msgid "Show in Explorer"
+msgstr "Mostrar no Explorer"
+
+#: src/photo_tagger/gui_state/files.py:69
+msgid "Show in File Manager"
+msgstr "Mostrar no Gerenciador de Arquivos"
+
+#: src/photo_tagger/gui_state/files.py:130
+#, python-brace-format
+msgid "Your file types ({patterns})"
+msgstr "Seus tipos de arquivo ({patterns})"
+
+#: src/photo_tagger/gui_state/files.py:133
+#, python-brace-format
+msgid "All known image formats ({patterns})"
+msgstr "Todos os formatos de imagem conhecidos ({patterns})"
+
+#: src/photo_tagger/gui_state/files.py:135
+msgid "All files (*)"
+msgstr "Todos os arquivos (*)"
+
+#: src/photo_tagger/gui_state/keyword_view.py:214
+msgid "(no change)"
+msgstr "(sem mudanças)"
+
+#: src/photo_tagger/gui_state/pacing.py:31
+#, python-brace-format
+msgid "Resting up to {duration} so the battery charges back to {percent}%."
+msgstr "Descansando até {duration} para a bateria voltar a {percent}%."
+
+#: src/photo_tagger/gui_state/pacing.py:35
+#, python-brace-format, python-format
+msgid "Resting {duration}: this run works {percent}% of the time."
+msgstr "Descansando {duration}: esta execução trabalha {percent}% do tempo."
+
+#: src/photo_tagger/gui_state/pacing.py:52
+#, python-brace-format
+msgid "{n} second"
+msgid_plural "{n} seconds"
+msgstr[0] "{n} segundo"
+msgstr[1] "{n} segundos"
+
+#: src/photo_tagger/gui_state/pacing.py:54
+#, python-brace-format
+msgid "{n} minute"
+msgid_plural "{n} minutes"
+msgstr[0] "{n} minuto"
+msgstr[1] "{n} minutos"
+
+#: src/photo_tagger/gui_state/pacing.py:65
+msgid "Left as it is, a run works flat out."
+msgstr "Como está, a execução trabalha sem parar."
+
+#: src/photo_tagger/gui_state/pacing.py:70
+#, python-brace-format, python-format
+msgid ""
+"Works {percent}% of the time: about {rest} of rest after every {work} of "
+"work."
+msgstr ""
+"Trabalha {percent}% do tempo: cerca de {rest} de descanso a cada {work} "
+"de trabalho."
+
+#: src/photo_tagger/gui_state/pacing.py:80
+#, python-brace-format
+msgid ""
+"Whenever the battery falls to {floor}%, rests until it is back to "
+"{resume}%, for at most {cap}."
+msgstr ""
+"Sempre que a bateria cair a {floor}%, descansa até voltar a {resume}%, "
+"por no máximo {cap}."
+
+#: src/photo_tagger/gui_state/pacing.py:91
+#, python-brace-format
+msgid ""
+"{mark} A plugged-in laptop is rarely that full, so the run would rest "
+"after nearly every window and wait out the cap each time."
+msgstr ""
+"{mark} Um notebook na tomada raramente está tão cheio, então a execução "
+"descansaria depois de quase toda janela e esperaria o limite acabar todas"
+" as vezes."
+
+#: src/photo_tagger/gui_state/review.py:22
+msgid "image file"
+msgstr "arquivo de imagem"
+
+#: src/photo_tagger/gui_state/review.py:23
+msgid "XMP sidecar"
+msgstr "sidecar XMP"
+
+#: src/photo_tagger/gui_state/review.py:44
+#, python-brace-format
+msgid "from {source}"
+msgstr "do {source}"
+
+#: src/photo_tagger/gui_state/review.py:46
+#, python-brace-format
+msgid "shadows \"{value}\" in the {source}"
+msgstr "encobre \"{value}\" no {source}"
+
+#: src/photo_tagger/gui_state/review.py:79
+#, python-brace-format
+msgid "Mixed script, worth a look: {terms}"
+msgstr "Escrita misturada, vale conferir: {terms}"
+
+#: src/photo_tagger/gui_state/runs.py:106
+#, python-brace-format
+msgid "{n} photo mixes writing systems (Select > Check Only > Status)."
+msgid_plural "{n} photos mix writing systems (Select > Check Only > Status)."
+msgstr[0] ""
+"{n} foto mistura sistemas de escrita (Selecionar > Marcar Apenas > "
+"Status)."
+msgstr[1] ""
+"{n} fotos misturam sistemas de escrita (Selecionar > Marcar Apenas > "
+"Status)."
+
+#: src/photo_tagger/gui_state/runs.py:123
+#, python-brace-format
+msgid "{n} photo failed (Retry Failed to try again)."
+msgid_plural "{n} photos failed (Retry Failed to try again)."
+msgstr[0] "{n} foto falhou (use Repetir Falhas para tentar de novo)."
+msgstr[1] "{n} fotos falharam (use Repetir Falhas para tentar de novo)."
+
+#: src/photo_tagger/gui_state/runs.py:152
+#, python-brace-format
+msgid "Watching {folders} for new photos..."
+msgstr "Monitorando {folders} em busca de novas fotos..."
+
+#: src/photo_tagger/gui_state/runs.py:154
+#, python-brace-format
+msgid "Watching {folders}: {n} photo added so far."
+msgid_plural "Watching {folders}: {n} photos added so far."
+msgstr[0] "Monitorando {folders}: {n} foto adicionada até agora."
+msgstr[1] "Monitorando {folders}: {n} fotos adicionadas até agora."
+
+#: src/photo_tagger/gui_state/runs.py:188
+#, python-brace-format
+msgid "Retrying {n} photo that failed..."
+msgid_plural "Retrying {n} photos that failed..."
+msgstr[0] "Repetindo {n} foto que falhou..."
+msgstr[1] "Repetindo {n} fotos que falharam..."
+
+#: src/photo_tagger/gui_state/runs.py:193
+#, python-brace-format
+msgid "Retrying {n} photo that mixed writing systems..."
+msgid_plural "Retrying {n} photos that mixed writing systems..."
+msgstr[0] "Repetindo {n} foto que misturou sistemas de escrita..."
+msgstr[1] "Repetindo {n} fotos que misturaram sistemas de escrita..."
+
+#: src/photo_tagger/gui_state/runs.py:217
+#: src/photo_tagger/gui_state/undo_view.py:62
+#, python-brace-format
+msgid "{n} file"
+msgid_plural "{n} files"
+msgstr[0] "{n} arquivo"
+msgstr[1] "{n} arquivos"
+
+#: src/photo_tagger/gui_state/runs.py:219
+#, python-brace-format
+msgid ""
+"{files} · {selected} selected · {generated} generated · {saved} saved · "
+"{failed} failed"
+msgstr ""
+"{files} · {selected} selecionadas · {generated} geradas · {saved} salvas "
+"· {failed} com falha"
+
+#: src/photo_tagger/gui_state/runs.py:237
+#, python-brace-format
+msgid "Showing {shown} of {total} photo"
+msgid_plural "Showing {shown} of {total} photos"
+msgstr[0] "Mostrando {shown} de {total} foto"
+msgstr[1] "Mostrando {shown} de {total} fotos"
+
+#: src/photo_tagger/gui_state/runs.py:265
+#, python-brace-format
+msgid "{elapsed} elapsed"
+msgstr "{elapsed} decorrido"
+
+#: src/photo_tagger/gui_state/runs.py:266
+#, python-brace-format
+msgid "{elapsed} elapsed · {remaining} left"
+msgstr "{elapsed} decorrido · {remaining} restante"
+
+#: src/photo_tagger/gui_state/saving.py:326
+#, python-brace-format
+msgid "{type} {target}"
+msgstr "{type} {target}"
+
+#: src/photo_tagger/gui_state/settings_file.py:46
+msgid ""
+"Turned off by PHOTO_TAGGER_TELEMETRY or PHOTO_TAGGER_NO_TELEMETRY in your"
+" environment. Remove it to choose here."
+msgstr ""
+"Desativada por PHOTO_TAGGER_TELEMETRY ou PHOTO_TAGGER_NO_TELEMETRY no seu"
+" ambiente. Remova a variável para escolher aqui."
+
+#: src/photo_tagger/gui_state/settings_file.py:51
+msgid ""
+"DO_NOT_TRACK is set in your environment, so nothing is sent. Check this "
+"to send anyway, for Photo Tagger only."
+msgstr ""
+"DO_NOT_TRACK está definida no seu ambiente, então nada é enviado. Marque "
+"esta opção para enviar mesmo assim, só para o Photo Tagger."
+
+#: src/photo_tagger/gui_state/settings_file.py:57
+msgid "Sending even though DO_NOT_TRACK is set, because you turned this on here."
+msgstr ""
+"Enviando mesmo com DO_NOT_TRACK definida, porque você ativou esta opção "
+"aqui."
+
+#: src/photo_tagger/gui_state/settings_file.py:60
+msgid ""
+"Sending even though DO_NOT_TRACK is set, because PHOTO_TAGGER_TELEMETRY=1"
+" is set."
+msgstr ""
+"Enviando mesmo com DO_NOT_TRACK definida, porque PHOTO_TAGGER_TELEMETRY=1"
+" está definida."
+
+#: src/photo_tagger/gui_state/undo_view.py:33
+msgid "restored"
+msgstr "restaurado"
+
+#: src/photo_tagger/gui_state/undo_view.py:34
+msgid "deleted"
+msgstr "apagado"
+
+#: src/photo_tagger/gui_state/undo_view.py:35
+msgid "no longer there"
+msgstr "não está mais lá"
+
+#: src/photo_tagger/gui_state/undo_view.py:36
+msgid "changed since the run"
+msgstr "alterado desde a execução"
+
+#: src/photo_tagger/gui_state/undo_view.py:37
+msgid "no backup to restore from"
+msgstr "sem backup para restaurar"
+
+#: src/photo_tagger/gui_state/undo_view.py:38
+msgid "failed"
+msgstr "falhou"
+
+#: src/photo_tagger/gui_state/undo_view.py:79
+#, python-brace-format
+msgid "Put back {n} file"
+msgid_plural "Put back {n} files"
+msgstr[0] "{n} arquivo restaurado"
+msgstr[1] "{n} arquivos restaurados"
+
+#: src/photo_tagger/gui_state/undo_view.py:82
+#, python-brace-format
+msgid "{restored}; left {left} alone."
+msgstr "{restored}; sem mexer em {left}."
+
+#: src/photo_tagger/gui_state/undo_view.py:103
+msgid "What undoing would do:"
+msgstr "O que desfazer faria:"
+
+#: src/photo_tagger/gui_state/undo_view.py:103
+msgid "What was undone:"
+msgstr "O que foi desfeito:"
+
+#: src/photo_tagger/gui_state/vocabulary.py:101
+msgid "No vocabulary: keywords are written as the model wrote them."
+msgstr "Sem vocabulário: as palavras-chave são gravadas como o modelo as escreveu."
+
+#: src/photo_tagger/gui_state/vocabulary.py:102
+#, python-brace-format
+msgid "{n} keyword"
+msgid_plural "{n} keywords"
+msgstr[0] "{n} palavra-chave"
+msgstr[1] "{n} palavras-chave"
+
+#: src/photo_tagger/gui_state/vocabulary.py:105
+#, python-brace-format
+msgid "{terms} from {name}."
+msgstr "{terms} de {name}."
+
+#: src/photo_tagger/gui_state/vocabulary.py:119
+#, python-brace-format
+msgid "{n} keyword rewritten"
+msgid_plural "{n} keywords rewritten"
+msgstr[0] "{n} palavra-chave reescrita"
+msgstr[1] "{n} palavras-chave reescritas"
+
+#: src/photo_tagger/gui_state/vocabulary.py:128
+#, python-brace-format
+msgid "{n} keyword dropped ({terms})"
+msgid_plural "{n} keywords dropped ({terms})"
+msgstr[0] "{n} palavra-chave descartada ({terms})"
+msgstr[1] "{n} palavras-chave descartadas ({terms})"
+
+#: src/photo_tagger/gui_state/vocabulary.py:135
+#, python-brace-format
+msgid "Vocabulary: {summary}."
+msgstr "Vocabulário: {summary}."
+
+#: src/photo_tagger/gui_state/vocabulary.py:190
+msgid "Nothing to harmonize yet: generate some photos first."
+msgstr "Nada a harmonizar ainda: gere algumas fotos primeiro."
+
+#: src/photo_tagger/gui_state/vocabulary.py:191
+#, python-brace-format
+msgid "{n} shoot"
+msgid_plural "{n} shoots"
+msgstr[0] "{n} sessão"
+msgstr[1] "{n} sessões"
+
+#: src/photo_tagger/gui_state/vocabulary.py:194
+#, python-brace-format
+msgid "{shoots}: the keywords already agreed."
+msgstr "{shoots}: as palavras-chave já concordavam."
+
+#: src/photo_tagger/gui_state/vocabulary.py:196
+#, python-brace-format
+msgid "{shoots}: harmonized the keywords on {n} photo."
+msgid_plural "{shoots}: harmonized the keywords on {n} photos."
+msgstr[0] "{shoots}: palavras-chave harmonizadas em {n} foto."
+msgstr[1] "{shoots}: palavras-chave harmonizadas em {n} fotos."
 
 #~ msgid "Embed in Photo"
 #~ msgstr "Embutir na Foto"

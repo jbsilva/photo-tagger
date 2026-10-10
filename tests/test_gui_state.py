@@ -1660,7 +1660,7 @@ def test_login_shell_path_parses_shell_output(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("SHELL", "/bin/zsh")
     out = os.pathsep.join(["/run/current-system/sw/bin", "/usr/bin", ""])
     monkeypatch.setattr(
-        "photo_tagger.gui_state.subprocess.run",
+        "photo_tagger.gui_state.environment.subprocess.run",
         lambda *_a, **_k: SimpleNamespace(stdout=out),
     )
     assert login_shell_path() == ["/run/current-system/sw/bin", "/usr/bin"]
@@ -1679,7 +1679,7 @@ def test_login_shell_path_empty_on_shell_failure(monkeypatch: pytest.MonkeyPatch
     def boom(*_a: object, **_k: object) -> object:
         raise OSError
 
-    monkeypatch.setattr("photo_tagger.gui_state.subprocess.run", boom)
+    monkeypatch.setattr("photo_tagger.gui_state.environment.subprocess.run", boom)
     assert login_shell_path() == []
 
 

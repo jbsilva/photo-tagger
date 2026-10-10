@@ -63,9 +63,9 @@ uv run pycroscope --config-file pyproject.toml
     header excludes it from `pycroscope`. `[tool.coverage.run].omit` excludes the whole package from
     coverage.
 
-    The testable, Qt-free logic lives in `gui_state.py`. The type checker, the analyzer, and coverage
-    treat that file normally. This is the documented exception to the "fix, do not silence" rule below.
-    You cannot model a Qt event-loop shell statically or run it headlessly. See
+    The testable, Qt-free logic lives in the `gui_state` package. The type checker, the analyzer, and
+    coverage treat that file normally. This is the documented exception to the "fix, do not silence"
+    rule below. You cannot model a Qt event-loop shell statically or run it headlessly. See
     [Testing](testing.md#gui-tests) for how the project tests it instead.
 
 ### import-linter

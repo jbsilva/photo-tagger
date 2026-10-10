@@ -506,7 +506,7 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 # The PySide6 desktop window and its Qt event loop cannot run under the headless
 # CI suite (no display, and the [gui] extra is intentionally not installed there).
-# Its testable, Qt-free logic lives in gui_state.py, which is covered normally;
+# Its testable, Qt-free logic lives in the gui_state package, which is covered normally;
 # the gui package is the widget/event-loop shell, exercised manually and by the
 # offscreen-guarded tests in test_gui.py when PySide6 is present.
 omit = ["src/photo_tagger/gui/*"]
