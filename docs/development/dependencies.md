@@ -76,17 +76,17 @@ SHAs and revs rather than version ranges.
 PRs open in a weekly window: Monday 02:00-06:59 in the `Europe/Berlin` timezone. The window only
 allows PRs to open; the hosted Renovate App decides when it actually runs.
 
-Non-security releases are held for 3 days (`minimumReleaseAge: "3 days"`) before a PR is opened.
+Non-security releases are held for 1 day (`minimumReleaseAge: "1 days"`) before a PR is opened.
 Security fixes do not wait: both `vulnerabilityAlerts` and `osvVulnerabilityAlerts` are enabled, and
 the security rule pins `minimumReleaseAge: "0 days"`, so those PRs open immediately and bypass both
-the weekly window and the 3-day hold.
+the weekly window and the 1-day hold.
 
 !!! note
 
-    The 3-day cooldown is also what keeps Renovate compatible with `[tool.uv] exclude-newer = "1 day"`.
-    uv refuses to lock an artifact younger than a day, so if Renovate proposed a release that fresh, the
-    resulting `uv lock` could not resolve and the PR would be broken. Holding non-security releases for
-    3 days keeps every proposed version comfortably past uv's window.
+    The 1-day hold matches `[tool.uv] exclude-newer = "1 day"`. uv refuses to lock an artifact younger
+    than a day, so if Renovate proposed a release that fresh, the resulting `uv lock` could not resolve
+    and the PR would be broken. The two windows are the same length, so the hold leaves no margin;
+    nobody merges these PRs automatically, so a person reviews each one.
 
 ### PR titles and grouping
 

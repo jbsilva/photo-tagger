@@ -35,12 +35,12 @@
   // the github-actions manager and the prek.toml regex manager, which pin exact SHAs/revs.
   rangeStrategy: "bump",
 
-  // Hold a non-security release for 3 days before opening a PR. This also keeps Renovate compatible
+  // Hold a non-security release for 1 day before opening a PR. This also keeps Renovate compatible
   // with "[tool.uv] exclude-newer" in pyproject.toml: uv refuses to lock an artifact younger than
   // 1 day, so proposing anything newer would yield an unresolvable "uv lock" PR.
-  minimumReleaseAge: "3 days",
+  minimumReleaseAge: "1 days",
 
-  // Security fixes open immediately, bypassing the weekly window and the 3-day hold. The pinned
+  // Security fixes open immediately, bypassing the weekly window and the 1-day hold. The pinned
   // minimumReleaseAge keeps that bypass even with a global value set above. osvVulnerabilityAlerts
   // adds OSV.dev coverage for the Python dependencies.
   osvVulnerabilityAlerts: true,
