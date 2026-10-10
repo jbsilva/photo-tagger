@@ -9,7 +9,6 @@ from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -26,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from photo_tagger.gui.common import NONE_LABEL
 from photo_tagger.gui.viewer import ImageViewerDialog
-from photo_tagger.gui.widgets import ClickableLabel, fit_text_height, readonly_box
+from photo_tagger.gui.widgets import ClickableLabel, busy_cursor, fit_text_height, readonly_box
 from photo_tagger.gui_state import (
     ADDED,
     FAILED,
@@ -529,11 +528,8 @@ class DetailPane(QScrollArea):
             return
         # Decoding a RAW file at _VIEWER_MAX takes about a second, which is short enough to just
         # wait through and long enough that the window must say it is working.
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
+        with busy_cursor():
             pixmap = self._viewer_pixmap(item)
-        finally:
-            QApplication.restoreOverrideCursor()
         if pixmap is None or pixmap.isNull():
             self.status.emit(_("That photo cannot be opened for viewing."))
             return

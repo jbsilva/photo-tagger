@@ -3,6 +3,7 @@
 # The two lines above keep zuban and pycroscope out; see the note in gui/__init__.py.
 """Small widgets and widget helpers the main window and its dialogs share."""
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
@@ -35,7 +36,17 @@ from photo_tagger.i18n import _
 
 if TYPE_CHECKING:
     # Annotation-only on Python 3.14 (lazy), so no runtime import is needed.
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
+
+
+@contextmanager
+def busy_cursor() -> Iterator[None]:
+    """Show the wait cursor while a short job blocks the UI thread, and always restore it."""
+    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    try:
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
 
 
 def readonly_box(min_height: int) -> QPlainTextEdit:

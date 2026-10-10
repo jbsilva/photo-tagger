@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 from photo_tagger.diagnostics import run_checks
 from photo_tagger.errors import ProviderError
 from photo_tagger.gui.common import CLOSE_LABEL
+from photo_tagger.gui.widgets import busy_cursor
 from photo_tagger.gui_state import Connection, check_results_html, rank_vision_models, tooltip
 from photo_tagger.i18n import _, ngettext
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
@@ -156,15 +156,12 @@ class ConnectionBar(QWidget):
         connection = self.connection()
         backend = get_backend(connection.provider)
         base_url = connection.api_base_url or backend.default_base_url
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            models = backend.list_models(base_url, backend.resolve_api_key(connection.api_key))
+            with busy_cursor():
+                models = backend.list_models(base_url, backend.resolve_api_key(connection.api_key))
         except ProviderError as exc:
-            QApplication.restoreOverrideCursor()
             QMessageBox.warning(self.window(), _("Could not list models"), str(exc))
             return
-        finally:
-            QApplication.restoreOverrideCursor()
         current = self._model.currentText()
         self._model.clear()
         self._model.addItems(rank_vision_models(models))
@@ -181,16 +178,13 @@ class ConnectionBar(QWidget):
         """Check ExifTool and the provider, and show what passed and what did not."""
         self.used.emit("test_connection")
         connection = self.connection()
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
+        with busy_cursor():
             results = run_checks(
                 connection.provider,
                 connection.model,
                 api_base_url=connection.api_base_url,
                 api_key=connection.api_key,
             )
-        finally:
-            QApplication.restoreOverrideCursor()
         box = QMessageBox(self.window())
         box.setWindowTitle(_("Connection check"))
         box.setTextFormat(Qt.TextFormat.RichText)

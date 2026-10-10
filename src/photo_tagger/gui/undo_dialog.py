@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QDialog,
     QHBoxLayout,
@@ -23,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_tagger.gui.common import CLOSE_LABEL, PATH_ROLE
-from photo_tagger.gui.widgets import readonly_box
+from photo_tagger.gui.widgets import busy_cursor, readonly_box
 from photo_tagger.gui_state import (
     journal_label,
     reverted_images,
@@ -150,11 +149,8 @@ class UndoDialog(QDialog):
             return
         if not dry_run and not self._confirm(len(records)):
             return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
+        with busy_cursor():
             results = undo_run(records, force=self._force.isChecked(), dry_run=dry_run)
-        finally:
-            QApplication.restoreOverrideCursor()
         self._details.setPlainText(undo_details_text(results, dry_run=dry_run))
         summary = undo_summary(results)
         self.status.emit(_("Preview: {summary}").format(summary=summary) if dry_run else summary)

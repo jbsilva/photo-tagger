@@ -93,9 +93,7 @@ from photo_tagger.gui.threads import join_thread, release_thread, start_in_threa
 from photo_tagger.gui.undo_dialog import UndoDialog
 from photo_tagger.gui.vocabulary_builder import VocabularyBuilderDialog
 from photo_tagger.gui.watch_dialog import WatchDialog
-from photo_tagger.gui.widgets import (
-    InputWatcher,
-)
+from photo_tagger.gui.widgets import InputWatcher, busy_cursor
 from photo_tagger.gui.workers import (
     GenerateWorker,
     HarmonizeWorker,
@@ -1830,14 +1828,11 @@ class MainWindow(QMainWindow):
 
     def _show_item(self, item: PhotoItem) -> None:
         """Read what *item* carries, if that is not done yet, and show it in the detail pane."""
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
+        with busy_cursor():
             self._ensure_loaded(item)
             self._ensure_field_sources(item)
             self._ensure_sources(item)
             self._detail.render_preview(item)
-        finally:
-            QApplication.restoreOverrideCursor()
         self._detail.show_photo(item)
 
     def _ensure_loaded(self, item: PhotoItem) -> None:
