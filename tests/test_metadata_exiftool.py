@@ -13,6 +13,9 @@ import pytest
 from PIL import Image
 
 from photo_tagger.metadata import (
+    FIELD_KEYWORDS,
+    FIELD_TITLE,
+    iter_field_presence,
     metadata_targets,
     read_caption,
     read_image_context,
@@ -51,6 +54,21 @@ def test_metadata_targets_lists_jpeg_and_sidecar(tmp_path: Path) -> None:
 def test_metadata_targets_returns_empty_for_missing_file(tmp_path: Path) -> None:
     """A missing image returns an empty target list, not a crash."""
     assert metadata_targets(tmp_path / "ghost.jpg") == []
+
+
+def test_iter_field_presence_reads_every_batch_through_one_exiftool(tmp_path: Path) -> None:
+    """The chunked read reports each batch against a real exiftool, sharing one process."""
+    tagged = _write_jpeg(tmp_path / "tagged.jpg")
+    plain = _write_jpeg(tmp_path / "plain.jpg")
+    last = _write_jpeg(tmp_path / "last.jpg")
+    write_metadata(tagged, KeywordSet(subject=["Beach"]), title="A title", use_sidecar=False)
+
+    batches = list(iter_field_presence([tagged, plain, last], batch_size=2))
+
+    assert [batch.scanned for batch in batches] == [2, 1]
+    assert batches[0].presence[tagged] >= {FIELD_TITLE, FIELD_KEYWORDS}
+    assert batches[0].presence[plain] == set()
+    assert batches[1].presence[last] == set()
 
 
 def test_write_and_read_round_trip_subject_and_hierarchy(tmp_path: Path) -> None:

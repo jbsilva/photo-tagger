@@ -24,6 +24,7 @@ from photo_tagger.metadata import (
     find_field_presence,
     find_tagged_images,
     format_metadata_value,
+    iter_field_presence,
     managed_helper,
     plan_writes,
     prompt_with_hint,
@@ -556,6 +557,77 @@ def test_find_field_presence_ignores_unrecognized_source_file(tmp_path: Path) ->
         patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
     ):
         assert find_field_presence([img]) == {img: set()}
+
+
+def _presence_images(tmp_path: Path, count: int) -> list[Path]:
+    """Create *count* stand-in image files for the chunked presence reads."""
+    paths = [tmp_path / f"{index:03d}.cr3" for index in range(count)]
+    for path in paths:
+        path.write_text("x")
+    return paths
+
+
+def test_iter_field_presence_splits_the_read_into_batches(tmp_path: Path) -> None:
+    """The chunked read reports a batch at a time, each one counting the images it covered."""
+    paths = _presence_images(tmp_path, 5)
+    helper = _fake_helper()
+    helper.get_tags.side_effect = lambda files, tags: [  # noqa: ARG005 - tags are fixed here
+        {"SourceFile": name, "XMP:Title": "T"} for name in files
+    ]
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper) as ctor,
+    ):
+        batches = list(iter_field_presence(paths, batch_size=2))
+
+    assert [batch.scanned for batch in batches] == [2, 2, 1]
+    assert all(fields == {FIELD_TITLE} for batch in batches for fields in batch.presence.values())
+    # One exiftool process for the whole run, not one per batch: the split must stay cheap.
+    ctor.assert_called_once()
+
+
+def test_iter_field_presence_counts_a_failed_batch_and_keeps_going(tmp_path: Path) -> None:
+    """A batch exiftool cannot read reports no photos but still advances the caller's progress."""
+    paths = _presence_images(tmp_path, 4)
+    helper = _fake_helper()
+    # The first batch blows up, the second reads fine: one call per batch, in order.
+    helper.get_tags.side_effect = [
+        ValueError("boom"),
+        [{"SourceFile": str(path), "XMP:Title": "T"} for path in paths[2:]],
+    ]
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        batches = list(iter_field_presence(paths, batch_size=2))
+
+    assert [batch.scanned for batch in batches] == [2, 2]
+    assert batches[0].presence == {}  # unreadable: unknown, not "carries nothing"
+    assert set(batches[1].presence) == set(paths[2:])
+
+
+def test_iter_field_presence_stops_reading_when_abandoned(tmp_path: Path) -> None:
+    """Dropping the iterator early leaves the rest of the library unread; that is the cancel."""
+    paths = _presence_images(tmp_path, 6)
+    helper = _fake_helper([])
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        batches = iter_field_presence(paths, batch_size=2)
+        next(batches)
+        batches.close()
+
+    assert helper.get_tags.call_count == 1
+    helper.__exit__.assert_called_once()  # the shared process is torn down on the way out
+
+
+def test_iter_field_presence_degrades_when_exiftool_cannot_start(tmp_path: Path) -> None:
+    """With no exiftool binary the read yields nothing, so every photo stays unknown."""
+    paths = _presence_images(tmp_path, 2)
+    with patch("photo_tagger.metadata.ExifToolHelper", side_effect=FileNotFoundError("exiftool")):
+        assert list(iter_field_presence(paths)) == []
+        assert find_field_presence(paths) == {}
 
 
 def test_find_tagged_images_skips_paths_with_no_targets(tmp_path: Path) -> None:

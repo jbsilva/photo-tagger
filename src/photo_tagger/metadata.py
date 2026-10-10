@@ -110,6 +110,13 @@ _FIELD_PRESENCE_TAGS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# How many images one presence read covers. A batch is the smallest unit a caller can report
+# progress for or stop at, so a small one keeps the GUI's scan bar moving and its Stop button
+# prompt. Splitting costs about a millisecond per extra call (the exiftool process is shared and
+# stays open), which is nothing against a network share where a single file costs a round trip and
+# reading a few thousand of them runs for minutes.
+PRESENCE_BATCH_SIZE = 25
+
 # Tags read from a photo when collecting "existing" keywords, paired with the
 # KeywordSet field they feed. Applied in order, so XMP entries arrive before the
 # IPTC fall-back.
@@ -325,37 +332,35 @@ def find_tagged_images(
     return tagged
 
 
-def find_field_presence(
-    image_paths: Iterable[Path],
+@dataclass(frozen=True, slots=True)
+class PresenceBatch:
+    """
+    One batch of a chunked field-presence read.
+
+    *scanned* counts the images the batch covered whether or not they could be read, so a caller
+    driving a progress bar can advance by it. *presence* is empty when exiftool could not read the
+    batch at all: those images stay out of the results rather than being reported as carrying no
+    metadata.
+    """
+
+    scanned: int
+    presence: dict[Path, set[str]]
+
+
+def _read_field_presence(
+    paths: list[Path],
     *,
-    et: ExifToolHelper | None = None,
+    tags: list[str],
+    et: ExifToolHelper | None,
 ) -> dict[Path, set[str]]:
-    """
-    Report which of title/description/keywords each image already carries.
-
-    Returns a mapping from every input path to the set of present field names (:data:`FIELD_TITLE`,
-    :data:`FIELD_DESCRIPTION`, :data:`FIELD_KEYWORDS`); an empty set means the photo was scanned and
-    carries none. When exiftool cannot be run at all the result is an *empty dict*, so callers (the
-    GUI's Tagged column) can tell "could not read" from "read and found nothing" instead of wrongly
-    reporting every photo as untagged. A field counts as present when any of its tags is populated
-    on the image *or* its XMP sidecar, so presence accumulates across both. Like
-    :func:`find_tagged_images`, this is one batched exiftool call rather than one per image.
-
-    This is the per-field counterpart the GUI uses to deselect, say, photos that already have a
-    title and description while leaving keyword-only photos selected.
-    """
-    paths = list(image_paths)
+    """Read one batch of images; an empty result means exiftool could not be run for it."""
     presence: dict[Path, set[str]] = {path: set() for path in paths}
-    if not paths:
-        return presence
-
     all_targets, target_to_images = _build_target_index(paths)
     if not all_targets:
         return presence
 
-    all_tags = sorted({tag for tags in _FIELD_PRESENCE_TAGS.values() for tag in tags})
     try:
-        blocks = _batched_get_tags(et, files=all_targets, tags=all_tags)
+        blocks = _batched_get_tags(et, files=all_targets, tags=tags)
     except _EXIFTOOL_ERRORS as exc:
         logger.exception("failed_to_open_exiftool_for_field_presence", error=str(exc))
         return {}
@@ -366,11 +371,64 @@ def find_field_presence(
             continue
         present_fields = {
             field_name
-            for field_name, tags in _FIELD_PRESENCE_TAGS.items()
-            if any(_value_is_present(block.get(tag)) for tag in tags)
+            for field_name, tags_for_field in _FIELD_PRESENCE_TAGS.items()
+            if any(_value_is_present(block.get(tag)) for tag in tags_for_field)
         }
         for image_path in images:
             presence[image_path].update(present_fields)
+    return presence
+
+
+def iter_field_presence(
+    image_paths: Iterable[Path],
+    *,
+    batch_size: int = PRESENCE_BATCH_SIZE,
+    et: ExifToolHelper | None = None,
+) -> Generator[PresenceBatch]:
+    """
+    Yield :func:`find_field_presence` results one batch of images at a time.
+
+    The same read, split up: a caller that would otherwise wait minutes for a whole library gets a
+    result every *batch_size* images, so it can paint progress and stop early by abandoning the
+    iterator. All batches share one exiftool process, which is what keeps the split cheap.
+    """
+    paths = list(image_paths)
+    if not paths:
+        return
+    tags = sorted({tag for tags in _FIELD_PRESENCE_TAGS.values() for tag in tags})
+    try:
+        with managed_helper(et) as helper:
+            for start in range(0, len(paths), batch_size):
+                batch = paths[start : start + batch_size]
+                yield PresenceBatch(len(batch), _read_field_presence(batch, tags=tags, et=helper))
+    except _EXIFTOOL_ERRORS as exc:
+        # Opening the shared helper failed (a missing binary, most likely), so no batch can be
+        # read. Yielding nothing leaves every image absent from the results: unknown, not untagged.
+        logger.exception("failed_to_open_exiftool_for_field_presence", error=str(exc))
+
+
+def find_field_presence(
+    image_paths: Iterable[Path],
+    *,
+    et: ExifToolHelper | None = None,
+) -> dict[Path, set[str]]:
+    """
+    Report which of title/description/keywords each image already carries.
+
+    Returns a mapping from every input path to the set of present field names (:data:`FIELD_TITLE`,
+    :data:`FIELD_DESCRIPTION`, :data:`FIELD_KEYWORDS`); an empty set means the photo was scanned and
+    carries none. An image exiftool could not read at all is left out of the mapping entirely, so
+    callers (the GUI's Tagged column) can tell "could not read" from "read and found nothing"
+    instead of wrongly reporting it as untagged. A field counts as present when any of its tags is
+    populated on the image *or* its XMP sidecar, so presence accumulates across both. The read is
+    batched (see :data:`PRESENCE_BATCH_SIZE`) rather than one exiftool call per image.
+
+    This is the per-field counterpart the GUI uses to deselect, say, photos that already have a
+    title and description while leaving keyword-only photos selected.
+    """
+    presence: dict[Path, set[str]] = {}
+    for batch in iter_field_presence(image_paths, et=et):
+        presence.update(batch.presence)
     return presence
 
 
