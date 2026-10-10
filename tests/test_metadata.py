@@ -28,6 +28,7 @@ from photo_tagger.metadata import (
     build_contextual_prompt,
     find_field_presence,
     find_tagged_images,
+    first_caption,
     format_metadata_value,
     history_event_param,
     iter_field_presence,
@@ -36,7 +37,6 @@ from photo_tagger.metadata import (
     plan_writes,
     prompt_with_hint,
     read_all_tags,
-    read_caption,
     read_caption_values,
     read_capture_times,
     read_fields,
@@ -55,6 +55,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from photo_tagger.config import FileTypeTarget, SidecarMode
+
+
+def read_caption(path: Path) -> tuple[str | None, str | None]:
+    """Return the title and description in use, as the detail pane's Existing column shows them."""
+    found = read_caption_values(path)
+    return (first_caption(found[FIELD_TITLE]), first_caption(found[FIELD_DESCRIPTION]))
 
 
 def _fake_helper(get_tags_result: object = None) -> MagicMock:

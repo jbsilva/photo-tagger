@@ -50,7 +50,6 @@ from photo_tagger.metadata import (
     iter_field_presence,
     managed_helper,
     prompt_with_hint,
-    read_caption,
     read_field_sources,
     read_image_context,
     write_metadata_everywhere,
@@ -345,7 +344,6 @@ class GenerateWorker(QObject):
         # The content hash rides along in the context read (one exiftool call), so the cache
         # key covers the image stream only: embedding metadata does not invalidate the entry.
         context = read_image_context(path, include_content_hash=cache is not None)
-        existing_title, existing_description = read_caption(path)
         gps_info = {"position": context.gps_position} if context.gps_position else {}
         hint = self._hints.get(str(path), "").strip()
         prompt = build_contextual_prompt(
@@ -417,8 +415,8 @@ class GenerateWorker(QObject):
             )
         return Proposal(
             path=path,
-            existing_title=existing_title,
-            existing_description=existing_description,
+            existing_title=context.existing_title,
+            existing_description=context.existing_description,
             existing_keywords=context.existing_keywords,
             title=inference.title,
             description=inference.description,

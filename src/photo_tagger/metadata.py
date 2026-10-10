@@ -675,7 +675,7 @@ def read_caption_values(
     Read every title and description on a photo, the one photo-tagger uses first.
 
     Keyed by :data:`FIELD_TITLE` and :data:`FIELD_DESCRIPTION`, each holding one entry per file that
-    carries the field, the one in use first. :func:`read_caption` is the "just the values" view.
+    carries the field, the one in use first. :func:`first_caption` picks the value in use.
 
     The GUI needs the rest of the list to show that the photo itself still holds a caption the
     sidecar shadows: the value every XMP-aware tool ignores but ``exiftool photo.dng`` prints.
@@ -717,23 +717,6 @@ def _winner_first(values: list[CaptionValue], winner: str | None) -> list[Captio
     if winner is None:
         return values
     return sorted(values, key=lambda entry: entry.value != winner)
-
-
-def read_caption(
-    image_path: Path,
-    *,
-    et: ExifToolHelper | None = None,
-) -> tuple[str | None, str | None]:
-    """
-    Read the existing title and description from the image or its XMP sidecar.
-
-    Returns ``(title, description)``, each ``None`` when absent. Title prefers XMP-dc:Title and
-    falls back to IPTC:ObjectName; description prefers XMP-dc:Description and falls back to
-    EXIF:ImageDescription, and a sidecar's answer wins over the image's. The GUI uses this to show a
-    user what is already on a photo before it writes new metadata.
-    """
-    found = read_caption_values(image_path, et=et)
-    return (first_caption(found[FIELD_TITLE]), first_caption(found[FIELD_DESCRIPTION]))
 
 
 def first_caption(values: list[CaptionValue]) -> str | None:
@@ -812,7 +795,7 @@ class ImageContext:
     """
 
     existing_keywords: KeywordSet = field(default_factory=KeywordSet)
-    # The title and description already on the photo, read the same way read_caption reads them.
+    # The title and description already on the photo, the ones read_caption_values puts first.
     # The pipeline needs them to honor --preserve-title / --preserve-description.
     existing_title: str | None = None
     existing_description: str | None = None

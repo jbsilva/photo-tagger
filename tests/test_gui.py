@@ -187,7 +187,6 @@ def _stub_reads(
     *captions* overrides the per-field breakdown the detail pane reads, for a test that cares which
     file a value came from or what it shadows; by default both fields come from the sidecar alone.
     """
-    _patch_gui(monkeypatch, "read_caption", lambda _p: ("Old Title", "Old caption."))
     found = captions or {
         FIELD_TITLE: [CaptionValue("Old Title", SOURCE_SIDECAR)],
         FIELD_DESCRIPTION: [CaptionValue("Old caption.", SOURCE_SIDECAR)],
@@ -196,7 +195,11 @@ def _stub_reads(
     _patch_gui(
         monkeypatch,
         "read_image_context",
-        lambda _p, **_kwargs: ImageContext(existing_keywords=KeywordSet(subject=keywords)),
+        lambda _p, **_kwargs: ImageContext(
+            existing_keywords=KeywordSet(subject=keywords),
+            existing_title="Old Title",
+            existing_description="Old caption.",
+        ),
     )
 
 
@@ -1714,7 +1717,6 @@ def test_opening_a_photo_seeds_the_new_column_like_the_existing_one(
 ) -> None:
     """A photo opened without generating starts with its own keywords, chains and all."""
     img = _jpeg(tmp_path / "a.jpg")
-    _patch_gui(monkeypatch, "read_caption", lambda _p: (None, None))
     _patch_gui(
         monkeypatch,
         "read_caption_values",
@@ -3021,9 +3023,12 @@ def _stub_generation(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_gui(
         monkeypatch,
         "read_image_context",
-        lambda _p, **_kwargs: ImageContext(existing_keywords=KeywordSet(subject=["Beach"])),
+        lambda _p, **_kwargs: ImageContext(
+            existing_keywords=KeywordSet(subject=["Beach"]),
+            existing_title="Old",
+            existing_description="Old caption.",
+        ),
     )
-    _patch_gui(monkeypatch, "read_caption", lambda _p: ("Old", "Old caption."))
     _patch_gui(
         monkeypatch,
         "prepare_image_for_agent",

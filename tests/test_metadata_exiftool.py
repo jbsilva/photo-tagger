@@ -17,16 +17,18 @@ from PIL import Image
 from photo_tagger.config import TAG_EXIF_DATE_TIME_ORIGINAL
 from photo_tagger.fields import SHOWN_FIELDS
 from photo_tagger.metadata import (
+    FIELD_DESCRIPTION,
     FIELD_KEYWORDS,
     FIELD_TITLE,
     SOFTWARE_AGENT,
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
     WriteResult,
+    first_caption,
     iter_field_presence,
     metadata_targets,
     read_all_tags,
-    read_caption,
+    read_caption_values,
     read_field_sources,
     read_fields,
     read_image_context,
@@ -44,6 +46,12 @@ pytestmark = pytest.mark.skipif(
     shutil.which("exiftool") is None,
     reason="exiftool binary not available on PATH",
 )
+
+
+def read_caption(path: Path) -> tuple[str | None, str | None]:
+    """Return the title and description in use, as the detail pane's Existing column shows them."""
+    found = read_caption_values(path)
+    return (first_caption(found[FIELD_TITLE]), first_caption(found[FIELD_DESCRIPTION]))
 
 
 def _write_jpeg(path: Path) -> Path:

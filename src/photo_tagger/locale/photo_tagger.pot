@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-09 10:37+0200\n"
+"POT-Creation-Date: 2026-10-09 10:40+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -2711,28 +2711,28 @@ msgstr ""
 msgid "Choose the folder to watch first."
 msgstr ""
 
-#: src/photo_tagger/gui/workers.py:756
+#: src/photo_tagger/gui/workers.py:754
 msgid "No keywords found: there is nothing to build a vocabulary from."
 msgstr ""
 
-#: src/photo_tagger/gui/workers.py:785
+#: src/photo_tagger/gui/workers.py:783
 #, python-brace-format
 msgid "Wrote {kept} keyword(s) to {file}, dropped {dropped}."
 msgstr ""
 
-#: src/photo_tagger/gui/workers.py:799
+#: src/photo_tagger/gui/workers.py:797
 #, python-brace-format
 msgid "Reading {file}..."
 msgstr ""
 
-#: src/photo_tagger/gui/workers.py:809
+#: src/photo_tagger/gui/workers.py:807
 #, python-brace-format
 msgid "Reading the keywords on {n} photo..."
 msgid_plural "Reading the keywords on {n} photos..."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/photo_tagger/gui/workers.py:822
+#: src/photo_tagger/gui/workers.py:820
 #, python-brace-format
 msgid "Organizing {n} keyword(s) with {model}..."
 msgstr ""
