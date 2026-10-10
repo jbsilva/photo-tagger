@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "OFF"]
@@ -55,20 +55,30 @@ FileTypeTarget = Literal["sidecar", "photo", "both"]
 type SidecarOverrides = Mapping[str, FileTypeTarget]
 
 
-def _env_int(name: str, default: int) -> int:
-    """Read *name* from the environment as an int, warning and falling back if malformed."""
+def _env_number[N](name: str, default: N, parse: Callable[[str], N], kind: str) -> N:
+    """Read *name* from the environment with *parse*, warning and falling back if malformed."""
     raw = os.getenv(name)
     if raw is None or raw == "":
         return default
     try:
-        return int(raw)
+        return parse(raw)
     except ValueError:
         warnings.warn(
-            f"{name}={raw!r} is not a valid integer; using default {default}",
+            f"{name}={raw!r} is not a valid {kind}; using default {default}",
             RuntimeWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
         return default
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read *name* from the environment as an int, warning and falling back if malformed."""
+    return _env_number(name, default, int, "integer")
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read *name* from the environment as a float, warning and falling back if malformed."""
+    return _env_number(name, default, float, "float")
 
 
 def _env_in_range[N: (int, float)](name: str, value: N, default: N, low: N, high: N) -> N:
@@ -86,22 +96,6 @@ def _env_in_range[N: (int, float)](name: str, value: N, default: N, low: N, high
         stacklevel=3,
     )
     return default
-
-
-def _env_float(name: str, default: float) -> float:
-    """Read *name* from the environment as a float, warning and falling back if malformed."""
-    raw = os.getenv(name)
-    if raw is None or raw == "":
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        warnings.warn(
-            f"{name}={raw!r} is not a valid float; using default {default}",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        return default
 
 
 # Provider URLs and API keys are read from the environment so the user can override them
