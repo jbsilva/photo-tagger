@@ -602,9 +602,9 @@ def caption_source_note(values: list[CaptionValue]) -> str:
     """
     Describe where one existing title or description came from, and what it shadows.
 
-    The dimmed line under the field: which file the shown value came from, plus a line for any
-    other file holding a different value. That second case is the point: a caption inside the photo
-    is still there and still what ``exiftool photo.dng`` prints, but the sidecar wins on read, so it
+    The dimmed line under the field: which file the shown value came from, plus a line for any other
+    file holding a different value. That second case is the point: a caption inside the photo is
+    still there and still what ``exiftool photo.dng`` prints, but the sidecar wins on read, so it
     was invisible. Empty for a field no file carries.
     """
     if not values:
@@ -1262,8 +1262,8 @@ def record_dropped_terms(tally: dict[str, int], dropped: Iterable[str]) -> None:
     """
     Fold one photo's rejected keywords into the run's tally, counting how often each came up.
 
-    New terms stop being recorded past :data:`~photo_tagger.pipeline.MAX_TRACKED_DROPPED_TERMS`,
-    the same bound the CLI keeps: a run against the wrong vocabulary rejects thousands of distinct
+    New terms stop being recorded past :data:`~photo_tagger.pipeline.MAX_TRACKED_DROPPED_TERMS`, the
+    same bound the CLI keeps: a run against the wrong vocabulary rejects thousands of distinct
     keywords, and the summary only ever names the busiest few of them anyway.
     """
     for term in dropped:
@@ -2128,8 +2128,8 @@ class GuiConfigValues:
 
     The API key is deliberately not a field: it must never be written to disk.
 
-    The trailing fields have defaults because they were added later and every caller that only
-    cares about the provider and the save options should stay readable.
+    The trailing fields have defaults because they were added later and every caller that only cares
+    about the provider and the save options should stay readable.
     """
 
     provider_name: str

@@ -355,10 +355,10 @@ def make_skip_list_appender(skip_file: Path | None) -> Callable[[Path], None] | 
     The returned callback is safe to invoke from worker threads (a per-callback lock serializes the
     membership check, the file write, and the seen-set update) and from concurrent processes sharing
     the same *skip_file* (an OS-level file lock guards the same critical section). Membership is
-    re-read from disk on every call rather than cached: appends happen once per processed photo,
-    not in a hot loop, so re-reading a small text file is cheap, and it is the only way to see
-    another process's writes without relying on filesystem mtime resolution or client-side
-    attribute caching.
+    re-read from disk on every call rather than cached: appends happen once per processed photo, not
+    in a hot loop, so re-reading a small text file is cheap, and it is the only way to see another
+    process's writes without relying on filesystem mtime resolution or client-side attribute
+    caching.
     """
     if skip_file is None:
         return None

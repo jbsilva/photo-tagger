@@ -18,8 +18,8 @@ feature inside the promise :mod:`photo_tagger.telemetry` makes, with two limits 
 
 Instrumentation is process-global (``Agent.instrument_all``), so the single call at startup covers
 every agent the process goes on to build. That is why nothing here is threaded through
-:func:`photo_tagger.ai.create_agent`. The CLI makes the call for ``tag`` and ``watch`` only, and
-the GUI makes it at launch, which covers its vocabulary organizer too.
+:func:`photo_tagger.ai.create_agent`. The CLI makes the call for ``tag`` and ``watch`` only, and the
+GUI makes it at launch, which covers its vocabulary organizer too.
 """
 
 import os
@@ -139,8 +139,8 @@ def configure_tracing(*, enabled: bool, endpoint: str | None, include_content: b
     """
     Turn on OpenTelemetry tracing for every agent this process builds.
 
-    Call once, early, before any agent exists. Returns whether tracing ended up on, which is
-    always False when *enabled* is False: that is the default and the only no-op path.
+    Call once, early, before any agent exists. Returns whether tracing ended up on, which is always
+    False when *enabled* is False: that is the default and the only no-op path.
 
     Raises:
         ObservabilityError: no endpoint was given, or the OpenTelemetry SDK is not installed.

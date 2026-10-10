@@ -309,8 +309,8 @@ def test_analyze_image_attaches_partial_usage_when_the_call_fails() -> None:
     """
     Tokens burned by attempts pydantic-ai retried internally before giving up are not lost.
 
-    Regression test: analyze_image_with_ai only ever read usage off a successful result, so a
-    run that raised after several billed-but-invalid attempts discarded their token cost entirely.
+    Regression test: analyze_image_with_ai only ever read usage off a successful result, so a run
+    that raised after several billed-but-invalid attempts discarded their token cost entirely.
     """
 
     class _FailingAgent:

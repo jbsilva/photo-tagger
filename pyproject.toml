@@ -282,6 +282,11 @@ wrap-summaries = 100
 wrap-descriptions = 100
 pre-summary-newline = true
 
+# docstring-reflow wraps the prose paragraphs docformatter leaves alone (it mistakes "word: text"
+# for a field list). Same width, so the two tools never rewrite each other.
+[tool.docstring-reflow]
+wrap-length = 100
+
 [tool.zuban]
 strict = true
 disallow_untyped_defs = true

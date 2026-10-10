@@ -243,13 +243,12 @@ def _lightroom_csv_keywords(text: str) -> str | None:
     """
     Lift the keyword column out of a Lightroom CSV keyword export, or return None.
 
-    Lightroom's *Metadata > Export Keywords* offers two shapes of the same list. The ``.txt`` is
-    the indented list :func:`parse_keyword_lines` reads as-is; the ``.csv`` wraps it in four option
+    Lightroom's *Metadata > Export Keywords* offers two shapes of the same list. The ``.txt`` is the
+    indented list :func:`parse_keyword_lines` reads as-is; the ``.csv`` wraps it in four option
     columns ("Include On Export" and friends) and hides the indentation inside the last field. So
-    without this,
-    the CSV parses into terms like ``Y,Y,Y,N,Osprey`` that match nothing, and the whole hierarchy is
-    lost: a vocabulary that silently snaps no keyword at all, which strict mode turns into a run
-    that drops every one.
+    without this, the CSV parses into terms like ``Y,Y,Y,N,Osprey`` that match nothing, and the
+    whole hierarchy is lost: a vocabulary that silently snaps no keyword at all, which strict mode
+    turns into a run that drops every one.
 
     Detection reads the shape rather than the header text, which Lightroom translates: every data
     row must open with the same run of single-letter flags. Column *count* is no help, because
@@ -528,9 +527,9 @@ def prompt_with_vocabulary(base_prompt: str, vocabulary: Vocabulary | None) -> s
     """
     Append the vocabulary block to *base_prompt*, or return it unchanged when there is none.
 
-    The block rides in the user prompt rather than the system prompt, which puts it inside the
-    cache namespace: swapping vocabulary files starts a fresh slice instead of replaying keywords
-    chosen under the old one.
+    The block rides in the user prompt rather than the system prompt, which puts it inside the cache
+    namespace: swapping vocabulary files starts a fresh slice instead of replaying keywords chosen
+    under the old one.
     """
     if not vocabulary:
         return base_prompt
@@ -552,9 +551,9 @@ def load_vocabulary(path: Path, *, output_language: str = DEFAULT_OUTPUT_LANGUAG
 
     Accepts either Lightroom keyword-list export, ``.txt`` or ``.csv`` (see
     :func:`_lightroom_csv_keywords`), or a plain list of terms and paths (see
-    :func:`parse_keyword_lines`).
-    Raises :class:`VocabularyError` when the file cannot be read or holds no usable term, because
-    silently continuing with an empty vocabulary would drop every keyword in strict mode.
+    :func:`parse_keyword_lines`). Raises :class:`VocabularyError` when the file cannot be read or
+    holds no usable term, because silently continuing with an empty vocabulary would drop every
+    keyword in strict mode.
 
     The language decides one thing only: whether plurals are folded onto their singular (see
     :func:`folds_plurals`). Keep the file in the same language you generate in; a German run cannot

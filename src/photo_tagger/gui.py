@@ -784,8 +784,8 @@ def _svg_icon(name: str) -> QIcon:
     Load one of the bundled SVG icons, or an empty icon when it is missing.
 
     Drawn rather than typed: a text glyph renders at whatever weight the platform font feels like
-    and cannot be aligned with the rest of a toolbar. The icons share the muted grey the chevron
-    and the hint labels use, which reads on both a light and a dark palette.
+    and cannot be aligned with the rest of a toolbar. The icons share the muted grey the chevron and
+    the hint labels use, which reads on both a light and a dark palette.
     """
     path = _RESOURCES / name
     return QIcon(str(path)) if path.exists() else QIcon()
@@ -1677,9 +1677,9 @@ class ImageViewerDialog(QDialog):
     """
     One photo at full window size, with zoom and pan.
 
-    The detail pane's preview shares its panel with the metadata fields, so it is necessarily
-    small: too small to check whether a generated keyword is really in the frame. Clicking it
-    opens this window, which starts at fit-to-window and zooms up to 8:1.
+    The detail pane's preview shares its panel with the metadata fields, so it is necessarily small:
+    too small to check whether a generated keyword is really in the frame. Clicking it opens this
+    window, which starts at fit-to-window and zooms up to 8:1.
 
     Zoom is kept as a factor of the decoded image's own pixel size, and every zoom rescales the
     original pixmap rather than the last scaled one, so repeated zooming in and out does not
@@ -2099,10 +2099,10 @@ class MainWindow(QMainWindow):
         """
         Seed the decoded-image caches, one per size the window draws photos at.
 
-        The preview and thumbnail caches are keyed by path and live for the session: both hold
-        small pixmaps, and a folder of them is cheap. The viewer's is deliberately a single entry,
-        because at ``_VIEWER_MAX`` one pixmap is tens of megabytes; keeping the last one is enough
-        to reopen the photo just looked at instantly, without growing over a long session.
+        The preview and thumbnail caches are keyed by path and live for the session: both hold small
+        pixmaps, and a folder of them is cheap. The viewer's is deliberately a single entry, because
+        at ``_VIEWER_MAX`` one pixmap is tens of megabytes; keeping the last one is enough to reopen
+        the photo just looked at instantly, without growing over a long session.
         """
         self._preview_cache: dict[str, QPixmap] = {}
         self._thumb_cache: dict[str, QPixmap] = {}
@@ -2115,8 +2115,8 @@ class MainWindow(QMainWindow):
         Walking the tree for a row is not an option: the only widget-side walker,
         QTreeWidgetItemIterator, is never destroyed by PySide, so each walk leaves an iterator
         registered with QTreeModel pointing at whatever row it stopped on. The next teardown frees
-        that row and the removal after it dereferences the dangling pointer. An index also turns
-        the per-photo status refresh from a full walk into a dict hit.
+        that row and the removal after it dereferences the dangling pointer. An index also turns the
+        per-photo status refresh from a full walk into a dict hit.
 
         _rebuild_tree owns both dicts and drops them before it empties the tree, so no row is
         reachable from Python while Qt is tearing it down.
@@ -2958,8 +2958,8 @@ class MainWindow(QMainWindow):
         Build the small view-mode button that sits above the photo list.
 
         Deliberately quiet: an icon that opens a menu, the way a file browser offers its list and
-        tree views, rather than a labelled button competing with Select and Remove for a choice
-        most people make once.
+        tree views, rather than a labelled button competing with Select and Remove for a choice most
+        people make once.
         """
         button = self._view_button = QToolButton()
         button.setObjectName("viewmode")
@@ -4400,9 +4400,9 @@ class MainWindow(QMainWindow):
         Uncheck photos that already carry the fields *criterion* asks for.
 
         The fields come from the same background scan that fills the Tagged column, so the action
-        agrees with what the list shows. When the scan has not covered every photo yet the
-        criterion is parked and applied the moment it does: reading a few thousand photos off a
-        network share takes minutes, and doing it in the click handler froze the whole window.
+        agrees with what the list shows. When the scan has not covered every photo yet the criterion
+        is parked and applied the moment it does: reading a few thousand photos off a network share
+        takes minutes, and doing it in the click handler froze the whole window.
         """
         self._count("uncheck_tagged")
         if not self._items:
@@ -4520,10 +4520,10 @@ class MainWindow(QMainWindow):
         Drop the row index, then take the rows out one at a time.
 
         Deliberately not ``QTreeWidget.clear()``. PySide's clear() hands each top-level row back to
-        Python and deletes only the ones nothing references; C++ frees the rest after detaching
-        them from the model, so it never emits the removals. Any QTreeWidgetItemIterator still
-        registered with QTreeModel is left pointing at freed memory, and the next removal reads it.
-        A context menu holding the row the user right-clicked is enough to arm that.
+        Python and deletes only the ones nothing references; C++ frees the rest after detaching them
+        from the model, so it never emits the removals. Any QTreeWidgetItemIterator still registered
+        with QTreeModel is left pointing at freed memory, and the next removal reads it. A context
+        menu holding the row the user right-clicked is enough to arm that.
 
         takeTopLevelItem always goes through QTreeModel::beginRemoveItems, which tells every
         registered iterator what is going away. The index goes first so no row is reachable from
@@ -5087,8 +5087,8 @@ class MainWindow(QMainWindow):
         """
         Decode *item* at viewer resolution, reusing the last one and falling back to the preview.
 
-        A failure here is not worth an error dialog: the small preview is already on screen and
-        good enough to look at, so the viewer opens on that rather than on nothing.
+        A failure here is not worth an error dialog: the small preview is already on screen and good
+        enough to look at, so the viewer opens on that rather than on nothing.
         """
         key = str(item.path)
         if self._viewer_cache is not None and self._viewer_cache[0] == key:
@@ -5716,9 +5716,9 @@ class MainWindow(QMainWindow):
         Queue the next extra pass this batch owes; report whether one was queued.
 
         Only for a run that writes by itself, where these are the two things a person would do
-        before saving and nobody is there to do them: press **Retry Failed**, and generate again
-        the odd photo whose text came back in two writing systems. Each pass runs once per batch,
-        so a provider that is down, or a photo that really does show foreign text, cannot loop.
+        before saving and nobody is there to do them: press **Retry Failed**, and generate again the
+        odd photo whose text came back in two writing systems. Each pass runs once per batch, so a
+        provider that is down, or a photo that really does show foreign text, cannot loop.
         """
         name = self._next_pass()
         if name is None:
@@ -6154,8 +6154,8 @@ class MainWindow(QMainWindow):
 
         Resuming at or below the charge that started the rest would rest again a photo later, and
         the plan quietly substitutes a level above the floor when asked for one that low. Better
-        that the dialog never asks: the floor becomes the spin box's lower bound, and a floor
-        raised past the resume level carries it up to the same margin the CLI would have picked.
+        that the dialog never asks: the floor becomes the spin box's lower bound, and a floor raised
+        past the resume level carries it up to the same margin the CLI would have picked.
         """
         floor = self._battery_floor_spin.value()
         spin = self._battery_resume_spin
@@ -6508,11 +6508,11 @@ class MainWindow(QMainWindow):
         """
         Join the harmonization thread and release both it and its worker.
 
-        Harmonizing reads every photo's capture time in one batched ExifTool call, which has no
-        stop hook and takes as long as it takes: minutes over a network share. Closing the window
-        used to sit out the whole of it with the UI frozen, so detach on a timeout the way the scan
-        and the watch do. The worker only reads, and cutting its connections first means a detached
-        one cannot report back into a window that has moved on.
+        Harmonizing reads every photo's capture time in one batched ExifTool call, which has no stop
+        hook and takes as long as it takes: minutes over a network share. Closing the window used to
+        sit out the whole of it with the UI frozen, so detach on a timeout the way the scan and the
+        watch do. The worker only reads, and cutting its connections first means a detached one
+        cannot report back into a window that has moved on.
         """
         if self._harmonize_worker is not None:
             self._harmonize_worker.disconnect(self)

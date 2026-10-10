@@ -809,9 +809,9 @@ def test_cli_log_setup_failure_exits_cleanly(
     An OSError from setup_logging (e.g. an unwritable --log-folder) exits 1 with a clean message.
 
     Regression test: this used to propagate as a raw OSError traceback instead of the same clean
-    "log and exit 1" pattern every other pre-flight failure in this command already follows.
-    Cannot rely on the logger for the message: setup_logging removes the default sink before it
-    can fail, so nothing is guaranteed to be listening.
+    "log and exit 1" pattern every other pre-flight failure in this command already follows. Cannot
+    rely on the logger for the message: setup_logging removes the default sink before it can fail,
+    so nothing is guaranteed to be listening.
     """
     image = _make_jpeg(tmp_path / "img.cr3")
 
@@ -1431,9 +1431,9 @@ def test_config_file_sets_a_flag_a_command_shares_its_name_with(
     """
     ``[output] vocabulary`` must reach the run even though a ``vocabulary`` command exists.
 
-    Regression test: cyclopts drops every flat-config key that names a subcommand before matching
-    it against anything, so this key was silently ignored the moment the command was added, while
-    the keys next to it in the same table kept working.
+    Regression test: cyclopts drops every flat-config key that names a subcommand before matching it
+    against anything, so this key was silently ignored the moment the command was added, while the
+    keys next to it in the same table kept working.
     """
     listing = tmp_path / "keywords.txt"
     listing.write_text("Osprey\n", encoding="utf-8")

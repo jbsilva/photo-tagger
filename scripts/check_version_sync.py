@@ -56,10 +56,10 @@ def _collect_versions() -> dict[str, str | None]:
     """
     Extract the version string from each source-of-truth file.
 
-    The package no longer hardcodes its version: ``photo_tagger.__version__`` is
-    read from the installed distribution metadata, so ``pyproject.toml`` is the
-    only code-side source. The remaining entries are docs that must be bumped by
-    hand on release, which is exactly what this check guards.
+    The package no longer hardcodes its version: ``photo_tagger.__version__`` is read from the
+    installed distribution metadata, so ``pyproject.toml`` is the only code-side source. The
+    remaining entries are docs that must be bumped by hand on release, which is exactly what this
+    check guards.
     """
     return {
         _CANONICAL: _grep(_CANONICAL, r'^version\s*=\s*"([^"]+)"', re.MULTILINE),

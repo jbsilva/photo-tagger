@@ -196,15 +196,15 @@ def _variant_map(spellings: dict[str, Counter[str]]) -> dict[str, str]:
     """
     Map each concept onto the busier concept it is merely a variant of, if there is one.
 
-    This is what unifies inflected forms in a language whose morphology nothing here knows:
-    "Закаты" folds into "Закат" and "Landschaften" into "Landschaft" because they are close enough
-    as strings, and because the more frequent one is settled first. Concepts too short for that
-    judgement stand on their own (see
-    :func:`~photo_tagger.vocabulary.fuzzy_key_match`), so "Alle" never swallows "Alles".
+    This is what unifies inflected forms in a language whose morphology nothing here knows: "Закаты"
+    folds into "Закат" and "Landschaften" into "Landschaft" because they are close enough as
+    strings, and because the more frequent one is settled first. Concepts too short for that
+    judgement stand on their own (see :func:`~photo_tagger.vocabulary.fuzzy_key_match`), so "Alle"
+    never swallows "Alles".
 
-    A concept whose spellings differ only in case is already one concept by this point; this pass
-    is strictly about wording that the loose key alone cannot equate. Every concept takes part,
-    parents included, so a hierarchy converges the same way its leaves do.
+    A concept whose spellings differ only in case is already one concept by this point; this pass is
+    strictly about wording that the loose key alone cannot equate. Every concept takes part, parents
+    included, so a hierarchy converges the same way its leaves do.
     """
     mentions = Counter({concept: counter.total() for concept, counter in spellings.items()})
     canonical: dict[str, str] = {}
@@ -235,10 +235,10 @@ def build_session_vocabulary(
     in its own majority spelling.
 
     What counts as "the same concept" depends on *output_language* exactly as it does for a
-    vocabulary file: singular and plural are one concept in English, two in a language whose
-    plurals this code cannot read (see :func:`~photo_tagger.vocabulary.folds_plurals`). Whatever
-    the language, :func:`_variant_map` then folds the close-enough leftovers together, which is how
-    a Russian or German shoot converges without anyone teaching this module those languages.
+    vocabulary file: singular and plural are one concept in English, two in a language whose plurals
+    this code cannot read (see :func:`~photo_tagger.vocabulary.folds_plurals`). Whatever the
+    language, :func:`_variant_map` then folds the close-enough leftovers together, which is how a
+    Russian or German shoot converges without anyone teaching this module those languages.
     """
     fold_plurals = folds_plurals(output_language)
     totals, spellings, chains = _count_keywords(keyword_lists, fold_plurals=fold_plurals)

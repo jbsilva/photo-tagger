@@ -17,10 +17,10 @@ Two inputs decide when to rest, and both are read at the same moment, the end of
   That needs no wattage numbers from the user, and it follows screen brightness and whatever else
   the machine is doing without being told.
 
-Deciding once per window rather than once per photo is deliberate. A rest after every photo would
-be too short to charge anything, and it would leave the model server idle in small doses all day,
-which is how a server that unloads idle models ends up reloading one. Every rest is capped for the
-same reason: LM Studio, for one, drops a JIT-loaded model after an hour.
+Deciding once per window rather than once per photo is deliberate. A rest after every photo would be
+too short to charge anything, and it would leave the model server idle in small doses all day, which
+is how a server that unloads idle models ends up reloading one. Every rest is capped for the same
+reason: LM Studio, for one, drops a JIT-loaded model after an hour.
 
 Reading the battery is best-effort on every platform. A machine with no battery, or one this module
 cannot read, simply never rests for battery reasons; the duty cycle still applies.

@@ -212,10 +212,10 @@ class _UsageAccumulator:
         """
         Fold tokens burned by a call that ultimately failed into the running totals.
 
-        pydantic-ai retries invalid structured output internally before giving up; each attempt
-        is a real, billed request even though the run as a whole raises. inference_calls and
-        inference_seconds are deliberately left untouched: they count completed, usable calls,
-        and folding a failure into them would blur that meaning.
+        pydantic-ai retries invalid structured output internally before giving up; each attempt is a
+        real, billed request even though the run as a whole raises. inference_calls and
+        inference_seconds are deliberately left untouched: they count completed, usable calls, and
+        folding a failure into them would blur that meaning.
         """
         input_tokens, output_tokens, total_tokens = usage
         with self._lock:
@@ -1079,8 +1079,8 @@ def _notify_success(ctx: _BatchContext, image_file: Path) -> None:
     """
     Invoke ``ctx.on_success`` defensively; a callback failure must not abort the batch.
 
-    Silent while a session is being analyzed: nothing has been written yet, and the callback is
-    what appends to the resume skip list. The flush calls this once the write lands.
+    Silent while a session is being analyzed: nothing has been written yet, and the callback is what
+    appends to the resume skip list. The flush calls this once the write lands.
     """
     if ctx.on_success is None or ctx.pending is not None:
         return

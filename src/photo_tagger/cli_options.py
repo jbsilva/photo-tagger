@@ -1002,9 +1002,9 @@ def _apply_shadowed_keys(
     moment a ``vocabulary`` command existed. These keys are therefore handed to the argument they
     name directly, mirroring what cyclopts would have done with them.
 
-    This is cyclopts' own matching step, called directly on the keys its filter removed, rather
-    than a second implementation of it: conversion, validation, and "a flag the user passed wins"
-    all behave exactly as they do for every other key.
+    This is cyclopts' own matching step, called directly on the keys its filter removed, rather than
+    a second implementation of it: conversion, validation, and "a flag the user passed wins" all
+    behave exactly as they do for every other key.
     """
     if not values:
         return

@@ -322,9 +322,9 @@ def test_make_skip_list_appender_survives_lock_timeout(tmp_path: Path) -> None:
     """
     Losing the race for the cross-process lock skips this one entry, never hangs or raises.
 
-    Regression test: the lock used to have no timeout at all (block forever), which on a
-    filesystem without native flock support can wait on a marker file a crashed peer on another
-    host left behind and can never prove is stale.
+    Regression test: the lock used to have no timeout at all (block forever), which on a filesystem
+    without native flock support can wait on a marker file a crashed peer on another host left
+    behind and can never prove is stale.
     """
     skip_file = tmp_path / "processed.txt"
     appender = make_skip_list_appender(skip_file)
@@ -345,11 +345,11 @@ def test_make_skip_list_appender_reloads_entries_written_by_another_process(
     """
     Two appenders sharing one file never duplicate or lose entries, even after both wrote.
 
-    Simulates two processes sharing one --append-to-skip-file. Membership is re-read from disk
-    under the lock on every call rather than cached, so neither appender's own prior activity
-    can fool it into skipping a reload and missing the other's write (a cached-mtime approach
-    would be vulnerable here: both appenders would already have a concrete, non-None mtime of
-    their own before the shared entry is written).
+    Simulates two processes sharing one --append-to-skip-file. Membership is re-read from disk under
+    the lock on every call rather than cached, so neither appender's own prior activity can fool it
+    into skipping a reload and missing the other's write (a cached-mtime approach would be
+    vulnerable here: both appenders would already have a concrete, non-None mtime of their own
+    before the shared entry is written).
     """
     skip_file = tmp_path / "processed.txt"
     appender_a = make_skip_list_appender(skip_file)

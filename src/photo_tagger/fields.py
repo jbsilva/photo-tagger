@@ -140,9 +140,9 @@ class ExtraFields:
         """
         Render the exiftool tag map for a photo taken in *year*.
 
-        Returns an empty map when nothing was configured. A blank value is kept rather than
-        dropped: ``--set XMP-dc:Rights=`` is how ExifTool deletes a tag, and that is a thing people
-        want from a tool that writes rights metadata.
+        Returns an empty map when nothing was configured. A blank value is kept rather than dropped:
+        ``--set XMP-dc:Rights=`` is how ExifTool deletes a tag, and that is a thing people want from
+        a tool that writes rights metadata.
         """
         payload: dict[str, str] = {}
         if self.artist:

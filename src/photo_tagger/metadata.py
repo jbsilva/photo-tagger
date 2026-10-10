@@ -537,8 +537,8 @@ def _readings_for_field(spec: FieldSpec, blocks: list[dict[str, Any]]) -> list[F
     Collect one field's distinct values across the photo and its sidecar, best first.
 
     Distinct is the point: a photo credited the same way in XMP, EXIF, and IPTC is one line, while
-    one whose EXIF copyright disagrees with its XMP rights is two, which is exactly the
-    disagreement somebody runs ``show`` to find.
+    one whose EXIF copyright disagrees with its XMP rights is two, which is exactly the disagreement
+    somebody runs ``show`` to find.
     """
     readings: list[FieldReading] = []
     seen: set[str] = set()
@@ -949,9 +949,9 @@ def _year_of(image_path: Path, captured: datetime | None) -> int:
     """
     Return *captured*'s year, or the file's own mtime year, or this year.
 
-    A copyright notice needs a year for every photo, so this always answers. The mtime is the
-    honest second choice: for a scan or a photo whose EXIF was stripped, it is usually the day the
-    file was made. The current year is the last resort, for a file we cannot even stat.
+    A copyright notice needs a year for every photo, so this always answers. The mtime is the honest
+    second choice: for a scan or a photo whose EXIF was stripped, it is usually the day the file was
+    made. The current year is the last resort, for a file we cannot even stat.
     """
     if captured is not None:
         return captured.year

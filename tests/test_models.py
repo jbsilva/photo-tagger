@@ -64,10 +64,10 @@ def test_generated_metadata_bounds_work_before_cleaning_a_runaway_list() -> None
     """
     The keyword list is sliced to the cap before per-item cleaning, not after.
 
-    Regression test: cleaning used to run over the full raw list before truncating, so a
-    degenerate response (a model stuck in a repetition loop, a known failure mode this project
-    already guards against elsewhere via frequency_penalty) paid the per-item cost of every extra
-    entry even though only _MAX_KEYWORDS of them could ever survive.
+    Regression test: cleaning used to run over the full raw list before truncating, so a degenerate
+    response (a model stuck in a repetition loop, a known failure mode this project already guards
+    against elsewhere via frequency_penalty) paid the per-item cost of every extra entry even though
+    only _MAX_KEYWORDS of them could ever survive.
     """
     blanks = [""] * 40
     meta = GeneratedMetadata(title="t", description="d", keywords=[*blanks, "late"])

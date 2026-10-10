@@ -296,8 +296,8 @@ def test_run_model_folds_partial_usage_when_the_call_fails(
     """
     Tokens burned by attempts that ultimately failed still land in the batch's usage totals.
 
-    Regression test: _run_model only called ctx.usage.add() on success, so a run that raised
-    after billing several internally-retried attempts silently lost that cost from the summary.
+    Regression test: _run_model only called ctx.usage.add() on success, so a run that raised after
+    billing several internally-retried attempts silently lost that cost from the summary.
     """
     image = tmp_path / "img.cr3"
     image.write_text("x")

@@ -73,9 +73,9 @@ def test_watch_tags_a_file_stamped_in_the_future(tmp_path: Path) -> None:
     """
     A clock ahead of ours must not park a photo forever.
 
-    Cameras, card readers and NAS boxes stamp files in the future when their clock runs fast, and
-    so does any copy that preserves the source mtime. `now - mtime` is then negative and never
-    reaches settle_seconds, so the photo was re-polled on every interval and never tagged.
+    Cameras, card readers and NAS boxes stamp files in the future when their clock runs fast, and so
+    does any copy that preserves the source mtime. `now - mtime` is then negative and never reaches
+    settle_seconds, so the photo was re-polled on every interval and never tagged.
     """
     ahead = _make_photo(tmp_path / "ahead.jpg", age_seconds=-300.0)
     state = _PollState()

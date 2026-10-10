@@ -746,8 +746,8 @@ def test_deselect_tagged_waits_for_the_metadata_scan(
     """
     A pick made before the Tagged column is known is parked until the scan reaches the end.
 
-    Regression test: this used to run its own batched exiftool read straight from the click
-    handler, which froze the window for minutes on a few thousand photos on a network share.
+    Regression test: this used to run its own batched exiftool read straight from the click handler,
+    which froze the window for minutes on a few thousand photos on a network share.
     """
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
@@ -1795,9 +1795,9 @@ def test_save_marks_failed_when_write_raises(
     """
     write_metadata raising (e.g. exiftool missing) fails the save instead of crashing silently.
 
-    Regression test: the single-photo save path had no try/except around write_metadata, unlike
-    the batch SaveWorker path, so this exact scenario used to propagate all the way to Qt's
-    exception hook: the click handler died mid-save with no status update and no error shown.
+    Regression test: the single-photo save path had no try/except around write_metadata, unlike the
+    batch SaveWorker path, so this exact scenario used to propagate all the way to Qt's exception
+    hook: the click handler died mid-save with no status update and no error shown.
     """
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
@@ -3401,8 +3401,8 @@ def test_close_asks_for_confirmation_when_proposals_are_unsaved(
     """
     An unsaved proposal prompts for confirmation; declining keeps the window open.
 
-    Regression test: closeEvent used to discard every unsaved title/description/keyword edit with
-    no confirmation at all.
+    Regression test: closeEvent used to discard every unsaved title/description/keyword edit with no
+    confirmation at all.
     """
     img = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": img})
@@ -4319,9 +4319,9 @@ def test_a_refresh_run_replaces_the_answer_it_read_past(
     """
     The mixed-script pass asks again because the cached answer is the unusable one.
 
-    Reading past it is half the job: what comes back is a plain generic answer for this photo, so
-    it has to land under the same key. Otherwise the next run of the folder replays the mixed text
-    and re-flags a photo the window already fixed and wrote.
+    Reading past it is half the job: what comes back is a plain generic answer for this photo, so it
+    has to land under the same key. Otherwise the next run of the folder replays the mixed text and
+    re-flags a photo the window already fixed and wrote.
     """
     _stub_generation(monkeypatch)
     img = _jpeg(tmp_path / "a.jpg")
@@ -4361,8 +4361,8 @@ def test_hinted_photo_does_not_poison_the_shared_cache(
     A hint is a one-off correction; it must never become the cached "generic" answer.
 
     Regression test: a hinted result used to be stored under the same content-only cache key a
-    hint-less run reads from, so a later hint-less regeneration of the same photo silently
-    replayed someone's one-time correction as if it were the model's generic read.
+    hint-less run reads from, so a later hint-less regeneration of the same photo silently replayed
+    someone's one-time correction as if it were the model's generic read.
     """
     _stub_generation(monkeypatch)
     img = _jpeg(tmp_path / "a.jpg")
@@ -6698,9 +6698,9 @@ def test_worker_sends_the_configured_image_size(
     """
     The size the model sees comes from the configuration, not from the preview constant.
 
-    Regression test: the window hardcoded its 640 px preview size for generation, so
-    `[inference] jpeg_dimensions` was silently ignored and a GUI run and a CLI run over the same
-    photo asked the model different questions.
+    Regression test: the window hardcoded its 640 px preview size for generation, so `[inference]
+    jpeg_dimensions` was silently ignored and a GUI run and a CLI run over the same photo asked the
+    model different questions.
     """
     _stub_generation(monkeypatch)
     sizes: list[int] = []

@@ -98,8 +98,8 @@ def script_family(char: str) -> str | None:
     """
     Return the writing system *char* belongs to, or None when it carries none.
 
-    None covers everything that says nothing about language: digits, punctuation, whitespace,
-    emoji, and the few letters Unicode names without a script.
+    None covers everything that says nothing about language: digits, punctuation, whitespace, emoji,
+    and the few letters Unicode names without a script.
     """
     if not unicodedata.category(char).startswith("L"):
         return None

@@ -166,11 +166,11 @@ class _FlatKeywords:
     """
     The two flat keyword views a merge grows, each de-duplicated against its own contents.
 
-    ``subject`` feeds XMP-dc:Subject (mirrored to IPTC:Keywords) and ``weighted`` feeds
-    XMP-lr:WeightedFlatSubject. They usually hold the same terms, but they are read from different
-    tags and a photo can carry a weighted entry that its Subject list does not, so each needs its
-    own seen-set: de-duplicating both against ``subject`` alone let such a term be appended to
-    ``weighted`` a second time and written back to the photo as a literal duplicate.
+    ``subject`` feeds the XMP-dc:Subject tag (mirrored to IPTC:Keywords) and ``weighted`` feeds the
+    XMP-lr:WeightedFlatSubject tag. They usually hold the same terms, but they are read from
+    different tags and a photo can carry a weighted entry that its Subject list does not, so each
+    needs its own seen-set: de-duplicating both against ``subject`` alone let such a term be
+    appended to ``weighted`` a second time and written back to the photo as a literal duplicate.
     """
 
     subject: list[str]
