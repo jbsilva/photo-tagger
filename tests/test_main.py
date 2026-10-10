@@ -57,6 +57,16 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _no_real_exiftool_in_show_and_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give ``show`` and ``set`` a fake ExifTool: their tests fake each read and write anyway."""
+    monkeypatch.setattr(
+        cli_fields,
+        "managed_helper",
+        lambda _et: contextlib.nullcontext(MagicMock()),
+    )
+
+
 def _make_jpeg(path: Path) -> Path:
     """Write a small placeholder file so cyclopts' --input validator accepts the path."""
     path.write_bytes(b"\xff\xd8stub")

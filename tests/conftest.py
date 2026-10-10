@@ -62,6 +62,24 @@ def _isolate_telemetry_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 
 @pytest.fixture(autouse=True)
+def _exiftool_found_without_the_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Let the tests that fake ``ExifToolHelper`` run where ExifTool is not installed.
+
+    The helper looks up ExifTool's absolute path before it starts, so without a binary on PATH those
+    tests fail, as in the publish job. Tests of a missing binary re-patch the lookup locally.
+    """
+    from photo_tagger import programs  # noqa: PLC0415 - keep conftest import light.
+
+    if programs.find_program("exiftool") is None:
+        stand_in = "/usr/bin/exiftool"
+        monkeypatch.setattr(
+            "photo_tagger.metadata.find_program",
+            lambda name: stand_in if name == "exiftool" else programs.find_program(name),
+        )
+
+
+@pytest.fixture(autouse=True)
 def _no_stray_http_get(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Fail fast when a test reaches the network without patching it first.
