@@ -133,6 +133,59 @@ test("unknown schemas, bad JSON, big bodies, and other methods are refused", asy
   assert.equal((await worker.fetch(get, env, ctx)).status, 405);
 });
 
+test("a big body without a Content-Length is refused while it is read", async () => {
+  const { env, ctx, points } = fakeEnv();
+  const text = JSON.stringify({ ...RUN, pad: "x".repeat(200000) });
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+  });
+  const request = new Request("https://telemetry.tagger.photo", {
+    method: "POST",
+    body: stream,
+    duplex: "half",
+  });
+  assert.equal(request.headers.get("content-length"), null);
+  assert.equal((await worker.fetch(request, env, ctx)).status, 413);
+  assert.equal(points.length, 0);
+});
+
+test("blob19 only carries the JSON while every blob fits in AE's 16 KB", async () => {
+  const { env, ctx, points, settle } = fakeEnv();
+  // Eighteen blobs of 200 three-byte characters take 10.8 KB, and the JSON holds them plus more.
+  const wide = "€".repeat(200);
+  const names = ["app_version", "interface", "provider", "model", "arch", "os", "os_release"];
+  names.push("python_version", "output_language", "ui_language", "file_types", "cpu", "gpu");
+  names.push("exception_type", "crash_location", "crash_frames", "failure_kinds");
+  const body = { ...RUN, ...Object.fromEntries(names.map((name) => [name, wide])) };
+  for (let index = 0; index < 5; index += 1) body[`pad_${index}`] = "€".repeat(1000);
+  await worker.fetch(beacon(body), env, ctx);
+  await settle();
+  const blobs = points[0].blobs;
+  const bytes = blobs.reduce((total, blob) => total + new TextEncoder().encode(blob).length, 0);
+  assert.ok(bytes <= 16384);
+  assert.equal(blobs[18], "");
+});
+
+test("the install id index is cut to AE's 96 bytes", async () => {
+  const { env, ctx, points, settle } = fakeEnv();
+  await worker.fetch(beacon({ ...RUN, install_id: "i".repeat(150) }), env, ctx);
+  await settle();
+  assert.equal(points[0].indexes[0].length, 96);
+});
+
+test("an address over the rate limit is turned away before anything is stored", async () => {
+  const { env, ctx, points } = fakeEnv();
+  const keys = [];
+  env.LIMITER = { limit: async ({ key }) => (keys.push(key), { success: false }) };
+  const request = beacon(RUN, { headers: { "cf-connecting-ip": "203.0.113.7" } });
+  assert.equal((await worker.fetch(request, env, ctx)).status, 429);
+  assert.deepEqual(keys, ["203.0.113.7"]);
+  assert.equal(points.length, 0);
+});
+
 test("a failing D1 insert never turns into an error response", async () => {
   const { env, ctx, settle } = fakeEnv();
   env.DB.prepare = () => ({

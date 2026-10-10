@@ -35,6 +35,8 @@ also removes each object nested more than one level deep, and it cuts every stri
 length. Thus a hostile client cannot make a row bigger or change its shape. Older clients still send
 schema v1 or v2, and the Worker accepts both.
 
+The Worker refuses a body over 32 KB, however it is sent, and more than 60 beacons a minute from one
+address (`429 Too Many Requests`). The rate limiter uses the address as its key and stores nothing.
 The Worker does not store IP addresses, set cookies, or send data back. The endpoint accepts writes
 only, and it replies `204 No Content`.
 

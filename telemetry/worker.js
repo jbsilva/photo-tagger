@@ -27,14 +27,53 @@ const MAX_JSON_STR = 1000;
 // Top-level fields allowed past MAX_JSON_STR. A crash stack names up to 40 frames by module,
 // function, and line, which is what makes a crash report worth reading.
 const LONG_JSON_STR = { crash_stack: 6000 };
-// A real beacon is a few KiB; anything bigger is not ours. Rejecting on Content-Length keeps a
-// hostile client from making the Worker parse megabytes of JSON.
+// A real beacon is a few KiB; anything bigger is not ours. The body is read with this cap, whatever
+// Content-Length claims, so a hostile client cannot make the Worker parse megabytes of JSON.
 const MAX_BODY_BYTES = 32768;
 // Caps the number of keys a beacon may carry, nested ones included.
 const MAX_KEYS = 400;
-// AE caps all the blobs of one data point at 16 KB together; leave room for blob1..18.
-const MAX_BLOB_JSON_BYTES = 12000;
+// AE caps all the blobs of one data point at 16 KB together, in bytes, and an index at 96 bytes.
+const MAX_BLOBS_BYTES = 16384;
+const MAX_INDEX_BYTES = 96;
 const KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+
+const encoder = new TextEncoder();
+const byteLength = (text) => encoder.encode(text).length;
+// Cut a string to at most maxBytes of UTF-8 without splitting a character.
+function clampBytes(text, maxBytes) {
+  if (byteLength(text) <= maxBytes) return text;
+  let out = "";
+  for (const char of text) {
+    if (byteLength(out + char) > maxBytes) break;
+    out += char;
+  }
+  return out;
+}
+
+// Read the body as text, or return null once it passes maxBytes, without buffering the rest.
+async function readCapped(request, maxBytes) {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
 
 // Coerce to a bounded string; anything non-string (or oversized) becomes a safe value.
 const str = (v) => (typeof v === "string" ? v.slice(0, MAX_STR) : "");
@@ -79,13 +118,19 @@ function cleanObject(object, nested, budget) {
 
 const sanitize = (body) => cleanObject(body, false, { keys: MAX_KEYS });
 
+// Append the JSON as blob19 when it fits in what blob1..18 leave of AE's 16 KB, else "" (D1 still
+// keeps it). The other blobs are cut at 200 characters, which is up to 800 bytes each.
+function withJson(blobs, json) {
+  const used = blobs.reduce((total, blob) => total + byteLength(blob), 0);
+  return [...blobs, byteLength(json) <= MAX_BLOBS_BYTES - used ? json : ""];
+}
+
 function writeAnalytics(env, body, json) {
-  const fits = new TextEncoder().encode(json).length <= MAX_BLOB_JSON_BYTES;
   env.TELEMETRY.writeDataPoint({
     // index1: the random install id, so COUNT(DISTINCT index1) approximates active installs.
-    indexes: [str(body.install_id)],
+    indexes: [clampBytes(str(body.install_id), MAX_INDEX_BYTES)],
     // blob1..blob19, in the order queries.sql reads them. blob1..blob11 match schema v1 exactly.
-    blobs: [
+    blobs: withJson([
       str(body.app_version), //      blob1
       str(body.interface), //        blob2  "cli" | "gui"
       str(body.provider), //         blob3
@@ -104,8 +149,7 @@ function writeAnalytics(env, body, json) {
       str(body.crash_location), //   blob16 crash only: deepest in-app frame "module:func:line"
       str(body.crash_frames), //     blob17 crash only: last in-app frames, '>'-joined
       str(body.failure_kinds), //    blob18 run only: final-failure buckets "timeout:3,other:1"
-      fits ? json : "", //           blob19 the whole sanitized beacon as JSON (v3+ fields)
-    ],
+    ], json), //                     blob19 the whole sanitized beacon as JSON (v3+ fields)
     // double1..double13. double1..double3 match schema v1; the rest are v2 additions.
     doubles: [
       num(body.schema_version), //   double1
@@ -148,15 +192,33 @@ export default {
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
     }
+    // Every accepted beacon is a D1 row kept forever, so a flood from one address is cut off here.
+    if (env.LIMITER) {
+      const key = request.headers.get("cf-connecting-ip") ?? "unknown";
+      let allowed = true;
+      try {
+        ({ success: allowed } = await env.LIMITER.limit({ key }));
+      } catch (error) {
+        // A limiter that fails must not cost the beacon: let it through, as before the limiter.
+        console.error("rate_limit_failed", String(error));
+      }
+      if (!allowed) return new Response("Too Many Requests", { status: 429 });
+    }
 
+    // A declared length over the cap is refused before reading anything. The read below enforces
+    // the cap either way, since a client can leave the header out or lie in it.
     const length = Number(request.headers.get("content-length") ?? 0);
     if (!Number.isFinite(length) || length > MAX_BODY_BYTES) {
+      return new Response("Payload Too Large", { status: 413 });
+    }
+    const text = await readCapped(request, MAX_BODY_BYTES);
+    if (text === null) {
       return new Response("Payload Too Large", { status: 413 });
     }
 
     let body;
     try {
-      body = await request.json();
+      body = JSON.parse(text);
     } catch {
       return new Response("Bad Request", { status: 400 });
     }

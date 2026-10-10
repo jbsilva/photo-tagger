@@ -29,3 +29,22 @@ migrations_dir = "migrations"
 [[routes]]
 pattern = "telemetry.tagger.photo"
 custom_domain = true
+
+# At most 60 beacons a minute from one address. A run sends a handful, so only a flood reaches it.
+# The address is the limiter's key and nothing else: it is never written anywhere.
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+
+[ratelimits.simple]
+limit = 60
+period = 60
+
+# Keep the Worker's own log lines, so a failed D1 insert can be found after the fact. The
+# invocation logs stay off: they would store each request's metadata, which the collector promises
+# not to keep.
+[observability]
+enabled = true
+
+[observability.logs]
+invocation_logs = false

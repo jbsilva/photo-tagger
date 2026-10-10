@@ -49,3 +49,5 @@ telemetry/infra/*.tfstate.*
 telemetry/infra/crash.log
 # Wrangler's local cache, written next to wrangler.toml by any wrangler command.
 telemetry/.wrangler/
+# The backfill writes install ids and payloads; they belong in D1, not in git.
+telemetry/backfill.sql

@@ -208,6 +208,7 @@ Pássaro
 qapp
 qtbase
 qwen
+ratelimits
 rawpy
 RDWR
 recompiles
