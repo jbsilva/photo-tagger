@@ -17,6 +17,12 @@ All notable changes to this project are documented here. The format is based on
 - `photo-tagger show` prints what a photo carries, naming the ExifTool tag behind every value.
   `--all` dumps every tag, `--json` pipes it elsewhere.
 
+- GUI: **Save After Generating** writes each run's photos as soon as it finishes, so an overnight
+  batch is one click. The toggle sits on the arrow of either **Generate** button, which then reads
+  **Generate and Save**. The one set of **Save Options** sits beside it, because the write it makes
+  is the write **Save** makes. The photos that failed are retried once before the save, the way the
+  CLI retries its own. The closing line counts any still failing. The choice persists to `[gui]`.
+
 - GUI: **Settings > Copyright...** sets the same credit and notice, previews the tags a save writes,
   and persists them to `[copyright]`. A copyright alone is enough to save a photo, and **Insert**
   buttons type `©`, `{year}`, and `{artist}` into the field holding the cursor. The save menu's

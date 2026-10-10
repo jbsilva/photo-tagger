@@ -1280,6 +1280,23 @@ def review_summary(flagged: int) -> str:
     ).format(n=flagged)
 
 
+def failure_summary(failed: int) -> str:
+    """
+    One line for the status bar naming how many photos of a run did not generate.
+
+    Empty when none did. A run that writes by itself ends on its save's tally, which counts only the
+    photos it wrote, so without this line a batch left alone comes back reading as a clean success
+    it was not. The line names the button that tries again.
+    """
+    if not failed:
+        return ""
+    return ngettext(
+        "{n} photo failed (Retry Failed to try again).",
+        "{n} photos failed (Retry Failed to try again).",
+        failed,
+    ).format(n=failed)
+
+
 def vocabulary_summary(mapped: int, dropped: Mapping[str, int]) -> str:
     """
     One line for the status bar after a run: what the vocabulary changed across the batch.
@@ -1462,6 +1479,17 @@ def watch_status_text(settings: WatchSettings, *, added: int) -> str:
         "Watching {folders}: {n} photos added so far.",
         added,
     ).format(folders=folders, n=added)
+
+
+def photos_to_write(items: Iterable[PhotoItem]) -> list[PhotoItem]:
+    """
+    Pick the photos a save nobody reviews is to write: generated, and not written yet.
+
+    The caller decides the scope. A run that chains a save passes its own batch, so a proposal left
+    over from an earlier run is not swept up; a watch passes the whole list, because it has no
+    batch, only whatever has landed.
+    """
+    return [item for item in items if item.has_proposal and item.status == READY]
 
 
 # Order photos take when the tree is sorted by Status (ascending): lifecycle, failures last.
@@ -1953,6 +1981,8 @@ class GuiConfigValues:
     copyright_notice: str = ""
     rights: str = ""
     marked: bool | None = None
+    # Window-only, under [gui]: the CLI writes every photo it generates, so it has no flag for it.
+    save_after_generating: bool = False
 
 
 def _copyright_lines(values: GuiConfigValues) -> list[str]:
@@ -2025,6 +2055,9 @@ def config_toml_text(values: GuiConfigValues) -> str:
         "",
         "[artifacts]",
         f"undo_log = {_toml_bool(values.undo_log)}",
+        "",
+        "[gui]",
+        f"save_after_generating = {_toml_bool(values.save_after_generating)}",
         "",
         "[telemetry]",
         f"enabled = {_toml_bool(values.telemetry_enabled)}",
@@ -2153,6 +2186,9 @@ def merged_config_text(existing_text: str, values: GuiConfigValues) -> str:
 
     artifacts = _config_table(document, "artifacts")
     artifacts["undo_log"] = values.undo_log
+
+    window = _config_table(document, "gui")
+    window["save_after_generating"] = values.save_after_generating
 
     telemetry = _config_table(document, "telemetry")
     telemetry["enabled"] = values.telemetry_enabled

@@ -441,11 +441,12 @@ already-tagged columns), choose a provider and model (**Connection...** holds th
 the same checks as `doctor`), then **Generate Selected** to run the model on a background thread
 with a progress bar; results are cached so re-runs are free. Each photo's proposed title,
 description, and keywords appear next to the existing values in a side-by-side detail pane, where
-you can edit any field before you **Save**. A photo that fails turns red, shows why, and can be
-retried from its right-click menu, and **Help > Open Logs** opens the run log folder. It reads the
-same config file and environment variables as the CLI, and **Settings > Save Settings as Defaults**
-writes them back. PySide6 is only pulled in by the `gui` extra, so the plain CLI install stays
-lightweight.
+you can edit any field before you **Save**. For a batch nobody will sit through, **Save After
+Generating** (on either **Generate** button's arrow) writes each run's photos as soon as it
+finishes. A photo that fails turns red, shows why, and can be retried from its right-click menu, and
+**Help > Open Logs** opens the run log folder. It reads the same config file and environment
+variables as the CLI, and **Settings > Save Settings as Defaults** writes them back. PySide6 is only
+pulled in by the `gui` extra, so the plain CLI install stays lightweight.
 
 **Settings > Copyright...** holds your credit and copyright notice, written by every save next to
 whatever the model produced. `{year}` in a notice becomes the year of that photo, so one setting

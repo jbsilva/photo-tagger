@@ -210,6 +210,7 @@ from photo_tagger.gui_state import (
     ensure_path_dirs,
     expand_inputs,
     extension_counts,
+    failure_summary,
     file_dialog_name_filters,
     file_type_label,
     filter_photos,
@@ -237,6 +238,7 @@ from photo_tagger.gui_state import (
     paths_under,
     photo_item_to_report_row,
     photo_matches_filter,
+    photos_to_write,
     progress_timing_text,
     rank_vision_models,
     record_dropped_terms,
@@ -339,6 +341,11 @@ _VIEWER_MAX = 3200
 _THUMB_MAX = 200  # pixels for the grid thumbnails the model never sees
 _THUMB_SIZE = 160  # icon box in the grid
 _GENERATE_RETRIES = 2
+# How long a run that writes by itself waits before re-running the photos it failed on. The CLI
+# pauses before its own retry pass for the same reason (`_RETRY_PASS_DELAY_SECONDS` in pipeline):
+# a first-pass failure usually means the model server is overloaded or mid-restart, and asking
+# again straight away just retries into the same outage.
+_RETRY_PASS_DELAY_MS = 5000
 # How often the elapsed/remaining readout is repainted during a run. Half a second reads as a live
 # clock without being busywork.
 _TIMING_TICK_MS = 500
@@ -373,6 +380,9 @@ _NONE = gettext_noop("(none)")
 
 # Title of the warning box shown when persisting a setting to the config file fails.
 _CONFIG_SAVE_ERROR_TITLE = gettext_noop("Could not save the config file")
+
+# Shown when a save is asked for while the save options would write nothing at all.
+_PICK_A_FIELD = gettext_noop("Pick at least one field to write (Title, Description, or Keywords).")
 
 # Button labels every dialog uses. Named once so the catalogs hold one entry each and the dialogs
 # cannot drift apart; the use sites translate them with _() like the other module-level strings.
@@ -1810,6 +1820,8 @@ class MainWindow(QMainWindow):
         self._built_vocabulary: Path | None = None
         # Built before the panes: both Save buttons (detail pane and bottom bar) attach it.
         self._save_options_menu = self._build_save_options_menu()
+        # Same here, for the one action both Generate buttons offer in their arrow menus.
+        self._autosave_action = self._build_autosave_action()
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -1860,6 +1872,14 @@ class MainWindow(QMainWindow):
         # update the Tagged column without re-reading the file.
         self._save_jobs: dict[str, SaveJob] = {}
         self._saved_ok = 0
+        # Keys of the photos the last generation run covered, so a save it chains writes those and
+        # leaves every other proposal for review. Emptied once that save has them.
+        self._generated_keys: list[str] = []
+        # Whether this batch has already had its one automatic retry of the photos that failed.
+        self._retried = False
+        # What a chained save adds to its closing line: the vocabulary and review counts the
+        # generation reported, which nobody read if the run was left alone.
+        self._save_note = ""
         # The undo journal the batch in flight is recording into. None while idle, or when
         # recording is switched off in Settings.
         self._save_journal: UndoJournal | None = None
@@ -2413,6 +2433,7 @@ class MainWindow(QMainWindow):
             copyright_notice=self._notice_field.text().strip(),
             rights=self._rights_field.text().strip(),
             marked=self._marked_box.currentData(),
+            save_after_generating=self._autosave_action.isChecked(),
         )
 
     def _config_target(self) -> Path:
@@ -3600,7 +3621,11 @@ class MainWindow(QMainWindow):
 
     def _build_save_options_menu(self) -> QMenu:
         """Build the menu deciding what a save writes: fields, merge mode, sidecar, backup."""
-        menu = QMenu(self)
+        # Titled because this one menu appears in four places: the popup of both Save buttons,
+        # where it needs no title, and a submenu of both Generate menus, where it does. Every
+        # save goes through it, including the one a run chains for itself, and a button that is
+        # about to write has to be able to say what it will write.
+        menu = QMenu(_("Save Options"), self)
         menu.setToolTipsVisible(True)
         self._write_title = QAction(_("Write Title"), self)
         self._write_title.setToolTip(
@@ -3781,6 +3806,67 @@ class MainWindow(QMainWindow):
                 summary=summary,
             ),
         )
+        self._refresh_generate_labels()
+
+    def _build_autosave_action(self) -> QAction:
+        """
+        Build the toggle that lets a finished generation write its own photos.
+
+        Off by default: the window is built around reviewing before writing. Turning it on is what
+        an overnight batch needs, where waiting for a run to end just to press Save defeats the
+        point of leaving the machine alone.
+        """
+        action = QAction(_("Save After Generating"), self)
+        action.setCheckable(True)
+        action.setChecked(bool(self._raw_config.get("gui", {}).get("save_after_generating")))
+        action.setToolTip(
+            tooltip(
+                "Write every photo a run generates as soon as the run finishes, without "
+                "reviewing them. It is the same write the Save buttons make: Save Options, just "
+                "below, decides what goes onto the file, and Cancel stops it. Photos that failed "
+                "are retried once first, the way Retry Failed does.",
+            ),
+        )
+        action.toggled.connect(self._on_autosave_toggled)
+        return action
+
+    def _on_autosave_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
+        """Follow the toggle: the buttons now promise a write, and must be able to make one."""
+        self._refresh_generate_labels()
+        if enabled and not self._write_fields_chosen():
+            self._status.setText(_(_PICK_A_FIELD))
+
+    def _refresh_generate_labels(self) -> None:
+        """Keep both Generate buttons saying whether the run writes when it is done, and what."""
+        if not self._autosave_action.isChecked():
+            self._generate_button.setText(_("Generate Selected"))
+            self._generate_button.setToolTip(tooltip("Run the model on the checked photos."))
+            self._generate_one_button.setText(_("Generate This Photo"))
+            self._generate_one_button.setToolTip(
+                tooltip(
+                    "Run the model on just this photo, regardless of which photos are checked.",
+                ),
+            )
+            return
+        summary = _("Currently writes {options}.").format(options=self._save_options_summary())
+        self._generate_button.setText(_("Generate and Save Selected"))
+        self._generate_button.setToolTip(
+            tooltip(
+                "Run the model on the checked photos, then write them with no review, exactly as "
+                "Save Selected would. {summary} Change that under Save Options, in this button's "
+                "menu.",
+                summary=summary,
+            ),
+        )
+        self._generate_one_button.setText(_("Generate and Save This Photo"))
+        self._generate_one_button.setToolTip(
+            tooltip(
+                "Run the model on just this photo, then write it with no review, exactly as Save "
+                "This Photo would. {summary} Change that under Save Options, in this button's "
+                "menu.",
+                summary=summary,
+            ),
+        )
 
     def _build_save_row(self) -> QHBoxLayout:
         """Per-photo actions at the bottom of the detail pane; batch actions live below."""
@@ -3819,6 +3905,12 @@ class MainWindow(QMainWindow):
             lambda: self._generate_current(use_cache=False),
         )
         skip_one.setToolTip(tooltip("One-time: call the model even when a cached result exists."))
+        # The same QAction hangs in both Generate menus, so the two can never disagree about it,
+        # and the save options follow it: what the toggle writes with is one click away from the
+        # toggle rather than something to know about the other button.
+        self._generate_one_menu.addSeparator()
+        self._generate_one_menu.addAction(self._autosave_action)
+        self._generate_one_menu.addMenu(self._save_options_menu)
         self._generate_one_button.setMenu(self._generate_one_menu)
         # The save options live on the button's own arrow, so what a save writes is
         # discoverable right where the save happens (both Save buttons share one menu).
@@ -3891,6 +3983,9 @@ class MainWindow(QMainWindow):
         skip_all.setToolTip(
             tooltip("One-time: call the model even for photos with cached results."),
         )
+        self._generate_menu.addSeparator()
+        self._generate_menu.addAction(self._autosave_action)
+        self._generate_menu.addMenu(self._save_options_menu)
         self._generate_button.setMenu(self._generate_menu)
 
         self._save_selected_button = QToolButton()
@@ -4932,9 +5027,7 @@ class MainWindow(QMainWindow):
         if self._current is None or self._busy():
             return
         if not self._write_fields_chosen():
-            self._status.setText(
-                _("Pick at least one field to write (Title, Description, or Keywords)."),
-            )
+            self._status.setText(_(_PICK_A_FIELD))
             return
         self._commit_current()
         ok = self._write_item(self._current)
@@ -4949,9 +5042,7 @@ class MainWindow(QMainWindow):
 
     def _save_selected(self) -> None:
         if not self._write_fields_chosen():
-            self._status.setText(
-                _("Pick at least one field to write (Title, Description, or Keywords)."),
-            )
+            self._status.setText(_(_PICK_A_FIELD))
             return
         self._commit_current()
         targets = [item for item in self._items.values() if item.selected and item.has_proposal]
@@ -5024,8 +5115,10 @@ class MainWindow(QMainWindow):
                 entries=self._save_journal.entries,
             )
         self._save_journal = None
-        # Last, so the tally is not overwritten by the per-file status refresh above.
-        self._status.setText(
+        # Whatever the generation that chained this save had to report, consumed either way so a
+        # later manual save never repeats it.
+        note, self._save_note = self._save_note, ""
+        tally = (
             ngettext(
                 "Cancelled after saving {saved} photo.",
                 "Cancelled after saving {saved} photos.",
@@ -5036,19 +5129,21 @@ class MainWindow(QMainWindow):
                 "Saved {saved} of {n} checked photo.",
                 "Saved {saved} of {n} checked photos.",
                 total,
-            ).format(saved=self._saved_ok, n=total),
+            ).format(saved=self._saved_ok, n=total)
         )
+        # Last, so the tally is not overwritten by the per-file status refresh above.
+        self._status.setText(" ".join(part for part in (tally, note) if part))
         cancelled = self._cancelling
         self._cancelling = False
         if cancelled:
             # _reset_working just put the photos this batch never reached back to READY, which is
-            # exactly what _continue_watch looks for. Chaining on would rewrite the photos the
+            # exactly what a chained save looks for. Chaining on would rewrite the photos the
             # user stopped it from writing. The watch itself keeps running: whatever lands next
             # still queues normally.
             return
         # Same as a finished generation: the alert is for the run nobody was watching.
         self._alert_run_finished(self._status.text())
-        self._continue_watch()
+        self._continue_after_run()
 
     def _teardown_save_thread(self) -> None:
         """Join the save thread and release both it and its worker."""
@@ -5084,12 +5179,26 @@ class MainWindow(QMainWindow):
             return
         self._run_generation(failed)
 
-    def _run_generation(self, items: list[PhotoItem], *, use_cache: bool = True) -> None:
+    def _run_generation(
+        self,
+        items: list[PhotoItem],
+        *,
+        use_cache: bool = True,
+        retry: bool = False,
+    ) -> None:
         if self._busy() or not items:
             return
         # Fold the open photo's visible edits (most importantly a just-typed hint) into its
         # state before the run reads it.
         self._commit_current()
+        if not retry:
+            # A retry pass is the same batch having another go, so it keeps the batch (and its
+            # one retry) the chain is already working through, and adds to that batch's tallies
+            # rather than reporting the closing line off its own handful of photos.
+            self._generated_keys = [str(item.path) for item in items]
+            self._retried = False
+            self._vocabulary_mapped = 0
+            self._vocabulary_dropped = {}
         for item in items:
             item.status = WORKING
             self._refresh_status_cell(item)
@@ -5098,8 +5207,6 @@ class MainWindow(QMainWindow):
             # Clear a stale failure banner the moment its photo is re-queued.
             self._update_error_banner(current)
         self._cancelling = False
-        self._vocabulary_mapped = 0
-        self._vocabulary_dropped = {}
         self._set_running(running=True, total=len(items))
         self._status.setText(
             ngettext("Generating {n} photo...", "Generating {n} photos...", len(items)).format(
@@ -5190,7 +5297,10 @@ class MainWindow(QMainWindow):
         else:
             self._status.setText(self._generation_summary())
             # Only an unattended run is worth an alert: whoever pressed Cancel is already here.
-            self._alert_run_finished(self._status.text())
+            # A retry pass or a chained save still to come is part of the same job, so let the
+            # end of that job raise the one alert rather than one per step.
+            if not self._retry_pass_due() and not self._chained_save_targets():
+                self._alert_run_finished(self._status.text())
         cancelled = self._cancelling
         self._cancelling = False
         self._resort()
@@ -5201,24 +5311,113 @@ class MainWindow(QMainWindow):
             return
         self._after_generation()
 
-    def _generation_summary(self) -> str:
-        """Build the closing line: the run finished, what the vocabulary did, what to re-read."""
+    def _generation_notes(self) -> str:
+        """Report what a run has to say beyond 'it ran': failures, vocabulary, what to re-read."""
         parts = [
-            _("Generation finished."),
+            failure_summary(sum(1 for item in self._batch_items() if item.status == FAILED)),
             vocabulary_summary(self._vocabulary_mapped, self._vocabulary_dropped),
             review_summary(sum(1 for item in self._items.values() if item.foreign_terms)),
         ]
         return " ".join(part for part in parts if part)
 
+    def _generation_summary(self) -> str:
+        """Build the closing line: the run finished, what the vocabulary did, what to re-read."""
+        parts = (_("Generation finished."), self._generation_notes())
+        return " ".join(part for part in parts if part)
+
     def _after_generation(self) -> None:
         """
-        Harmonize the shoots when a session gap is set, then let a running watch carry on.
+        Retry, harmonize, then save: the steps a finished generation still owes the batch.
 
-        Harmonization is what ``--session-gap`` does inside a CLI run; here it lands on the
-        proposals, before the review, so the keywords you see are the ones a save would write.
+        Each one hands back here (or to :meth:`_continue_after_run`) when it ends, so the chain is
+        the same whether a step runs or is switched off. Harmonization is what ``--session-gap``
+        does inside a CLI run; here it lands on the proposals, before the review and before any save
+        that follows, so the keywords you see are the ones a save would write.
         """
+        if self._start_retry_pass():
+            return  # the pass comes back through here when it ends
         if self._start_harmonize(announce=False):
             return  # _on_harmonize_finished picks the chain back up
+        self._continue_after_run()
+
+    def _batch_items(self) -> list[PhotoItem]:
+        """List the photos of the run the chain is working through, skipping any since removed."""
+        return [item for key in self._generated_keys if (item := self._items.get(key)) is not None]
+
+    def _retry_pass_due(self) -> bool:
+        """Report whether this batch still owes its one automatic retry of what failed."""
+        if self._retried or not self._wants_chained_save():
+            return False
+        return any(item.status == FAILED for item in self._batch_items())
+
+    def _start_retry_pass(self) -> bool:
+        """
+        Queue one more go at the photos this batch failed on; report whether one was queued.
+
+        Only for a run that writes by itself. With nobody watching, a photo lost to a model server
+        that blinked would otherwise sit unwritten until someone noticed, which is the opposite of
+        what leaving the machine alone was for. **Retry Failed** is the same move by hand, and it
+        happens once per batch, so a provider that is simply down cannot loop.
+        """
+        if not self._retry_pass_due():
+            return False
+        self._retried = True
+        failed = [item for item in self._batch_items() if item.status == FAILED]
+        self._status.setText(
+            ngettext(
+                "Retrying {n} photo that failed...",
+                "Retrying {n} photos that failed...",
+                len(failed),
+            ).format(n=len(failed)),
+        )
+        QTimer.singleShot(_RETRY_PASS_DELAY_MS, self._run_retry_pass)
+        return True
+
+    def _run_retry_pass(self) -> None:
+        """Start the queued retry pass, or pick the chain back up when there is nothing to run."""
+        if self._closing:
+            return
+        failed = [item for item in self._batch_items() if item.status == FAILED]
+        if failed and not self._busy():
+            self._run_generation(failed, retry=True)
+            return
+        # Nothing left to retry, or another run claimed the window during the wait. Either way the
+        # chain carries on from where it was; a new run brings its own.
+        self._after_generation()
+
+    def _wants_chained_save(self) -> bool:
+        """Report whether a setting asks a finished generation to write its photos by itself."""
+        watching = self._watch_settings is not None and self._watch_settings.save
+        return watching or self._autosave_action.isChecked()
+
+    def _chained_save_targets(self) -> list[PhotoItem]:
+        """
+        Pick the photos a finished generation writes without being asked a second time.
+
+        Save After Generating covers the run that just ended, so a proposal left over from an
+        earlier one is still yours to review. A watch started with its own save box checked takes
+        every unsaved proposal instead: it has no batch, only whatever has landed.
+        """
+        if not self._wants_chained_save() or not self._write_fields_chosen():
+            return []
+        watching = self._watch_settings is not None and self._watch_settings.save
+        return photos_to_write(self._items.values() if watching else self._batch_items())
+
+    def _continue_after_run(self) -> None:
+        """After a finished run: write what nobody will review, then take what the watch found."""
+        if self._busy():
+            return
+        if targets := self._chained_save_targets():
+            # The save is about to replace the generation's closing line, so carry what that line
+            # said into it: an unattended run is read once, when it is over.
+            self._save_note = self._generation_notes()
+            # Written now, so a later step in the chain cannot write them a second time.
+            self._generated_keys = []
+            self._run_save(targets)
+            return
+        if self._wants_chained_save() and not self._write_fields_chosen():
+            # Silence here would mean coming back to an unattended run that wrote nothing.
+            self._status.setText(_(_PICK_A_FIELD))
         self._continue_watch()
 
     def _reset_working(self) -> int:
@@ -5736,11 +5935,11 @@ class MainWindow(QMainWindow):
         self._status.setText(harmonize_summary(result))
 
     def _on_harmonize_finished(self) -> None:
-        """Release the harmonization thread, then let a running watch carry on."""
+        """Release the harmonization thread, then let the rest of the chain carry on."""
         if self._closing:
             return
         self._teardown_harmonize_thread()
-        self._continue_watch()
+        self._continue_after_run()
 
     def _teardown_harmonize_thread(self) -> None:
         """
@@ -6421,18 +6620,10 @@ class MainWindow(QMainWindow):
             self._run_generation(targets)
 
     def _continue_watch(self) -> None:
-        """After a run: save unattended when the watch asks for it, then take what has landed."""
-        settings = self._watch_settings
-        if settings is None or self._busy():
+        """Take whatever the watch picked up while the last run was busy."""
+        if self._watch_settings is None or self._busy() or not self._watch_pending:
             return
-        unsaved = [
-            item for item in self._items.values() if item.has_proposal and item.status == READY
-        ]
-        if settings.save and self._write_fields_chosen() and unsaved:
-            self._run_save(unsaved)
-            return
-        if self._watch_pending:
-            self._generate_watched()
+        self._generate_watched()
 
     def _on_watch_finished(self) -> None:
         """Clean up after a watch that ended on its own (an error, or a stop already asked for)."""

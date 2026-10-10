@@ -229,6 +229,9 @@ photos go back to `pending` (or to `ready`, if they already had a proposal) so y
 later with another **Generate Selected**. Anything already generated keeps its proposal. The same
 button also cancels a save in progress.
 
+A run you plan to leave alone can write its photos itself: see
+[Generate and save in one click](#generate-and-save-in-one-click).
+
 ### 4. Review, edit, and save
 
 Click a photo to open it on the right. The detail pane is **side-by-side** for easy comparison: an
@@ -261,8 +264,10 @@ write just the open one, or **Save Selected** (bottom bar) to write the **checke
 a proposal. The save scope matches *Generate Selected* (the same checkboxes), so check everything to
 save everything.
 
-The arrow on either **Save** button opens the save options, which choose what every save writes
-(both buttons share them, and their tooltips always spell out the current choice):
+The arrow on either **Save** button opens the save options, which choose what every save writes.
+There is one set of them, shared by everything that writes: both **Save** buttons, and the **Save
+Options** submenu on either **Generate** button's arrow, which is the same menu again. Every one of
+those buttons spells out the current choice in its tooltip.
 
 - **Write Title**, **Write Description**, **Write Keywords** (all on by default), the GUI's
     equivalent of the CLI's `--no-write-title` / `--no-write-description` / `--no-write-keywords`.
@@ -293,6 +298,31 @@ few thousand photos takes minutes, so the counter is how you tell it is working 
 
 You can edit and save a photo even without generating a proposal first: the editable fields then
 start from the existing values.
+
+#### Generate and save in one click
+
+A run you will not sit through can write its own photos. **Save After Generating**, on the arrow of
+either **Generate** button, writes every photo a run produced as soon as that run finishes. Both
+buttons then read **Generate and Save**, and their tooltips spell out what that save writes.
+
+Before it writes, the run has one more go at the photos that failed, which is what **Retry Failed**
+does by hand. A model server that blinks for a minute costs you those photos otherwise, and nobody
+is there to press the button. The pass waits a few seconds first, because a failure usually means
+the server is busy or restarting, and it happens once per batch, so a provider that is down cannot
+loop. Photos still failing after it keep their `failed ✗` row, and the closing line counts them:
+`Saved 48 of 48 checked photos. 2 photos failed (Retry Failed to try again).`
+
+It covers the run you just started, so a proposal left over from an earlier one is still yours to
+review. Nothing else changes. The write is the one **Save Selected** makes, down to the
+[save options](#4-review-edit-and-save) it makes it with: **Save Options** in the **Generate**
+button's own menu is that same menu, so you can set what will be written where you turn the writing
+on. **Cancel** stops the writing after the file in flight, and **Undo Writes** puts the batch back.
+If the save options would write nothing at all, the window says so instead of finishing an
+unattended run in silence.
+
+**Settings > Save Settings as Defaults...** keeps the choice, as `save_after_generating` under
+`[gui]`. An overnight import is then one click on the next launch too. The toggle is off by default,
+because the window is built around reviewing before writing.
 
 !!! tip "API keys: field or environment"
 

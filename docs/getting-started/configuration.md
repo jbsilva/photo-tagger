@@ -144,6 +144,9 @@ skip_tagged = false   # Skip files that already have keywords, a title, or a des
 # cache_file = "cache.sqlite"   # SQLite cache of model outputs; reruns skip unchanged calls.
 # lock_file = "photo-tagger.lock" # Exclusive lock; refuse to start if another run holds it.
 undo_log = true               # Record what the run writes so `photo-tagger undo` can revert it.
+
+[gui]
+save_after_generating = false # Desktop window only: write each run's photos when it finishes.
 ```
 
 !!! note

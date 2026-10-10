@@ -82,6 +82,7 @@ from photo_tagger.gui_state import (
     estimate_remaining,
     expand_inputs,
     extension_counts,
+    failure_summary,
     fields_written,
     file_dialog_name_filters,
     file_type_label,
@@ -118,6 +119,7 @@ from photo_tagger.gui_state import (
     photo_item_to_report_row,
     photo_matches_filter,
     photo_sort_key,
+    photos_to_write,
     progress_timing_text,
     rank_vision_models,
     record_dropped_terms,
@@ -882,6 +884,15 @@ def test_config_writers_persist_the_end_of_run_alert_choices() -> None:
         display = load_defaults(tomllib.loads(text)).display
         assert display.notify is True
         assert display.notify_sound is True
+
+
+def test_config_writers_persist_save_after_generating() -> None:
+    """A fresh file and a merged one both carry it, under the window's own [gui] table."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    values = _config_values(save_after_generating=True)
+    for text in (config_toml_text(values), merged_config_text("[gui]\n", values)):
+        assert tomllib.loads(text)["gui"]["save_after_generating"] is True
 
 
 def test_config_writers_persist_the_repair_choice() -> None:
@@ -1903,6 +1914,23 @@ def test_watch_settings_default_to_reviewing_before_writing() -> None:
     settings = WatchSettings()
     assert settings.generate is True
     assert settings.save is False
+
+
+def test_photos_to_write_takes_only_the_unsaved_proposals() -> None:
+    """A save nobody reviews writes what was generated, and nothing else on the list."""
+    ready = PhotoItem(path=Path("/a.jpg"), status=READY, has_proposal=True)
+    saved = PhotoItem(path=Path("/b.jpg"), status=SAVED, has_proposal=True)
+    failed = PhotoItem(path=Path("/c.jpg"), status=FAILED, has_proposal=True)
+    pending = PhotoItem(path=Path("/d.jpg"))
+
+    assert photos_to_write([ready, saved, failed, pending]) == [ready]
+
+
+def test_failure_summary_names_the_button_that_tries_again() -> None:
+    """A batch left alone ends on its save's tally, so the photos it never got have to show."""
+    assert failure_summary(0) == ""
+    assert failure_summary(1) == "1 photo failed (Retry Failed to try again)."
+    assert failure_summary(3) == "3 photos failed (Retry Failed to try again)."
 
 
 def test_config_toml_text_carries_the_keyword_rules(tmp_path: Path) -> None:

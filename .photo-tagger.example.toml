@@ -95,3 +95,8 @@
 # file_log_level = "DEBUG"    # DEBUG | INFO | WARNING | ERROR | CRITICAL | OFF
 # console_log_level = "INFO"
 # log_folder = "logs"
+
+# --- desktop window only ------------------------------------------------------
+
+[gui]
+# save_after_generating = false  # true = write each run's photos when it finishes
