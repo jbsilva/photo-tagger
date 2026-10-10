@@ -281,6 +281,10 @@ class MainWindow(QMainWindow):
     A one-row header picks the provider and model (URL/key live in a Connection dialog), the left
     panel holds the checkable file tree with its add/select controls, the right pane reviews one
     photo (or a folder grid), and the bottom bar carries the batch actions with a progress bar.
+
+    Each of those parts, and each dialog, is a class of its own. What stays here is what they
+    share: the photos, what the right pane has open, the metadata scan behind the Tagged column,
+    the generate-then-save chain and the watch that feeds it, and the telemetry the window reports.
     """
 
     def __init__(self) -> None:

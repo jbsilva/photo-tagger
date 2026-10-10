@@ -49,13 +49,14 @@ module owns one part of that pipeline:
   `diagnostics.py`, `programs.py`: small helpers with one purpose each. `programs.py` finds every
   helper program (ExifTool too) by absolute path, never in the current directory. `errors.py`: the
   hierarchy of domain exceptions.
-- `gui/`: the optional PySide6 desktop frontend (the `photo-tagger gui` command), a thin shell over
+- `gui/`: the optional PySide6 desktop frontend (the `photo-tagger gui` command). It reviews before
+  it writes, and runs `create_agent` and `analyze_image_with_ai` on threads of its own, not
   `run_batch`. `gui/main_window.py` holds the window, `gui/workers.py` holds the background jobs,
-  and `gui/app.py` holds `launch`. The other modules hold the parts the window is built from.
-  `gui_state.py` holds its Qt-free logic, with unit tests. `gui_usage.py` holds its Qt-free usage
-  tracking for telemetry (runs, sessions, busy and idle time, edits before a save). The GUI only
-  adds to the pipeline: no pipeline code knows about Qt. PySide6 is in the `[gui]` extra, and the
-  code imports it lazily.
+  and `gui/app.py` holds `launch`. Each part of the window has a module of its own: a dialog, a
+  menu, or a pane such as `detail_pane.py` or `folder_grid.py`. `gui_state.py` holds its Qt-free
+  logic, with unit tests. `gui_usage.py` holds its Qt-free usage tracking for telemetry (runs,
+  sessions, busy and idle time, edits before a save). The GUI only adds to the pipeline: no pipeline
+  code knows about Qt. PySide6 is in the `[gui]` extra, and the code imports it lazily.
 - `telemetry/` (outside the package): the collector. It holds the Cloudflare Worker, its D1
   migrations, the marimo dashboard, and the OpenTofu configuration for the Cloudflare resources in
   `telemetry/infra/`. See `telemetry/README.md`.
@@ -102,6 +103,12 @@ people maintain by hand agree with it.
     Also, shiboken makes Qt attributes at runtime, so static tools misread the Qt shell in any case.
 
   A new module in `gui/` needs both headers. Copy them from an existing module.
+
+  A part of the window reports back to the window through Qt signals: `status` for the status line,
+  `used` for a feature count in telemetry, and a signal for each request. It asks the window for
+  what it needs through callables that its constructor takes. The window owns the photos and the
+  runs, and connects the parts to each other. A new part follows the same pattern. The tests patch a
+  module-level name through `_patch_gui`, which patches every GUI module that imports it.
 
   `tests/test_gui.py` has the same `# mypy: ignore-errors` header. It imports PySide6, which has no
   stubs and is not installed in the lint job. Without the header, zuban reports only an unresolved
