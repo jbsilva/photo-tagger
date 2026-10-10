@@ -139,6 +139,51 @@ def test_switching_iptc_to_utf8_keeps_the_values_already_there(tmp_path: Path) -
     assert iptc["IPTC:City"] == "Zürich"
 
 
+def test_a_line_break_in_a_value_is_written_as_text_not_as_arguments(tmp_path: Path) -> None:
+    """
+    A value that holds a line break stays one value, and nothing after the break is run.
+
+    pyexiftool sends one argument per line, so "ok" then "-EXIF:all=" used to wipe the EXIF block.
+    """
+    img = _write_jpeg(tmp_path / "img.jpg")
+    with ExifToolHelper() as helper:
+        helper.set_tags(
+            files=[str(img)],
+            tags={"EXIF:Make": "Canon"},
+            params=["-overwrite_original"],
+        )
+    rights = "ok\n-EXIF:all="
+    description = "Line one & more\nLine <two>"
+
+    written = write_metadata(
+        img,
+        KeywordSet(),
+        description=description,
+        extra={"XMP-dc:Rights": rights},
+        backup=False,
+        use_sidecar=False,
+    )
+
+    assert written == WriteResult.WRITTEN
+    with ExifToolHelper() as helper:
+        tags = helper.get_tags(
+            files=[str(img)],
+            tags=["EXIF:Make", "XMP:Rights", "XMP:Description"],
+        )
+    assert tags[0]["EXIF:Make"] == "Canon"
+    assert tags[0]["XMP:Rights"] == rights
+    assert tags[0]["XMP:Description"] == description
+    again = write_metadata(
+        img,
+        KeywordSet(),
+        description=description,
+        extra={"XMP-dc:Rights": rights},
+        backup=False,
+        use_sidecar=False,
+    )
+    assert again == WriteResult.UNCHANGED
+
+
 def test_a_webp_save_is_left_alone_the_second_time(tmp_path: Path) -> None:
     """WebP holds no IPTC, so the IPTC mirrors are not sent and a rerun finds nothing to change."""
     img = tmp_path / "img.webp"
@@ -595,3 +640,43 @@ def test_read_all_tags_reports_each_file_and_drops_binary(tmp_path: Path) -> Non
     assert by_file[str(img)]["File:FileType"] == "JPEG"
     assert by_file[str(tmp_path / "img.xmp")]["XMP:Subject"] == "Beach"
     assert all(not v.startswith("(Binary data") for tags in by_file.values() for v in tags.values())
+
+
+def test_the_utf8_switch_keeps_numbers_binary_and_marker_less_utf8_intact(tmp_path: Path) -> None:
+    """
+    A numeric keyword, binary IPTC data, and UTF-8 another tool wrote without the marker survive.
+
+    The number used to crash the -E escaping, the binary data came back as ExifTool's placeholder
+    text, and the marker-less UTF-8 was encoded a second time ("JosÃ©").
+    """
+    img = _write_jpeg(tmp_path / "img.jpg")
+    with ExifToolHelper() as helper:
+        helper.set_tags(
+            files=[str(img)],
+            tags={"IPTC:Keywords": ["2020", "café"]},
+            params=["-overwrite_original"],
+        )
+        helper.execute(
+            "-overwrite_original",
+            "-charset",
+            "iptc=UTF8",
+            "-IPTC:By-line=José",
+            str(img),
+        )
+
+    written = write_metadata(
+        img,
+        KeywordSet(),
+        title="Łódź",
+        description="line one\nline two",
+        backup=False,
+        use_sidecar=False,
+    )
+
+    assert written == WriteResult.WRITTEN
+    iptc = _iptc(img)
+    assert iptc["IPTC:By-line"] == "José"
+    keywords = iptc["IPTC:Keywords"]
+    assert isinstance(keywords, list)
+    assert [str(k) for k in keywords] == ["2020", "café"]
+    assert iptc["IPTC:ObjectName"] == "Łódź"

@@ -1,6 +1,7 @@
 """Read and write XMP/IPTC metadata via pyexiftool."""
 
 import contextlib
+import html
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -1680,6 +1681,32 @@ def _read_current(
     return dict(blocks[0]) if blocks else None
 
 
+def _escape_value(value: object) -> str:
+    """Spell *value* as HTML entities, the form ExifTool's ``-E`` option decodes."""
+    return html.escape(str(value), quote=False).replace("\n", "&#xa;").replace("\r", "&#xd;")
+
+
+def _escaped_line_breaks(set_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """
+    Return *set_kwargs* safe to send when a value holds a line break.
+
+    pyexiftool hands ExifTool one argument per line, so a line break inside a value ends it and
+    turns the rest into arguments of their own: ``ok`` then ``-EXIF:all=`` wipes the EXIF block.
+    With ``-E`` every value is read as HTML, so each one is escaped and a break is ``&#xa;``.
+    """
+    tags: Mapping[str, Any] = set_kwargs["tags"]
+    values = [item for value in tags.values() for item in _coerce_to_list(value)]
+    if not any("\n" in item or "\r" in item for item in values):
+        return set_kwargs
+    escaped = {
+        tag: [_escape_value(item) for item in value]
+        if isinstance(value, list)
+        else _escape_value(str(value))
+        for tag, value in tags.items()
+    }
+    return {**set_kwargs, "tags": escaped, "params": [*set_kwargs.get("params", []), "-E"]}
+
+
 def _set_tags(helper: ExifToolHelper, set_kwargs: dict[str, Any], target: Path) -> None:
     """
     Apply the payload, retrying once with ``-m`` when exiftool refuses over a minor error.
@@ -1689,6 +1716,7 @@ def _set_tags(helper: ExifToolHelper, set_kwargs: dict[str, Any], target: Path) 
     files. Not passed up front: the check is worth having for every other photo, and each waiver is
     logged.
     """
+    set_kwargs = _escaped_line_breaks(set_kwargs)
     try:
         helper.set_tags(**set_kwargs)
     except ExifToolExecuteError as exc:
