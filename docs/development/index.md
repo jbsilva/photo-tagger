@@ -40,17 +40,18 @@ directly on your machine.
 
     The script is idempotent, so it is safe to run it again. If you prefer to do the steps by hand,
     install [ExifTool](https://exiftool.org/) so that the `exiftool` binary is on `PATH`. Then run these
-    commands to sync the dependency groups and install the hooks:
+    commands to sync the dependency groups and install the hooks. prek is not in a dependency group, so
+    `--with prek` brings it in for the one command, as `scripts/dev-setup.sh` does:
 
     ```bash
     uv sync --group dev --group test
-    uv run prek install
+    uv run --with prek prek install
     ```
 
 !!! warning
 
-    photo-tagger requires Python 3.14+ and ExifTool on `PATH`. RAW decoding also needs libraw. Linux
-    wheels bundle it. On macOS, install it with `brew install libraw`. See
+    photo-tagger requires Python 3.14+ and ExifTool. RAW decoding also needs libraw. The rawpy wheels
+    include it. An Intel Mac may need `brew install libraw`. See
     [Installation](../getting-started/installation.md) for the full list of requirements.
 
 ## Everyday commands
