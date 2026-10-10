@@ -6241,17 +6241,18 @@ def _fill_copyright(
     marked: bool | None = True,
 ) -> None:
     """Type into the Copyright dialog's fields the way a user would."""
-    window._artist_field.setText(artist)  # noqa: SLF001
-    window._notice_field.setText(notice)  # noqa: SLF001
-    window._rights_field.setText(rights)  # noqa: SLF001
-    window._marked_box.setCurrentIndex(window._marked_box.findData(marked))  # noqa: SLF001
+    dialog = window._copyright_dialog  # noqa: SLF001
+    dialog._artist_field.setText(artist)  # noqa: SLF001
+    dialog._notice_field.setText(notice)  # noqa: SLF001
+    dialog._rights_field.setText(rights)  # noqa: SLF001
+    dialog._marked_box.setCurrentIndex(dialog._marked_box.findData(marked))  # noqa: SLF001
 
 
 def test_copyright_dialog_previews_the_resolved_tags(window: gui.MainWindow) -> None:
     """Typing a template shows what it becomes, which is how a wrong one is caught."""
     _fill_copyright(window, rights="© {year} {artist}")
 
-    preview = window._copyright_preview.toPlainText()  # noqa: SLF001
+    preview = window._copyright_dialog._preview.toPlainText()  # noqa: SLF001
     year = datetime.now(tz=UTC).astimezone().year
     assert f"EXIF:Copyright = Copyright (c) {year} Ada Lovelace" in preview
     assert f"XMP-dc:Rights = © {year} Ada Lovelace" in preview
@@ -6262,8 +6263,8 @@ def test_copyright_dialog_reports_a_template_it_cannot_fill(window: gui.MainWind
     """A placeholder it does not know says so, and nothing is written."""
     _fill_copyright(window, notice="Copyright (c) {year} {shot_at}")
 
-    assert "{shot_at}" in window._copyright_preview.toPlainText()  # noqa: SLF001
-    assert window._copyright_fields is None  # noqa: SLF001
+    assert "{shot_at}" in window._copyright_dialog._preview.toPlainText()  # noqa: SLF001
+    assert window._copyright_dialog.fields is None  # noqa: SLF001
     assert not window._writes_copyright()  # noqa: SLF001
 
 
@@ -6323,7 +6324,7 @@ def test_the_copyright_row_compares_the_file_with_what_a_save_writes(
     _fill_copyright(window)
     assert window._planned_copyright.text() == "(keeps the notice it has)"  # noqa: SLF001
 
-    window._preserve_copyright_box.setChecked(False)  # noqa: SLF001
+    window._copyright_dialog._preserve_copyright_box.setChecked(False)  # noqa: SLF001
     assert window._planned_copyright.text() == "Copyright (c) 2011 Ada Lovelace"  # noqa: SLF001
 
     window._write_copyright.setChecked(False)  # noqa: SLF001
@@ -6594,7 +6595,7 @@ def test_saving_settings_persists_the_copyright(
     _patch_gui(monkeypatch, "user_config_path", lambda: config)
     _patch_gui(monkeypatch, "find_config_file", lambda: None)
     _fill_copyright(window, rights="© {year} {artist}")
-    window._preserve_copyright_box.setChecked(False)  # noqa: SLF001
+    window._copyright_dialog._preserve_copyright_box.setChecked(False)  # noqa: SLF001
 
     window._save_config()  # noqa: SLF001
 
@@ -6606,8 +6607,8 @@ def test_saving_settings_persists_the_copyright(
     assert saved["rights"] == "© {year} {artist}"
     assert saved["marked"] is True
     assert saved["preserve_copyright"] is False
-    assert window._copyright_fields is not None  # noqa: SLF001
-    assert not window._copyright_fields.preserve  # noqa: SLF001
+    assert window._copyright_dialog.fields is not None  # noqa: SLF001
+    assert not window._copyright_dialog.fields.preserve  # noqa: SLF001
 
 
 def test_copyright_fields_fill_the_dialog(window: gui.MainWindow) -> None:
@@ -6640,24 +6641,24 @@ def _focus_copyright(window: gui.MainWindow, field: QLineEdit) -> None:
 
 def test_insert_buttons_build_a_notice_without_typing_it(window: gui.MainWindow) -> None:
     """The three buttons cover the parts of a notice a keyboard makes awkward."""
-    _focus_copyright(window, window._notice_field)  # noqa: SLF001
+    _focus_copyright(window, window._copyright_dialog._notice_field)  # noqa: SLF001
 
     _copyright_button(window, "©").click()
     _copyright_button(window, "{year}").click()
     _copyright_button(window, "{artist}").click()
 
-    assert window._notice_field.text() == "©{year}{artist}"  # noqa: SLF001
+    assert window._copyright_dialog._notice_field.text() == "©{year}{artist}"  # noqa: SLF001
     window._copyright_dialog.close()  # noqa: SLF001
 
 
 def test_insert_goes_to_the_field_holding_the_cursor(window: gui.MainWindow) -> None:
     """A copyright sign belongs in XMP as often as in the notice, so the cursor decides."""
-    _focus_copyright(window, window._rights_field)  # noqa: SLF001
+    _focus_copyright(window, window._copyright_dialog._rights_field)  # noqa: SLF001
 
     _copyright_button(window, "©").click()
 
-    assert window._rights_field.text() == "©"  # noqa: SLF001
-    assert window._notice_field.text() == ""  # noqa: SLF001
+    assert window._copyright_dialog._rights_field.text() == "©"  # noqa: SLF001
+    assert window._copyright_dialog._notice_field.text() == ""  # noqa: SLF001
     window._copyright_dialog.close()  # noqa: SLF001
 
 
@@ -6665,16 +6666,16 @@ def test_insert_falls_back_to_the_notice_field(window: gui.MainWindow) -> None:
     """With the cursor nowhere, the notice is the field a template belongs in."""
     _copyright_button(window, "{year}").click()
 
-    assert window._notice_field.text() == "{year}"  # noqa: SLF001
+    assert window._copyright_dialog._notice_field.text() == "{year}"  # noqa: SLF001
 
 
 def test_insert_leaves_the_typing_where_it_was(window: gui.MainWindow) -> None:
     """The button takes no focus, so the next keystroke still lands in the field."""
-    _focus_copyright(window, window._rights_field)  # noqa: SLF001
+    _focus_copyright(window, window._copyright_dialog._rights_field)  # noqa: SLF001
 
     _copyright_button(window, "©").click()
 
-    assert QApplication.focusWidget() is window._rights_field  # noqa: SLF001
+    assert QApplication.focusWidget() is window._copyright_dialog._rights_field  # noqa: SLF001
     window._copyright_dialog.close()  # noqa: SLF001
 
 
@@ -6740,7 +6741,7 @@ def test_copyright_preview_grows_with_its_content(window: gui.MainWindow) -> Non
     A label grew past the space the dialog gave it as fields were filled in, and its last tag line
     was cut off mid-text.
     """
-    preview = window._copyright_preview  # noqa: SLF001
+    preview = window._copyright_dialog._preview  # noqa: SLF001
     _fill_copyright(window, artist="", notice="", marked=None)
     short = preview.height()
 
@@ -6754,15 +6755,15 @@ def test_copyright_preview_flags_a_notice_exif_cannot_promise(window: gui.MainWi
     """A copyright sign in the EXIF notice is a bet on the reader, and the preview says so."""
     _fill_copyright(window, notice="Copyright © {year} {artist}")
 
-    assert "EXIF:Copyright" in window._copyright_warning.text()  # noqa: SLF001
-    assert "Exif 3.0" in window._copyright_warning.text()  # noqa: SLF001
+    assert "EXIF:Copyright" in window._copyright_dialog._warning.text()  # noqa: SLF001
+    assert "Exif 3.0" in window._copyright_dialog._warning.text()  # noqa: SLF001
 
 
 def test_copyright_preview_stays_quiet_for_a_plain_notice(window: gui.MainWindow) -> None:
     """The usual ASCII notice gets no warning, so the one above means something."""
     _fill_copyright(window, notice="Copyright (c) {year} {artist}")
 
-    assert window._copyright_warning.text() == ""  # noqa: SLF001
+    assert window._copyright_dialog._warning.text() == ""  # noqa: SLF001
 
 
 def test_write_copyright_toggle_skips_the_block(
@@ -6788,7 +6789,7 @@ def test_write_copyright_toggle_skips_the_block(
 
     assert captured["extra"] == {}
     # The dialog still holds it, ready for the next save.
-    assert window._notice_field.text() != ""  # noqa: SLF001
+    assert window._copyright_dialog._notice_field.text() != ""  # noqa: SLF001
 
 
 def test_write_copyright_toggle_reaches_the_save_summary(window: gui.MainWindow) -> None:
