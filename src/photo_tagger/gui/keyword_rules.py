@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_tagger.gui.common import CHOOSE_LABEL, SESSION_NOTE
-from photo_tagger.gui.widgets import close_row, hint_label
+from photo_tagger.gui.widgets import blurb, close_row, hint_label
 from photo_tagger.gui_state import load_vocabulary_file, tooltip, vocabulary_status
 from photo_tagger.i18n import _
 
@@ -105,15 +105,14 @@ class KeywordRulesDialog(QDialog):
         """Build the controlled-vocabulary half of the dialog."""
         group = QGroupBox(_("Controlled vocabulary"))
         layout = QVBoxLayout(group)
-        blurb = QLabel(
+        intro = blurb(
             _(
                 "Restrict generated keywords to the terms in a keyword file: every match is "
                 "rewritten to the file's own spelling and hierarchy, so a run cannot fill your "
                 "catalog with near-duplicates of keywords you already have.",
             ),
         )
-        blurb.setWordWrap(True)
-        layout.addWidget(blurb)
+        layout.addWidget(intro)
 
         self._vocabulary_field = QLineEdit(str(self._path or ""))
         self._vocabulary_field.setReadOnly(True)
@@ -152,7 +151,7 @@ class KeywordRulesDialog(QDialog):
         """Build the shoot-harmonization half of the dialog."""
         group = QGroupBox(_("Shoot harmonization"))
         layout = QVBoxLayout(group)
-        blurb = QLabel(
+        intro = blurb(
             _(
                 "Group photos into shoots separated by this many idle minutes (by capture time, "
                 "falling back to the file date) and make each shoot's keywords agree with itself: "
@@ -160,8 +159,7 @@ class KeywordRulesDialog(QDialog):
                 "over the proposals after each generation, so you still review before saving.",
             ),
         )
-        blurb.setWordWrap(True)
-        layout.addWidget(blurb)
+        layout.addWidget(intro)
 
         self._session_gap_box = QDoubleSpinBox()
         self._session_gap_box.setRange(0.0, 1440.0)

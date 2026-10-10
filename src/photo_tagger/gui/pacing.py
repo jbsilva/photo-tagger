@@ -8,13 +8,12 @@ from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
-    QLabel,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from photo_tagger.gui.widgets import close_row, hint_label
+from photo_tagger.gui.widgets import blurb, close_row, hint_label
 from photo_tagger.gui_state import pacing_summary, tooltip
 from photo_tagger.i18n import _
 from photo_tagger.pacing import MAX_BATTERY_FLOOR, SECONDS_PER_MINUTE, PacingPlan
@@ -38,19 +37,17 @@ class PacingDialog(QDialog):
         box = QVBoxLayout(self)
         # Broken by hand: a QLabel sizes itself to its longest line, so one long sentence would
         # open the dialog as wide as the sentence is.
-        blurb = QLabel(
+        intro = blurb(
             _("A model at full tilt can draw more power than the charger supplies.")
             + "\n"
             + _("Resting now and then lets the battery catch up and the fans wind down."),
         )
-        blurb.setWordWrap(True)
-        box.addWidget(blurb)
+        box.addWidget(intro)
         box.addLayout(self._build_form(plan))
 
         # What the settings above add up to, in the terms a person actually asked about: how long
         # the run stops for, and how often. A percentage does not answer that on its own.
-        self._pacing_preview = QLabel()
-        self._pacing_preview.setWordWrap(True)
+        self._pacing_preview = blurb()
         self._pacing_preview.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse,
         )

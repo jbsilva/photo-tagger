@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from photo_tagger.config import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 from photo_tagger.gui.common import CHOOSE_LABEL
+from photo_tagger.gui.widgets import blurb
 from photo_tagger.gui_state import WatchSettings, tooltip
 from photo_tagger.i18n import _
 
@@ -42,13 +42,12 @@ class WatchDialog(QDialog):
         self.setWindowTitle(_("Watch a folder"))
         self.setMinimumWidth(600)
         box = QVBoxLayout(self)
-        intro = QLabel(
+        intro = blurb(
             _(
                 "Point this at the folder your card reader, tethered capture, or sync client "
                 "fills. Photos already there are picked up first, then each new one as it lands.",
             ),
         )
-        intro.setWordWrap(True)
         box.addWidget(intro)
         box.addLayout(self._build_form(recursive=recursive))
 

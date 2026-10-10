@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QHBoxLayout,
-    QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -22,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_tagger.gui.common import CLOSE_LABEL, PATH_ROLE
-from photo_tagger.gui.widgets import busy_cursor, readonly_box
+from photo_tagger.gui.widgets import blurb, busy_cursor, readonly_box
 from photo_tagger.gui_state import (
     journal_label,
     reverted_images,
@@ -60,14 +59,13 @@ class UndoDialog(QDialog):
         self.setWindowTitle(_("Undo writes"))
         self.setMinimumWidth(660)
         box = QVBoxLayout(self)
-        intro = QLabel(
+        intro = blurb(
             _(
                 "Every recorded run, newest first, from this window and from the command line. "
                 "Undoing deletes the sidecars a run created and restores the files it overwrote "
                 "from their ExifTool backup.",
             ),
         )
-        intro.setWordWrap(True)
         box.addWidget(intro)
 
         self._journals = QListWidget()

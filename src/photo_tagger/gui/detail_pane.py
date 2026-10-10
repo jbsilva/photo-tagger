@@ -25,7 +25,14 @@ from PySide6.QtWidgets import (
 
 from photo_tagger.gui.common import NONE_LABEL
 from photo_tagger.gui.viewer import ImageViewerDialog
-from photo_tagger.gui.widgets import ClickableLabel, busy_cursor, fit_text_height, readonly_box
+from photo_tagger.gui.widgets import (
+    ClickableLabel,
+    blurb,
+    busy_cursor,
+    fit_text_height,
+    hint_label,
+    readonly_box,
+)
 from photo_tagger.gui_state import (
     ADDED,
     FAILED,
@@ -114,9 +121,7 @@ class DetailPane(QScrollArea):
         box = QVBoxLayout(content)
         # Shown only when the selected photo failed to generate: carries the reason and a hint
         # that "Open logs" has the full traceback. Hidden for healthy photos.
-        self._error_banner = QLabel()
-        self._error_banner.setObjectName("error")
-        self._error_banner.setWordWrap(True)
+        self._error_banner = blurb(object_name="error")
         self._error_banner.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._error_banner.hide()
         box.addWidget(self._error_banner)
@@ -288,7 +293,7 @@ class DetailPane(QScrollArea):
     def _build_save_row(self, save_options_menu: QMenu, autosave_action: QAction) -> QHBoxLayout:
         """Per-photo actions at the bottom of the pane; the batch actions live in the window."""
         row = QHBoxLayout()
-        hint_label = QLabel(_("Hint for the AI"))
+        hint_caption = QLabel(_("Hint for the AI"))
         self._hint = QLineEdit()
         self._hint.setPlaceholderText(_("e.g. 'The animal is a deer, not a boar'"))
         self._hint.setClearButtonEnabled(True)
@@ -300,11 +305,11 @@ class DetailPane(QScrollArea):
                 "never written to the file. Press Enter to regenerate right away.",
             ),
         )
-        hint_label.setToolTip(self._hint.toolTip())
+        hint_caption.setToolTip(self._hint.toolTip())
         self._hint.returnPressed.connect(
             lambda: self.generate_requested.emit(True, TRIGGER_HINT),  # noqa: FBT003 - use cache
         )
-        row.addWidget(hint_label)
+        row.addWidget(hint_caption)
         row.addWidget(self._hint, stretch=1)
         # The window keeps the label and the tooltip of both Generate buttons in step, so these
         # two, and the menu, are public.
@@ -568,9 +573,7 @@ def _section_label(text: str) -> QLabel:
 
 def _source_note() -> QLabel:
     """Build the dimmed line under an Existing field that says where its value came from."""
-    label = QLabel("")
-    label.setObjectName("hint")
-    label.setWordWrap(True)
+    label = hint_label("")
     label.setToolTip(
         tooltip(
             "Which file this value came from. A sidecar wins, so a value left in the photo is "

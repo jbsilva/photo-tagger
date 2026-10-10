@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -25,7 +24,7 @@ from PySide6.QtWidgets import (
 
 from photo_tagger.gui.common import CHOOSE_LABEL, CLOSE_LABEL, DEFAULT_VOCABULARY_FILE
 from photo_tagger.gui.threads import release_thread, start_in_thread
-from photo_tagger.gui.widgets import hint_label
+from photo_tagger.gui.widgets import blurb, hint_label
 from photo_tagger.gui.workers import VocabularyBuildWorker
 from photo_tagger.gui_state import tooltip
 from photo_tagger.i18n import _, ngettext
@@ -86,14 +85,13 @@ class VocabularyBuilderDialog(QDialog):
         self.setWindowTitle(_("Build a vocabulary"))
         self.setMinimumWidth(660)
         box = QVBoxLayout(self)
-        intro = QLabel(
+        intro = blurb(
             _(
                 "Reads the keywords your photos already carry, keeps the ones that earn their "
                 "place, and writes them as a keyword file to review and edit. Nothing is written "
                 "to your photos.",
             ),
         )
-        intro.setWordWrap(True)
         box.addWidget(intro)
         box.addWidget(self._build_source_group())
         box.addWidget(self._build_rules_group())

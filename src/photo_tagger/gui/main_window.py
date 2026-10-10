@@ -94,7 +94,7 @@ from photo_tagger.gui.threads import join_thread, release_thread, start_in_threa
 from photo_tagger.gui.undo_dialog import UndoDialog
 from photo_tagger.gui.vocabulary_builder import VocabularyBuilderDialog
 from photo_tagger.gui.watch_controller import WatchController
-from photo_tagger.gui.widgets import InputWatcher, busy_cursor
+from photo_tagger.gui.widgets import InputWatcher, blurb, busy_cursor, hint_label
 from photo_tagger.gui.workers import (
     GenerateWorker,
     HarmonizeWorker,
@@ -714,9 +714,9 @@ class MainWindow(QMainWindow):
         self._scan.uncheck_requested.connect(self._apply_tagged_criterion)
         box.addWidget(self._scan.row)
 
-        hint = QLabel(_("Drag photos or folders here. Select one and press Delete to remove it."))
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
+        hint = hint_label(
+            _("Drag photos or folders here. Select one and press Delete to remove it."),
+        )
         box.addWidget(hint)
         return panel
 
@@ -1549,10 +1549,8 @@ class MainWindow(QMainWindow):
         if not pixmap.isNull():
             icon.setPixmap(pixmap)
         box.addWidget(icon)
-        self._empty_message = QLabel(_(_EMPTY_START))
-        self._empty_message.setObjectName("empty")
+        self._empty_message = blurb(_(_EMPTY_START), object_name="empty")
         self._empty_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_message.setWordWrap(True)
         box.addWidget(self._empty_message)
         box.addStretch(1)
         return page

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_tagger.gui.common import SESSION_NOTE
-from photo_tagger.gui.widgets import close_row, fit_text_height, hint_label, readonly_box
+from photo_tagger.gui.widgets import blurb, close_row, fit_text_height, hint_label, readonly_box
 from photo_tagger.gui_state import (
     ascii_warning,
     build_copyright_fields,
@@ -121,13 +121,12 @@ class CopyrightDialog(QDialog):
         box = QVBoxLayout(self)
         # Two sentences, broken by hand: a QLabel's size hint is the width of its longest line, so
         # one long sentence opens the dialog as wide as itself however much it would wrap.
-        blurb = QLabel(
+        intro = blurb(
             _("The model cannot know who took a photo or who owns it.")
             + "\n"
             + _("Use {year} for the year that photo was taken, and {artist} for the name below."),
         )
-        blurb.setWordWrap(True)
-        box.addWidget(blurb)
+        box.addWidget(intro)
         box.addLayout(self._build_form(output))
         box.addLayout(self._build_inserts())
 
@@ -137,9 +136,7 @@ class CopyrightDialog(QDialog):
         self._preview = readonly_box(_PREVIEW_MIN_HEIGHT)
         box.addWidget(self._preview)
 
-        self._warning = QLabel("")
-        self._warning.setObjectName("warning")
-        self._warning.setWordWrap(True)
+        self._warning = blurb(object_name="warning")
         box.addWidget(self._warning)
         box.addWidget(hint_label(_(SESSION_NOTE)))
         box.addLayout(close_row(self))

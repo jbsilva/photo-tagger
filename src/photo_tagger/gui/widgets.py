@@ -57,12 +57,23 @@ def readonly_box(min_height: int) -> QPlainTextEdit:
     return box
 
 
-def hint_label(text: str) -> QLabel:
-    """Return a dimmed note that wraps, the kind a dialog puts under its settings."""
+def blurb(text: str = "", *, object_name: str = "") -> QLabel:
+    """
+    Return a label that wraps, the kind a dialog opens with to explain itself.
+
+    *object_name* picks a style from the sheet (``hint``, ``warning``, ``error``); empty keeps the
+    plain body text.
+    """
     label = QLabel(text)
-    label.setObjectName("hint")
+    if object_name:
+        label.setObjectName(object_name)
     label.setWordWrap(True)
     return label
+
+
+def hint_label(text: str) -> QLabel:
+    """Return a dimmed note that wraps, the kind a dialog puts under its settings."""
+    return blurb(text, object_name="hint")
 
 
 def close_row(dialog: QDialog) -> QHBoxLayout:
