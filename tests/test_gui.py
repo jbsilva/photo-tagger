@@ -70,6 +70,19 @@ def qapp() -> QApplication:
     return cast("QApplication", QApplication.instance() or QApplication([]))
 
 
+@pytest.fixture(autouse=True)
+def _cache_off_the_users_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Keep every test's cache writes inside tmp_path.
+
+    The window falls back to ``~/.photo-tagger/cache.sqlite`` when the config names no cache file,
+    so a test that starts a real run (``_run_generation`` spawns a worker that opens the cache)
+    wrote its stub answer into whatever the person running the suite had tagged. Six such rows had
+    accumulated in one real cache since July, one per test session.
+    """
+    monkeypatch.setattr(gui, "_DEFAULT_CACHE_FILE", tmp_path / "test-cache.sqlite")
+
+
 @pytest.fixture
 def window(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Iterator[gui.MainWindow]:
     """Yield a fresh main window, closing it (and its thread) after each test."""
