@@ -56,7 +56,7 @@ photo-tagger -i ./photos --ext cr3,jpg -r
 
     photo-tagger needs [ExifTool](https://exiftool.org/) on your `PATH`. It also needs a vision-language
     model: an Ollama or LM Studio server, or any OpenAI-compatible service. For the full setup (with
-    `libraw` for RAW decoding), see [Installation](getting-started/installation.md).
+    `libraw` for RAW decoding on an Intel Mac), see [Installation](getting-started/installation.md).
 
 ## Where to go next
 

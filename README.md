@@ -59,7 +59,8 @@ Full documentation: <https://jbsilva.github.io/photo-tagger/>
 - [ExifTool](https://exiftool.org/) available on `PATH`
 - A vision-language model (for example Qwen-VL). It can run in Ollama, LM Studio, or llama.cpp on
   your machine, on your own server, or at any OpenAI-compatible service, free or paid.
-- `libraw` support for `rawpy` (install via Homebrew on macOS: `brew install libraw`)
+- `libraw` support for `rawpy`. The rawpy wheels for Linux, Windows, and Apple silicon include it.
+  An Intel Mac may need `brew install libraw`
 
 ## Installation
 

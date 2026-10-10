@@ -24,7 +24,7 @@ available before you run your first batch.
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Python 3.14+       | The runtime. photo-tagger targets modern Python syntax.                                                                                                         |
 | ExifTool on `PATH` | Reads existing metadata and writes the title, description, and keywords. `pyexiftool` drives the `exiftool` binary.                                             |
-| `libraw` (rawpy)   | Decodes RAW files (CR3, CR2, NEF, DNG). Linux wheels bundle it. On macOS, run `brew install libraw`.                                                            |
+| `libraw` (rawpy)   | Decodes RAW files (CR3, CR2, NEF, DNG). The rawpy wheels include it. An Intel Mac may need `brew install libraw`.                                               |
 | Model server       | A vision-language model (for example Qwen3-VL) behind an OpenAI-compatible API: Ollama, LM Studio, or llama.cpp on your machine or server, or a hosted service. |
 
 !!! warning

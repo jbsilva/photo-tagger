@@ -162,13 +162,14 @@ system package manager:
 
     Download a build for your platform from [exiftool.org](https://exiftool.org/).
 
-On macOS, RAW decoding through rawpy needs libraw as well. Install it with Homebrew:
+photo-tagger decodes RAW files with rawpy, which uses libraw. The rawpy wheels for Linux, Windows,
+and Macs with Apple silicon include libraw, so no extra step is needed there. An Intel Mac may have
+no rawpy wheel for your Python version. Then rawpy builds from source and needs libraw from
+Homebrew:
 
 ```bash
 brew install libraw
 ```
-
-On Linux the rawpy wheels bundle libraw, so no extra step is needed there.
 
 !!! warning
 
