@@ -2,9 +2,11 @@
 SQLite-backed cache for vision-language inference results.
 
 Keyed by (image content hash, namespace), where the namespace combines model name with a digest of
-every other input that influences output: base user prompt, output language, sampling settings, JPEG
+every other input that shapes an answer: base user prompt, output language, sampling settings, JPEG
 quality/dimensions. Reruns with identical inputs skip the model call; reruns with any of those
-changed automatically land in a fresh namespace instead of replaying stale results.
+changed automatically land in a fresh namespace instead of replaying stale results. The one
+inference setting left out is ``max_tokens``, which cannot shape a stored answer; see
+:func:`build_cache_namespace`.
 
 Persistence is a single SQLite file. SQLite handles atomicity and crash safety for us, so the only
 synchronization concern is the in-process lock that guards the shared sqlite3 Connection across
@@ -50,14 +52,13 @@ def build_cache_namespace(  # noqa: PLR0913 - each kwarg is a distinct input to 
     *,
     user_prompt: str,
     temperature: float,
-    max_tokens: int,
     frequency_penalty: float,
     jpeg_dimensions: int,
     jpeg_quality: int,
     output_language: str = DEFAULT_OUTPUT_LANGUAGE,
 ) -> str:
     """
-    Combine *model_name* with a digest of every other inference input.
+    Combine *model_name* with a digest of the inference inputs that shape an answer.
 
     The returned string is suitable as ``model_name`` for :class:`InferenceCache`. Two runs that
     match on every argument share cache entries; if any of them differs the digest changes and the
@@ -67,10 +68,17 @@ def build_cache_namespace(  # noqa: PLR0913 - each kwarg is a distinct input to 
     system prompt means a new release, which is the right moment for a stale cache to be re-
     validated by the user anyway. Its one runtime-configurable input, *output_language*, IS folded
     in, so switching language never replays results generated in the old one.
+
+    ``max_tokens`` is deliberately absent, and it is the one omission worth explaining. The cap can
+    only ever abort a call: an answer that reaches it is incomplete, fails validation, and never
+    reaches the cache. No stored row was therefore shaped by the cap in force when it was written,
+    and raising or lowering it to escape a model stuck in a repetition loop (the one reason it is
+    ever reached) must not cost the user their whole cache. It was folded in once, so a cache
+    written before this change answers under a different digest.
     """
     h = hashlib.blake2b(digest_size=_CONFIG_DIGEST_BYTES)
     payload = (
-        f"{user_prompt}\0t={temperature}\0n={max_tokens}"
+        f"{user_prompt}\0t={temperature}"
         f"\0fp={frequency_penalty}\0d={jpeg_dimensions}\0q={jpeg_quality}"
         f"\0l={output_language}"
     )

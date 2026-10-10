@@ -534,8 +534,11 @@ and `~/.photo-tagger/cache.sqlite` otherwise. **Settings > Cache AI Results** tu
 for a session; a photo's right-click menu offers **Generate (Skip Cache)** for one-off fresh
 results.
 
-The window surfaces the most common options; inference settings use their defaults. For the full set
-of flags (custom prompts, date-range filters, sampling, logging), use the [CLI](cli-reference.md).
+The window surfaces the most common options; the rest of the inference settings come from the config
+file. One is worth knowing about: `[inference] jpeg_dimensions` is the size the model is shown, and
+raising it is what lets a run read small text in a photo. It costs time per photo and starts a fresh
+cache, so see [Image size](cli-reference.md#image-size) first. For the full set of flags (custom
+prompts, date-range filters, sampling, logging), use the [CLI](cli-reference.md).
 
 ## Limitations
 

@@ -6504,3 +6504,53 @@ def test_pacing_dialog_does_not_warn_about_an_ordinary_floor(window: gui.MainWin
     window._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
 
     assert MIXED_SCRIPT_MARK not in window._pacing_preview.text()  # noqa: SLF001 - the widget.
+
+
+def test_worker_sends_the_configured_image_size(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The size the model sees comes from the configuration, not from the preview constant.
+
+    Regression test: the window hardcoded its 640 px preview size for generation, so
+    `[inference] jpeg_dimensions` was silently ignored and a GUI run and a CLI run over the same
+    photo asked the model different questions.
+    """
+    _stub_generation(monkeypatch)
+    sizes: list[int] = []
+
+    def record_size(_path: Path, **kwargs: int) -> SimpleNamespace:
+        sizes.append(kwargs["max_size"])
+        return SimpleNamespace(data=b"x")
+
+    monkeypatch.setattr(gui, "prepare_image_for_agent", record_size)
+    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], jpeg_dimensions=1024)
+
+    worker.run()
+
+    assert sizes == [1024]
+
+
+def test_worker_cache_namespace_follows_the_image_size() -> None:
+    """Two sizes never read each other's results: the answer depends on what the model saw."""
+    small = gui._gui_cache_namespace("m", "English", jpeg_dimensions=640)  # noqa: SLF001
+    large = gui._gui_cache_namespace("m", "English", jpeg_dimensions=1024)  # noqa: SLF001
+    assert small != large
+
+
+def test_window_reads_the_image_size_from_the_config(
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured jpeg_dimensions is what the window's runs use."""
+    config = tmp_path / "config.toml"
+    config.write_text("[inference]\njpeg_dimensions = 896\n", encoding="utf-8")
+    monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(config))
+
+    window = gui.MainWindow()
+    try:
+        assert window._model_image_size == 896  # noqa: SLF001, PLR2004 - window state.
+    finally:
+        window.close()

@@ -128,9 +128,9 @@ from photo_tagger.cli_options import (
     to_pacing_plan,
 )
 from photo_tagger.config import (
+    DEFAULT_DIMENSIONS,
     DEFAULT_FREQUENCY_PENALTY,
     DEFAULT_JPEG_QUALITY,
-    DEFAULT_MAX_TOKENS,
     DEFAULT_OUTPUT_LANGUAGE,
     DEFAULT_SIDECAR_MODE,
     DEFAULT_TEMPERATURE,
@@ -345,6 +345,8 @@ _APP_DIR = Path.home() / ".photo-tagger"
 # app has no meaningful working directory (it may be launched from Finder with cwd "/"), so the
 # logs live under the user's home where the "Open logs" button can always find them.
 _LOG_FOLDER = _APP_DIR / "logs"
+# The on-screen preview in the detail pane. Not what the model sees: that is
+# [inference] jpeg_dimensions, read into MainWindow._model_image_size.
 _PREVIEW_MAX = 640
 # What the full-size viewer decodes to. Large enough that zooming in shows real detail (more than
 # a 5K display can put up at once), small enough that a RAW file still opens in about a second.
@@ -837,6 +839,7 @@ class GenerateWorker(QObject):
         vocabulary_strict: bool = False,
         repair_language: bool = False,
         pacing: PacingPlan | None = None,
+        jpeg_dimensions: int = DEFAULT_DIMENSIONS,
     ) -> None:
         """
         Store the run parameters; nothing happens until :meth:`run`.
@@ -861,6 +864,9 @@ class GenerateWorker(QObject):
         self._vocabulary = vocabulary
         self._vocabulary_strict = vocabulary_strict
         self._repair_language = repair_language
+        # The longest edge of the JPEG the model is shown. It keys the cache too, so a window that
+        # sends a different size than a CLI run never replays the other one's answers.
+        self._jpeg_dimensions = jpeg_dimensions
         # The vocabulary listing rides in the user prompt (so the model prefers those terms in the
         # first place), which also puts it in the cache namespace below: swapping vocabularies
         # starts a fresh slice instead of replaying keywords chosen under the old one.
@@ -967,6 +973,7 @@ class GenerateWorker(QObject):
                 self._model,
                 self._output_language,
                 user_prompt=self._prompt,
+                jpeg_dimensions=self._jpeg_dimensions,
             ),
         )
 
@@ -1038,7 +1045,7 @@ class GenerateWorker(QObject):
         cached = None if skip_cache else safe_cache_get(cache, content_key, file_name=path.name)
         inference = cached
         if inference is None:
-            jpeg = prepare_image_for_agent(path, max_size=_PREVIEW_MAX)
+            jpeg = prepare_image_for_agent(path, max_size=self._jpeg_dimensions)
             inference = analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
             # Before the cache write, as in the CLI pipeline, so what a rerun replays is the
             # repaired answer and the extra call is paid once.
@@ -1531,22 +1538,22 @@ def _gui_cache_namespace(
     model: str,
     output_language: str,
     user_prompt: str = DEFAULT_USER_PROMPT,
+    jpeg_dimensions: int = DEFAULT_DIMENSIONS,
 ) -> str:
     """
-    Build the cache namespace for GUI runs: the model plus the GUI's fixed inference settings.
+    Build the cache namespace for GUI runs: the model plus the settings a run was made with.
 
-    The GUI runs the agent with the library defaults and sends images at ``_PREVIEW_MAX``, so those
-    values (not the CLI flags) are what key its cache entries. The metadata language rides along so
-    switching it never replays results generated in the old language, and so does the prompt, which
-    carries the controlled vocabulary when there is one.
+    The GUI runs the agent with the library's sampling defaults, so those (not the CLI flags) key
+    its entries, alongside *jpeg_dimensions*, which is the size the window sends to the model. The
+    metadata language rides along so switching it never replays results generated in the old
+    language, and so does the prompt, which carries the controlled vocabulary when there is one.
     """
     return build_cache_namespace(
         model,
         user_prompt=user_prompt,
         temperature=DEFAULT_TEMPERATURE,
-        max_tokens=DEFAULT_MAX_TOKENS,
         frequency_penalty=DEFAULT_FREQUENCY_PENALTY,
-        jpeg_dimensions=_PREVIEW_MAX,
+        jpeg_dimensions=jpeg_dimensions,
         jpeg_quality=DEFAULT_JPEG_QUALITY,
         output_language=output_language,
     )
@@ -1868,6 +1875,10 @@ class MainWindow(QMainWindow):
         # in Settings > Pacing. The window rests exactly as a CLI run does, so an overnight batch
         # here is as gentle as one there.
         self._pacing_plan = to_pacing_plan(self._defaults.pacing)
+        # The size the model sees, from [inference] jpeg_dimensions. The window used to hardcode
+        # its preview size here, which silently ignored the configured value and gave CLI and GUI
+        # runs different answers (and separate cache namespaces) for the same photo.
+        self._model_image_size = self._defaults.inference.jpeg_dimensions
         self._init_keyword_rules()
 
         self.setWindowTitle(f"Photo Tagger {__version__}")
@@ -5304,6 +5315,7 @@ class MainWindow(QMainWindow):
             vocabulary_strict=self._vocabulary_strict,
             repair_language=self._repair_language,
             pacing=self._pacing_plan,
+            jpeg_dimensions=self._model_image_size,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)

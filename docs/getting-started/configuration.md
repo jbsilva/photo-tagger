@@ -41,7 +41,7 @@ These variables set defaults. Any matching CLI flag still overrides them. See
 | `MAX_TOKENS`          | `1200`                      | Maximum tokens to generate.                                                        |
 | `TIMEOUT_SECONDS`     | `60.0`                      | Timeout of one model request, in seconds.                                          |
 | `FREQUENCY_PENALTY`   | `0.5`                       | Penalty on repeated tokens.                                                        |
-| `JPEG_DIMENSIONS`     | `1280`                      | Max dimension (px) of the JPEG sent to the model.                                  |
+| `JPEG_DIMENSIONS`     | `640`                       | Longest edge (px) of the JPEG sent to the model.                                   |
 | `JPEG_QUALITY`        | `80`                        | JPEG quality (1-100) of the image sent to the model.                               |
 | `RETRIES`             | `5`                         | Retries when model output fails schema validation.                                 |
 | `DUTY_PERCENT`        | `100`                       | Default of `--duty` (1-100).                                                       |
@@ -99,7 +99,7 @@ temperature = 0.2        # Sampling temperature.
 max_tokens = 1200        # Maximum tokens to generate.
 timeout_seconds = 60.0   # Per-image inference timeout in seconds.
 frequency_penalty = 0.5  # Penalty on repeated tokens; discourages output loops.
-jpeg_dimensions = 1280   # Max dimension (px) of the JPEG sent to the model.
+jpeg_dimensions = 640    # Longest edge (px) sent to the model; 896 or 1024 to read text.
 jpeg_quality = 80        # JPEG quality (1-100) of the image sent to the model.
 repair_language = false  # Re-ask the model when its answer mixes writing systems.
 

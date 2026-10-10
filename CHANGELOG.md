@@ -61,8 +61,22 @@ All notable changes to this project are documented here. The format is based on
   the rest, so it is off by default; a repair that fails or comes back mixed keeps the original
   answer and the flag. In the GUI: **Settings > Rewrite Mixed-Language Output**.
 
+### Changed
+
+- `--jpeg-dimensions` now defaults to 640 px instead of 1280. Prefill scales with the pixel count,
+  so this is about a second less per photo on a local 30B model, and 640 px carries everything but
+  small text in the frame. Raise it to 896 or 1024 for photos of signs, documents, or labels. A run
+  at a new size starts a fresh cache namespace, so pin `jpeg_dimensions = 1280` in your config to
+  keep both the old detail level and your existing cache.
+
 ### Fixed
 
+- The desktop window now sends the configured `jpeg_dimensions` to the model instead of its own
+  hardcoded 640 px preview size, so a GUI run and a CLI run ask the same question about a photo.
+  Windows left on the default are unaffected, cache included.
+- `max_tokens` no longer takes part in the cache namespace. A call that hits the cap yields nothing
+  to store, so the cap cannot have shaped any cached answer, and raising it to escape a repetition
+  loop no longer throws the cache away.
 - A photo whose answer ran past `--max-tokens` is now asked again automatically, twice, instead of
   failing. The cap is only ever reached by a model that fell into a repetition loop (an endless
   `Animal<Animal` chain in its hierarchies), which the next attempt almost never repeats.

@@ -140,7 +140,7 @@ loads the image (rawpy for RAW, Pillow otherwise), applies EXIF orientation, fla
 onto white, downscales it, and JPEG-encodes the bytes that go to the model. A full-resolution RAW or
 JPEG would inflate token counts and slow inference for no benefit, so two flags bound the payload:
 
-- `--jpeg-dimensions` (env var `JPEG_DIMENSIONS`, default `1280`) caps the longest side, in pixels,
+- `--jpeg-dimensions` (env var `JPEG_DIMENSIONS`, default `640`) caps the longest side, in pixels,
     of the JPEG sent to the model.
 - `--jpeg-quality` (env var `JPEG_QUALITY`, default `80`) sets the JPEG compression quality, from 1
     to 100.

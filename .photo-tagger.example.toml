@@ -33,7 +33,7 @@
 # max_tokens = 1200
 # timeout_seconds = 60.0      # per-image hard cap; retry loop handles the abort
 # frequency_penalty = 0.5     # suppresses chant-style token loops
-# jpeg_dimensions = 1280      # max edge of the resized JPEG sent to the model
+# jpeg_dimensions = 640       # longest edge sent to the model; 896 or 1024 to read text
 # jpeg_quality = 80
 
 # --- pacing -------------------------------------------------------------------

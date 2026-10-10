@@ -1399,7 +1399,6 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         provider.model_name,
         user_prompt=user_prompt,
         temperature=inference.temperature,
-        max_tokens=inference.max_tokens,
         frequency_penalty=inference.frequency_penalty,
         jpeg_dimensions=inference.jpeg_dimensions,
         jpeg_quality=inference.jpeg_quality,

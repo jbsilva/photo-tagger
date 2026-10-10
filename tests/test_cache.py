@@ -1,5 +1,6 @@
 """Tests for the SQLite-backed inference cache."""
 
+import inspect
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
@@ -17,6 +18,7 @@ from photo_tagger.cache import (
     safe_cache_get,
     safe_cache_put,
 )
+from photo_tagger.config import DEFAULT_USER_PROMPT
 from photo_tagger.models import InferenceResult
 
 
@@ -257,7 +259,6 @@ def _baseline_namespace_kwargs() -> dict[str, object]:
     return {
         "user_prompt": "Describe the scene.",
         "temperature": 0.2,
-        "max_tokens": 1200,
         "frequency_penalty": 0.5,
         "jpeg_dimensions": 1280,
         "jpeg_quality": 80,
@@ -283,7 +284,6 @@ def test_build_cache_namespace_changes_with_each_input() -> None:
     variants = [
         {"user_prompt": "Different prompt."},
         {"temperature": 0.9},
-        {"max_tokens": 800},
         {"frequency_penalty": 1.0},
         {"jpeg_dimensions": 2048},
         {"jpeg_quality": 95},
@@ -374,3 +374,35 @@ def test_inference_cache_context_manager_closes_on_exception(tmp_path: Path) -> 
     with InferenceCache(db, model_name="m1") as cache:
         got = cache.get("hash-1")
         assert got is not None
+
+
+# The digest every install's cache is filed under. Pinned so a change to the payload format, or to
+# one of the inputs folded into it, cannot silently orphan every user's cached results: a release
+# that means to do that has to edit this number and say so in the changelog.
+_PINNED_NAMESPACE = "qwen/qwen3-vl-30b#ab84e0fd8273877d"
+
+
+def test_build_cache_namespace_digest_is_pinned() -> None:
+    """The namespace for a known set of inputs never moves without someone deciding it should."""
+    assert (
+        build_cache_namespace(
+            "qwen/qwen3-vl-30b",
+            user_prompt=DEFAULT_USER_PROMPT,
+            temperature=0.2,
+            frequency_penalty=0.5,
+            jpeg_dimensions=640,
+            jpeg_quality=80,
+            output_language="English",
+        )
+        == _PINNED_NAMESPACE
+    )
+
+
+def test_build_cache_namespace_ignores_the_token_cap() -> None:
+    """
+    The cap is not an input: it cannot shape an answer that was stored.
+
+    A call that reaches it returns nothing usable, so raising the cap to escape a model stuck in a
+    repetition loop must leave every cached result readable.
+    """
+    assert "max_tokens" not in inspect.signature(build_cache_namespace).parameters

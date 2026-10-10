@@ -117,7 +117,13 @@ DEFAULT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 DEFAULT_MODEL_NAME = os.getenv("MODEL_NAME", "qwen/qwen3-vl-30b")
 DEFAULT_JPEG_QUALITY = _env_int("JPEG_QUALITY", 80)
-DEFAULT_DIMENSIONS = _env_int("JPEG_DIMENSIONS", 1280)
+# The longest edge of the JPEG the model is shown. Prefill time scales with the pixel count, and
+# it is the largest single lever on how long a photo takes: measured against a local
+# Qwen3-VL-30B, one photo costs 0.49s of prefill at 640, 0.83s at 896, 1.11s at 1024 and 1.80s at
+# 1280, while the rest of the call (about 1.9s to write 200 tokens) does not move. What the extra
+# pixels buy is text inside the frame: 640 is faster, 768 sees more detail, 896 reads large text,
+# 1024 reads fine text. Multiples of 128 line up with the vision tower's patch grid.
+DEFAULT_DIMENSIONS = _env_int("JPEG_DIMENSIONS", 640)
 DEFAULT_TEMPERATURE = _env_float("TEMPERATURE", 0.2)
 DEFAULT_MAX_TOKENS = _env_int("MAX_TOKENS", 1200)
 DEFAULT_RETRIES = _env_int("RETRIES", 5)

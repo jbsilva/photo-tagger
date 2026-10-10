@@ -82,8 +82,24 @@ keep the output focused; the JPEG settings control how much detail the model see
 | `--max-tokens` N                             | `1200`    | `MAX_TOKENS`        | Maximum tokens to generate.                                                                                                                                                                                                                                    |
 | `--timeout-seconds` FLOAT                    | `60.0`    | `TIMEOUT_SECONDS`   | Timeout of one model request; on timeout the retry loop steps in.                                                                                                                                                                                              |
 | `--frequency-penalty` FLOAT                  | `0.5`     | `FREQUENCY_PENALTY` | Penalty on repeated tokens; discourages repetitive output loops.                                                                                                                                                                                               |
-| `--jpeg-dimensions` N                        | `1280`    | `JPEG_DIMENSIONS`   | Max dimension (px) of the JPEG sent to the model.                                                                                                                                                                                                              |
+| `--jpeg-dimensions` N                        | `640`     | `JPEG_DIMENSIONS`   | Longest edge (px) of the JPEG sent to the model, and the biggest lever on speed. See [Image size](#image-size).                                                                                                                                                |
 | `--jpeg-quality` N                           | `80`      | `JPEG_QUALITY`      | JPEG quality (1-100) of the image sent to the model.                                                                                                                                                                                                           |
+
+### Image size
+
+`--jpeg-dimensions` sets the longest edge of the JPEG the model is shown, and it is the biggest
+single lever on how long a photo takes. Prefill scales with the pixel count while the rest of the
+call does not move, so on a local Qwen3-VL-30B one photo costs about 0.49 s of prefill at 640 px,
+0.83 s at 896, 1.11 s at 1024, and 1.80 s at 1280, against roughly 1.9 s to write the answer.
+
+What the extra pixels buy is text inside the frame, not subject recognition: in a controlled probe,
+a line of text 30 px tall in a 4032 px photo was transcribed reliably at 896 px and never at 768 px
+or below. So 640 is the fast choice, 768 sees more detail, 896 reads large text such as signs, and
+1024 reads fine text such as documents and labels. Multiples of 128 line up with the vision tower's
+patch grid.
+
+Changing this value starts a fresh cache namespace, because the answers already stored describe what
+the model saw at the old size. Pick it before a long run rather than during one.
 
 ## Output
 

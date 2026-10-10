@@ -175,7 +175,11 @@ class InferenceConfig:
         int,
         Parameter(
             name=("--jpeg-dimensions",),
-            help="Max dimension in pixels for the resized JPEG sent to the model",
+            help=(
+                "Longest edge in pixels of the JPEG sent to the model, and the biggest lever on "
+                "speed: prefill scales with the pixel count. 640 (faster), 768 (more detail), "
+                "896 (large text), 1024 (fine text). Changing it starts a fresh cache namespace"
+            ),
         ),
     ] = DEFAULT_DIMENSIONS
     jpeg_quality: Annotated[
