@@ -14,7 +14,8 @@ module owns one part of that pipeline:
   builds once (agent, cache, report writers, undo journal). `_process_batch` runs one batch against
   it, so `tag` and `watch` share one path. `cli_telemetry.py` holds the telemetry of a CLI run (the
   beacons of a `tag` or `watch`, built from the option groups and the batch totals), so `main` only
-  says when to send.
+  says when to send. `cli_reports.py` holds the report sinks of a run: `--json`, `--csv-file`, and
+  `--summary-file`.
 - `cli_options.py`: the CLI _schema_. It holds the twelve `@dataclass` option groups, their defaults
   from the configuration file (`load_defaults`), and the `ProcessingOptions` mapping. New flags go
   here, not in `main`.

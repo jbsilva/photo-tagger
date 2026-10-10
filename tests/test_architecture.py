@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "src" / "photo_tagger"
 # The frontends: the core may not import them, so they are left out of its contract on purpose.
-FRONTENDS = {"cli_options", "cli_telemetry", "gui", "main"}
+FRONTENDS = {"cli_options", "cli_reports", "cli_telemetry", "gui", "main"}
 
 
 def _contracts() -> dict[str, dict[str, object]]:
