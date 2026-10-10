@@ -13,21 +13,21 @@ how to run the tests and what that configured setup gives you.
 Run the full test suite from the project root:
 
 ```bash
-uv run pytest
+uv run poe test
 ```
 
-To run a single test by name, pass a substring match to `-k`. pytest selects every test whose name
-contains the value:
+The `test` task gives any extra arguments to pytest. To run a single test by name, pass a substring
+match to `-k`. pytest selects every test whose name contains the value:
 
 ```bash
-uv run pytest -k test_name
+uv run poe test -k test_name
 ```
 
 !!! tip
 
     While iterating on one change, run only the test you care about with `-k`. It skips the rest of the
-    suite (and the parallel startup cost), so the feedback loop stays fast. Run the full `uv run pytest`
-    again before you commit.
+    suite (and the parallel startup cost), so the feedback loop stays fast. Run the full
+    `uv run poe test` again before you commit.
 
 ## What the configured setup does
 
@@ -68,10 +68,10 @@ being hand-edited.
 ## Integration tests
 
 Integration tests are marked with the `integration` marker and are deselected by default, so they do
-not run during a normal `uv run pytest`. Run them explicitly with `-m`:
+not run during a normal `uv run poe test`. Run them explicitly with `-m`:
 
 ```bash
-uv run pytest -m integration
+uv run poe test -m integration
 ```
 
 !!! note
@@ -91,11 +91,11 @@ extra is installed:
     `pytest.importorskip("PySide6")`, so it is **skipped entirely** when the extra is absent (the
     default CI run), and uses Qt's `offscreen` platform to build widgets without a display server.
 
-To run the GUI tests, sync the extra and point Qt at the offscreen platform:
+To run the GUI tests, use the `test-gui` task. It installs the extra and points Qt at the offscreen
+platform:
 
 ```bash
-uv sync --extra gui --group test
-QT_QPA_PLATFORM=offscreen uv run pytest tests/test_gui.py
+uv run poe test-gui
 ```
 
 `gui.py` itself is the Qt event-loop shell. The offscreen GUI tests do drive its widgets and

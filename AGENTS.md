@@ -56,7 +56,8 @@ version string. `scripts/check_version_sync.py` guards the hand-maintained docs 
 ## Tests and code quality
 
 - Add or update tests whenever you change behavior. Target: 90%+ coverage.
-- `uv run pytest` (full suite) or `uv run pytest -k test_name` (single test).
+- `uv run poe test` (full suite) or `uv run poe test -k test_name` (single test). Extra arguments go
+  to pytest.
 - Keep functions small and focused. If a function grows complex (deep nesting, many branches, hard
   to test), refactor before adding more to it. Extract helpers, split responsibilities.
 - SonarQube has many false positives. Silence with `# NOSONAR` (and a one-line reason) only when the
@@ -72,23 +73,32 @@ version string. `scripts/check_version_sync.py` guards the hand-maintained docs 
   would misread the Qt shell either way). `tests/test_gui.py` carries the same
   `# mypy: ignore-errors` header: it imports PySide6, which has no stubs and is not installed in the
   lint job, so zuban would otherwise only report an unresolved import. Test it with
-  `uv sync --extra gui --group test` then
-  `QT_QPA_PLATFORM=offscreen uv run pytest tests/test_gui.py`; those tests `importorskip` PySide6 so
-  the suite stays green without the extra.
+  `uv run poe test-gui`, which installs the extra and runs Qt offscreen. Those tests `importorskip`
+  PySide6 so the suite stays green without the extra.
+
+## Tasks
+
+Dev tasks are [Poe the Poet](https://poethepoet.natn.io) tasks under `[tool.poe]` in
+`pyproject.toml`, and `uv run poe` lists them. Use a task instead of retyping its command. If a new
+command becomes part of the routine, add a task for it.
 
 ## Before committing
 
 ```bash
-uv run ruff check --fix .                              # Lint + auto-fix
-uv run ruff format .                                   # Format
-uv run zuban check                                     # Strict type check (mypy-compatible)
-uv run pycroscope --config-file pyproject.toml         # Semi-static analyzer (complements zuban)
-prek run -a                                            # Run all pre-commit hooks
+uv run poe check    # The five tasks below, in order; stops at the first failure
+```
+
+```bash
+uv run poe lint         # ruff check --fix .
+uv run poe format       # ruff format .
+uv run poe typecheck    # zuban check (strict, mypy-compatible)
+uv run poe pycroscope   # Semi-static analyzer (complements zuban)
+uv run poe hooks        # prek run -a (all pre-commit hooks)
 ```
 
 `pycroscope` config lives under `[tool.pycroscope]` in `pyproject.toml`. It does **not**
 auto-discover the config file, so always pass `--config-file pyproject.toml` when invoking it
-directly. The pre-commit hook already does this.
+directly. The `pycroscope` task and the pre-commit hook already do this.
 
 Anything under `.github/workflows/` is audited by [`zizmor`](https://docs.zizmor.sh)
 (`uv run zizmor .`), as a pre-commit hook and in `zizmor.yml`, which also uploads SARIF to the

@@ -64,6 +64,5 @@ header metadata (copyright holder, bug-report address, translator) that the bare
 leave as placeholders:
 
 ```bash
-uv run scripts/extract_translations.py
-uv run scripts/compile_translations.py
+uv run poe translations    # Runs extract_translations.py, then compile_translations.py
 ```

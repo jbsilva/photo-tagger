@@ -14,14 +14,14 @@ and write those pages.
 Run a local development server that watches the sources and reloads on every change:
 
 ```bash
-uv run --group docs zensical serve
+uv run poe docs
 ```
 
 The site is served at <http://localhost:8000>. To use another port, pass an explicit address with
 `-a`:
 
 ```bash
-uv run --group docs zensical serve -a localhost:8001
+uv run poe docs -a localhost:8001
 ```
 
 ## Build the static site
@@ -29,7 +29,7 @@ uv run --group docs zensical serve -a localhost:8001
 To produce the static HTML without serving it, run the build:
 
 ```bash
-uv run --group docs zensical build
+uv run poe docs-build
 ```
 
 The output is written to `site/`, which is gitignored. It is a build artifact, so it is never
@@ -141,9 +141,9 @@ Keep the prose consistent with the rest of the site:
 
 !!! tip
 
-    Preview the site with `uv run --group docs zensical serve` before you push. The local server catches
-    broken links and rendering mistakes that are easy to miss in raw Markdown, and the docs deploy runs
-    automatically once your change lands on `main`.
+    Preview the site with `uv run poe docs` before you push. The local server catches broken links and
+    rendering mistakes that are easy to miss in raw Markdown, and the docs deploy runs automatically
+    once your change lands on `main`.
 
 [check-docs-sync]: https://github.com/jbsilva/photo-tagger/blob/main/scripts/check_docs_sync.py
 [docs-workflow]: https://github.com/jbsilva/photo-tagger/blob/main/.github/workflows/docs.yml

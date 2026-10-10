@@ -34,11 +34,11 @@ The ruff configuration that enforces formatting and most of these rules lives in
 Add or update tests whenever you change behavior. The suite targets 90%+ coverage, so a new code
 path usually needs a new test to go with it.
 
-Run the full suite with uv:
+Run the suite with the `test` task:
 
 ```bash
-uv run pytest                 # Full suite
-uv run pytest -k test_name    # A single test
+uv run poe test                 # Full suite
+uv run poe test -k test_name    # A single test
 ```
 
 See [Testing](development/testing.md) for markers, coverage, and how to write new tests.
@@ -48,7 +48,7 @@ See [Testing](development/testing.md) for markers, coverage, and how to write ne
 The git hooks catch most issues before they reach CI. Run every hook across the whole tree with:
 
 ```bash
-prek run -a
+uv run poe hooks
 ```
 
 The hooks cover a range of checks; these are the ones you will hit most often:
@@ -94,14 +94,10 @@ Run the local checks before you push so CI does not surface anything you could h
 
 !!! tip
 
-    Run this sequence before committing to mirror what CI checks:
+    Before you commit, run the same checks that CI runs:
 
     ```bash
-    uv run ruff check --fix .                       # Lint + auto-fix
-    uv run ruff format .                            # Format
-    uv run zuban check                              # Strict type check
-    uv run pycroscope --config-file pyproject.toml  # Semi-static analysis
-    prek run -a                                     # Run all pre-commit hooks
+    uv run poe check    # ruff, zuban, pycroscope, then all pre-commit hooks
     ```
 
 Never push secrets. Keep API keys and other credentials out of commits and pull requests; pass them

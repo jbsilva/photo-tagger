@@ -55,13 +55,21 @@ directly on your machine.
 
 ## Everyday commands
 
-Once the environment is set up, these are the commands you will reach for most often:
+The dev commands are [Poe the Poet](https://poethepoet.natn.io) tasks, defined under `[tool.poe]` in
+`pyproject.toml`. Each task runs through `uv run` and installs the dependency group it needs. These
+are the commands you will use most often:
 
 ```bash
 uv run photo-tagger --help    # See the CLI options
-uv run pytest                 # Run the test suite
-prek run -a                   # Run all pre-commit hooks across the tree
+uv run poe                    # List the dev tasks
+uv run poe test               # Run the test suite (extra arguments go to pytest)
+uv run poe check              # Lint, format, type check, and run all pre-commit hooks
 ```
+
+!!! tip
+
+    Install Poe once with `uv tool install poethepoet`, and you can type `poe test` without the `uv run`
+    prefix.
 
 ## In this section
 

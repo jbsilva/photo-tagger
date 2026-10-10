@@ -135,11 +135,17 @@ Run the full local sequence before each commit. The pre-commit hooks cover most 
 the tools directly gives clearer output when something fails:
 
 ```bash
-uv run ruff check --fix .
-uv run ruff format .
-uv run zuban check
-uv run pycroscope --config-file pyproject.toml
-prek run -a
+uv run poe check
+```
+
+The `check` task runs these tasks in order and stops at the first failure:
+
+```bash
+uv run poe lint         # ruff check --fix .
+uv run poe format       # ruff format .
+uv run poe typecheck    # zuban check
+uv run poe pycroscope   # pycroscope --config-file pyproject.toml
+uv run poe hooks        # prek run -a
 ```
 
 !!! warning

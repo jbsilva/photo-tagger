@@ -138,7 +138,7 @@ main() {
     setup_exiftool
     setup_python_env
     setup_hooks
-    log "Setup complete. Try: uv run photo-tagger --help"
+    log "Setup complete. Try: uv run photo-tagger --help (or uv run poe for the dev tasks)"
     return 0
 }
 

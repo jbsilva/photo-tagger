@@ -534,15 +534,15 @@ value to `OFF`.
 Run the unit tests with:
 
 ```bash
-uv run pytest
+uv run poe test
 ```
 
-The GUI tests are skipped automatically unless the `gui` extra is installed. To exercise them, sync
-the extra and run headless via Qt's offscreen platform:
+The GUI tests are skipped automatically unless the `gui` extra is installed. To run them headless,
+use the `test-gui` task. It installs the extra and uses Qt's offscreen platform:
 
 ```bash
-uv sync --extra gui --group test
-QT_QPA_PLATFORM=offscreen uv run pytest tests/test_gui.py
+uv run poe test-gui
 ```
 
-If you plan to contribute, also run `uv run ruff check` for linting before opening a PR.
+If you plan to contribute, also run `uv run poe check` before opening a PR. `uv run poe` lists the
+other dev tasks.
