@@ -4,21 +4,22 @@ icon: lucide/settings
 
 # Configuration
 
-photo-tagger reads settings from three places, plus its built-in defaults. Knowing the order they
-apply in saves you from chasing surprises when a value does not take effect.
+photo-tagger reads its configuration from three places, plus its built-in defaults. If a value does
+not take effect the way you expect, this order explains why.
 
 ## Precedence
 
 When the same setting comes from more than one source, the one higher in this list wins:
 
 1. **CLI flag** (for example `--temperature 0.3`)
-2. **Config file** (a `[section]` key in TOML)
+2. **Configuration file** (a `[section]` key in TOML)
 3. **Environment variable** (for example `TEMPERATURE`)
 4. **Built-in default** (the value baked into the code)
 
-So a CLI flag always beats the config file, the config file beats an environment variable, and an
-environment variable beats the built-in default. This lets you set a stable baseline in a config
-file or your shell profile and still override one value per run on the command line.
+So a CLI flag always beats the configuration file, the configuration file beats an environment
+variable, and an environment variable beats the built-in default. This lets you set a stable
+baseline in a configuration file or your shell profile. You can still override one value per run on
+the command line.
 
 ## Environment variables
 
@@ -27,23 +28,23 @@ These variables set defaults. Any matching CLI flag still overrides them. See
 
 | Variable              | Default                     | Purpose                                                                            |
 | --------------------- | --------------------------- | ---------------------------------------------------------------------------------- |
-| `PHOTO_TAGGER_CONFIG` | none                        | Explicit path to a config file (highest-priority config source).                   |
+| `PHOTO_TAGGER_CONFIG` | none                        | Explicit path to a configuration file (the highest-priority configuration source). |
 | `MODEL_NAME`          | `qwen/qwen3-vl-30b`         | Vision-language model identifier.                                                  |
 | `OLLAMA_BASE_URL`     | `http://localhost:11434/v1` | Ollama API base URL.                                                               |
 | `OLLAMA_API_KEY`      | none                        | API key for Ollama.                                                                |
 | `LM_STUDIO_BASE_URL`  | `http://localhost:1234/v1`  | LM Studio API base URL.                                                            |
 | `LM_STUDIO_API_KEY`   | none                        | API key for LM Studio.                                                             |
 | `LLAMA_CPP_BASE_URL`  | `http://localhost:8080/v1`  | llama.cpp `llama-server` API base URL.                                             |
-| `LLAMA_CPP_API_KEY`   | none                        | API key for llama.cpp; only needed when `llama-server` runs with `--api-key`.      |
+| `LLAMA_CPP_API_KEY`   | none                        | API key for llama.cpp. If `llama-server` runs with `--api-key`, set this key.      |
 | `OPENAI_BASE_URL`     | `https://api.openai.com/v1` | Base URL for the `openai` provider (the real OpenAI API or a drop-in gateway).     |
-| `OPENAI_API_KEY`      | none                        | API key for the `openai` provider (required); also the fallback key for LM Studio. |
+| `OPENAI_API_KEY`      | none                        | Required API key for the `openai` provider. Also the fallback key for LM Studio.   |
 | `TEMPERATURE`         | `0.2`                       | Sampling temperature.                                                              |
 | `MAX_TOKENS`          | `1200`                      | Maximum tokens to generate.                                                        |
 | `TIMEOUT_SECONDS`     | `60.0`                      | Timeout of one model request, in seconds.                                          |
 | `FREQUENCY_PENALTY`   | `0.5`                       | Penalty on repeated tokens.                                                        |
 | `JPEG_DIMENSIONS`     | `640`                       | Longest edge (px) of the JPEG sent to the model.                                   |
 | `JPEG_QUALITY`        | `80`                        | JPEG quality (1-100) of the image sent to the model.                               |
-| `RETRIES`             | `5`                         | Retries when model output fails schema validation.                                 |
+| `RETRIES`             | `5`                         | Number of retries after the model output fails schema validation.                  |
 | `DUTY_PERCENT`        | `100`                       | Default of `--duty` (1-100).                                                       |
 | `BATTERY_FLOOR`       | `0`                         | Default of `--battery-floor` (0-99).                                               |
 | `BATTERY_RESUME`      | `0`                         | Default of `--battery-resume` (0-100).                                             |
@@ -53,20 +54,20 @@ These variables set defaults. Any matching CLI flag still overrides them. See
 A value that is not a number, or is outside its range, is ignored with a warning, and the built-in
 default applies.
 
-The standard OpenTelemetry variables (`OTEL_EXPORTER_OTLP_ENDPOINT`,
-`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`) are honored
-too, but only once `--otel` is on; see
-[tracing model calls](../usage/cli-reference.md#tracing-model-calls).
+If you turn on `--otel`, photo-tagger also honors the standard OpenTelemetry variables:
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
+and `OTEL_SERVICE_NAME`. See [tracing model calls](../usage/cli-reference.md#tracing-model-calls)
+for more.
 
 !!! tip
 
-    Prefer the API-key variables over the `-k/--api-key` flag. Keys passed on the command line can leak
-    into your shell history and process listings.
+    Prefer the API-key variables over the `-k/--api-key` flag. A key that you pass on the command line
+    can leak into your shell history and process listings.
 
 ## Config file
 
-A TOML config file is the best place for settings you reuse across runs. photo-tagger looks for one
-in this order and uses the **first match**:
+A TOML configuration file is the best place for values that you reuse across runs. photo-tagger
+looks for one in this order and uses the **first match**:
 
 1. The path in `$PHOTO_TAGGER_CONFIG`
 2. `.photo-tagger.toml` in the current directory
@@ -166,10 +167,10 @@ save_after_generating = false # Desktop window only: write each run's photos whe
 
 !!! note
 
-    Unknown keys are ignored. This keeps older config files working when new options are added, so a
-    stray or misspelled key never stops a run. Double-check spelling if a setting seems to have no
-    effect.
+    Unknown keys are ignored. When photo-tagger adds new configuration keys, older configuration files
+    keep working: a stray or misspelled key never stops a run. If a configuration value seems to have no
+    effect, make sure that you spelled the key correctly.
 
-For the full per-flag detail, including flags that have no config-file or environment equivalent
-(such as `-i/--input`, `--skip-from`, and `--append-to-skip-file`), see the
-[CLI reference](../usage/cli-reference.md).
+Some flags have no configuration-file or environment equivalent, for example `-i/--input`,
+`--skip-from`, and `--append-to-skip-file`. See the [CLI reference](../usage/cli-reference.md) for
+the full detail on every flag.

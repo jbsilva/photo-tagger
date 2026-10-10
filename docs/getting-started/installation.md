@@ -4,23 +4,24 @@ icon: lucide/download
 
 # Installation
 
-photo-tagger is a Python 3.14+ command-line tool. Install it once with your tool manager of choice,
-make sure ExifTool is on your `PATH`, and you are ready to start tagging photos.
+photo-tagger is a Python 3.14+ command-line tool. Install it once with the tool manager that you
+prefer. Then make sure that ExifTool is on your `PATH`. After that, you can start to tag photos.
 
 ## End-user install
 
-Install photo-tagger with the tool manager you prefer. [uv](https://docs.astral.sh/uv/) and
-[pixi](https://pixi.sh/) are the recommended options: each puts the `photo-tagger` command on your
-`PATH` in its own isolated environment.
+Install photo-tagger with the tool manager that you prefer. [uv](https://docs.astral.sh/uv/) and
+[pixi](https://pixi.sh/) are the recommended options. Each one puts the `photo-tagger` command on
+your `PATH` in its own isolated environment.
 
 !!! note
 
-    New releases land on PyPI (uv, pipx) first; the conda-forge packages (conda, pixi) usually follow
-    within a day. If a fresh version is not on conda-forge yet, that lag is why.
+    New releases land on PyPI (uv, pipx) first. The conda-forge packages (conda, pixi) usually follow
+    within a day. If a new version is not on conda-forge yet, that lag is the reason.
 
-The conda-forge packages (conda, pixi) also pull in ExifTool for you, so you can skip the
-[manual ExifTool install](#system-requirements). The PyPI installs (uv, pipx) cannot, since pip has
-no way to ship the non-Python `exiftool` binary, so install it separately.
+The conda-forge packages (conda, pixi) also install ExifTool for you, so you can skip the
+[manual ExifTool install](#system-requirements). The PyPI installs (uv, pipx) cannot do this,
+because pip has no way to ship the non-Python `exiftool` binary. If you use uv or pipx, install
+ExifTool separately.
 
 === "uv"
 
@@ -50,7 +51,7 @@ no way to ship the non-Python `exiftool` binary, so install it separately.
 
 === "conda"
 
-    The package is published on conda-forge, so it also installs with conda (or mamba):
+    The package is on conda-forge, so you can also install it with conda (or mamba):
 
     ```bash
     conda install -c conda-forge photo-tagger
@@ -66,10 +67,10 @@ no way to ship the non-Python `exiftool` binary, so install it separately.
 
 ### Optional desktop GUI
 
-photo-tagger ships an optional [desktop GUI](../usage/gui.md) behind the `gui` extra. It is kept out
-of the base install so the plain CLI stays lightweight (no Qt dependency). On PyPI the extra pulls
-in PySide6; on conda-forge the GUI is a separate package, `photo-tagger-gui`, that bundles PySide6
-for you.
+photo-tagger ships an optional [desktop GUI](../usage/gui.md) behind the `gui` extra. The project
+keeps it out of the base install, so the plain CLI stays lightweight (no Qt dependency). On PyPI,
+the extra pulls in PySide6. On conda-forge, the GUI is a separate package, `photo-tagger-gui`, that
+bundles PySide6 for you.
 
 === "uv"
 
@@ -95,8 +96,8 @@ for you.
     pipx install 'photo-tagger[gui]'
     ```
 
-Then launch it with `photo-tagger gui`. Everything else on this page applies unchanged; the GUI uses
-the same ExifTool, model server, and configuration as the CLI.
+Then launch it with `photo-tagger gui`. Everything else on this page applies without change. The GUI
+uses the same ExifTool, model server, and configuration as the CLI.
 
 ## From source
 
@@ -122,7 +123,7 @@ checks to run before committing.
 
 photo-tagger needs Python 3.14 or newer plus two external libraries that are not Python packages.
 
-[ExifTool](https://exiftool.org/) does the actual metadata reading and writing; photo-tagger drives
+[ExifTool](https://exiftool.org/) does the actual metadata reading and writing. photo-tagger drives
 the `exiftool` binary through pyexiftool. The conda-forge packages (conda, pixi) already pull it in
 as a dependency, so this step is only needed for the PyPI installs (uv, pipx). Install it with your
 system package manager:
@@ -171,20 +172,20 @@ On Linux the rawpy wheels bundle libraw, so no extra step is needed there.
 
 !!! warning
 
-    The `exiftool` binary must be on your `PATH`. photo-tagger shells out to it for every photo, so if
-    it is not found the run will fail. After installing, confirm it is visible with `exiftool -ver` (see
-    [Verify](#verify) below).
+    The `exiftool` binary must be on your `PATH`. photo-tagger shells out to it for every photo. If it
+    is not found, the run will fail. After you install it, make sure that it is visible with
+    `exiftool -ver`. See [Verify](#verify) below.
 
 ## Verify
 
-Check that the command and its ExifTool dependency are both reachable:
+Make sure that the command and its ExifTool dependency are both reachable:
 
 ```bash
 photo-tagger --help
 exiftool -ver
 ```
 
-The first prints the CLI options; the second prints the installed ExifTool version. Once both work,
-head to [Configuration](configuration.md) to point photo-tagger at your model server. If either
-command fails, or your first run will not start, see [Troubleshooting](../troubleshooting.md) for
-the most common causes and fixes.
+The first command prints the CLI options. The second prints the installed ExifTool version. Once
+both work, head to [Configuration](configuration.md) to point photo-tagger at your model server. If
+either command fails, or your first run does not start, see [Troubleshooting](../troubleshooting.md)
+for the most common causes and fixes.
