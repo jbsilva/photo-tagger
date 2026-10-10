@@ -62,6 +62,7 @@ from photo_tagger.gui_state import (
     TaggedCriterion,
     WatchSettings,
     build_copyright_fields,
+    gui_cache_namespace,
 )
 from photo_tagger.metadata import (
     FIELD_COPYRIGHT,
@@ -4730,7 +4731,7 @@ def test_vocabulary_is_part_of_the_cache_namespace(qapp: QApplication) -> None:
         [],
         options=GenerateOptions(vocabulary=Vocabulary.from_entries(["Osprey"])),
     )
-    namespace = gui._gui_cache_namespace  # noqa: SLF001
+    namespace = gui_cache_namespace
     assert namespace("m", "English", plain._prompt) != namespace(  # noqa: SLF001
         "m",
         "English",
@@ -7036,13 +7037,6 @@ def test_worker_sends_the_configured_image_size(
     worker.run()
 
     assert sizes == [1024]
-
-
-def test_worker_cache_namespace_follows_the_image_size() -> None:
-    """Two sizes never read each other's results: the answer depends on what the model saw."""
-    small = gui._gui_cache_namespace("m", "English", jpeg_dimensions=640)  # noqa: SLF001
-    large = gui._gui_cache_namespace("m", "English", jpeg_dimensions=1024)  # noqa: SLF001
-    assert small != large
 
 
 def test_window_reads_the_image_size_from_the_config(

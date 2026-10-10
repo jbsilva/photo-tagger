@@ -9,6 +9,7 @@ Qt.
 """
 
 import fnmatch
+import html
 import os
 import subprocess  # nosec B404 - only used to read the user's own login-shell PATH (see below)
 import textwrap
@@ -23,14 +24,19 @@ import tomlkit
 from tomlkit.exceptions import TOMLKitError
 
 from photo_tagger import telemetry
+from photo_tagger.cache import build_cache_namespace
 from photo_tagger.config import (
     DEFAULT_BATTERY_FLOOR,
     DEFAULT_BATTERY_RESUME,
     DEFAULT_DIMENSIONS,
     DEFAULT_DUTY_PERCENT,
+    DEFAULT_FREQUENCY_PENALTY,
+    DEFAULT_JPEG_QUALITY,
     DEFAULT_MAX_PAUSE_MINUTES,
     DEFAULT_OUTPUT_LANGUAGE,
     DEFAULT_SIDECAR_MODE,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_USER_PROMPT,
     DEFAULT_WORK_MINUTES,
     FileTypeTarget,
     SidecarMode,
@@ -95,6 +101,7 @@ if TYPE_CHECKING:
 
     from tomlkit import TOMLDocument
 
+    from photo_tagger.diagnostics import CheckResult
     from photo_tagger.undo import UndoResult
     from photo_tagger.vocabulary import Vocabulary
 
@@ -379,6 +386,31 @@ class GenerateOptions:
     jpeg_dimensions: int = DEFAULT_DIMENSIONS
     # Read past the cache and store what comes back: the cached answer is the one being replaced.
     refresh: bool = False
+
+
+def gui_cache_namespace(
+    model: str,
+    output_language: str,
+    user_prompt: str = DEFAULT_USER_PROMPT,
+    jpeg_dimensions: int = DEFAULT_DIMENSIONS,
+) -> str:
+    """
+    Build the cache namespace for GUI runs: the model plus the settings a run was made with.
+
+    The GUI runs the agent with the library's sampling defaults, so those (not the CLI flags) key
+    its entries, alongside *jpeg_dimensions*, which is the size the window sends to the model. The
+    metadata language rides along so switching it never replays results generated in the old
+    language, and so does the prompt, which carries the controlled vocabulary when there is one.
+    """
+    return build_cache_namespace(
+        model,
+        user_prompt=user_prompt,
+        temperature=DEFAULT_TEMPERATURE,
+        frequency_penalty=DEFAULT_FREQUENCY_PENALTY,
+        jpeg_dimensions=jpeg_dimensions,
+        jpeg_quality=DEFAULT_JPEG_QUALITY,
+        output_language=output_language,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1317,6 +1349,26 @@ def rank_vision_models(model_ids: Iterable[str]) -> list[str]:
     return likely + others
 
 
+def check_results_html(results: Iterable[CheckResult]) -> str:
+    """
+    Render connection-check results as rich text: a colored mark, the check, then its detail.
+
+    Each check gets its own block with the detail on a second line, so long endpoint URLs and error
+    messages stay readable instead of running together on one line.
+    """
+    blocks: list[str] = []
+    for result in results:
+        mark = (
+            '<span style="color:#3fb950;">&#10004;</span>'
+            if result.ok
+            else '<span style="color:#f85149;">&#10008;</span>'
+        )
+        name = html.escape(result.name)
+        detail = html.escape(result.detail)
+        blocks.append(f'{mark} <b>{name}</b><br><span style="color:#8a8a8a;">{detail}</span>')
+    return "<br><br>".join(blocks)
+
+
 # A nested name -> children mapping used to fold cumulative hierarchy paths into one tree.
 type _Tree = dict[str, "_Tree"]
 
@@ -1455,6 +1507,24 @@ def keyword_diff(
     diff = [(kw, UNCHANGED if kw.casefold() in existing_folds else ADDED) for kw in result]
     diff += [(kw, REMOVED) for kw in existing.subject if kw.casefold() not in result_folds]
     return diff
+
+
+# How keyword_diff_html draws each state: the inline style, then the marker before the keyword.
+_DIFF_STYLE = {
+    ADDED: ("color:#3fb950", "+&nbsp;"),
+    REMOVED: ("color:#f85149;text-decoration:line-through", "&minus;&nbsp;"),
+}
+_UNCHANGED_STYLE = ("color:#8a8a8a", "&nbsp;&nbsp;&nbsp;")
+
+
+def keyword_diff_html(diff: Iterable[tuple[str, str]]) -> str:
+    """Render a :func:`keyword_diff` as HTML: green added, red struck-through removed, grey kept."""
+    rows: list[str] = []
+    for keyword, state in diff:
+        safe = html.escape(keyword)
+        style, marker = _DIFF_STYLE.get(state, _UNCHANGED_STYLE)
+        rows.append(f'<span style="{style}">{marker}{safe}</span>')
+    return "<br>".join(rows) or _("(no change)")
 
 
 # How many rejected terms the vocabulary status line names before it stops. The point is to show
@@ -1728,6 +1798,15 @@ def undo_summary(results: Iterable[UndoResult]) -> str:
     if not left:
         return f"{restored}."
     return _("{restored}; left {left} alone.").format(restored=restored, left=left)
+
+
+def undo_details_text(results: Iterable[UndoResult], *, dry_run: bool) -> str:
+    """Render one line per recorded write: what happened to it, and why when it was left alone."""
+    lines = [_("What undoing would do:") if dry_run else _("What was undone:")]
+    for result in results:
+        detail = f" ({result.detail})" if result.detail and not dry_run else ""
+        lines.append(f"  {undo_action_label(result.action)}: {result.target.name}{detail}")
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True, slots=True)

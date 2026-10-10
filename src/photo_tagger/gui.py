@@ -22,7 +22,6 @@ lives in :mod:`photo_tagger.gui_state`; this file is the widget and event-loop s
 from coverage and the static analyzers.
 """
 
-import html
 import os
 import subprocess  # nosec B404 - only used to reveal a photo in the OS file browser
 import sys
@@ -116,7 +115,6 @@ from photo_tagger import __version__, i18n, telemetry
 from photo_tagger.ai import analyze_image_with_ai, create_agent
 from photo_tagger.cache import (
     InferenceCache,
-    build_cache_namespace,
     content_cache_key,
     open_cache,
     safe_cache_get,
@@ -131,12 +129,8 @@ from photo_tagger.cli_options import (
     to_pacing_plan,
 )
 from photo_tagger.config import (
-    DEFAULT_DIMENSIONS,
-    DEFAULT_FREQUENCY_PENALTY,
-    DEFAULT_JPEG_QUALITY,
     DEFAULT_OUTPUT_LANGUAGE,
     DEFAULT_SIDECAR_MODE,
-    DEFAULT_TEMPERATURE,
     DEFAULT_USER_PROMPT,
     SidecarMode,
     build_repair_prompt,
@@ -148,7 +142,7 @@ from photo_tagger.config_file import (
     user_config_path,
 )
 from photo_tagger.csv_report import write_report
-from photo_tagger.diagnostics import CheckResult, run_checks
+from photo_tagger.diagnostics import run_checks
 from photo_tagger.discovery import load_skip_list, skip_list_matches
 from photo_tagger.errors import (
     ConfigFileError,
@@ -219,6 +213,7 @@ from photo_tagger.gui_state import (
     build_tree,
     caption_source_note,
     capture_year,
+    check_results_html,
     clamp_zoom,
     config_text_with_language,
     config_text_with_output_language,
@@ -238,6 +233,7 @@ from photo_tagger.gui_state import (
     flat_labels,
     foreign_terms_note,
     format_existing_keywords,
+    gui_cache_namespace,
     harmonize_sessions,
     harmonize_summary,
     hierarchy_preview,
@@ -245,6 +241,7 @@ from photo_tagger.gui_state import (
     keeps_copyright,
     keys_by_check,
     keyword_diff,
+    keyword_diff_html,
     keyword_lines,
     keywords_to_text,
     load_sidecar_overrides,
@@ -290,7 +287,7 @@ from photo_tagger.gui_state import (
     telemetry_toggle_note,
     thumb_badges,
     tooltip,
-    undo_action_label,
+    undo_details_text,
     undo_summary,
     vocabulary_status,
     vocabulary_summary,
@@ -1008,7 +1005,7 @@ class GenerateWorker(QObject):
         """Open the result cache for this run, degrading to no cache on any failure."""
         return open_cache(
             self._cache_file,
-            namespace=_gui_cache_namespace(
+            namespace=gui_cache_namespace(
                 self._model,
                 self._output_language,
                 user_prompt=self._prompt,
@@ -1601,31 +1598,6 @@ class WatchWorker(QObject):
             # A watch that dies must not take the window with it; the user can start another.
             logger.exception("gui_watch_failed", error=str(exc))
         self.finished.emit()
-
-
-def _gui_cache_namespace(
-    model: str,
-    output_language: str,
-    user_prompt: str = DEFAULT_USER_PROMPT,
-    jpeg_dimensions: int = DEFAULT_DIMENSIONS,
-) -> str:
-    """
-    Build the cache namespace for GUI runs: the model plus the settings a run was made with.
-
-    The GUI runs the agent with the library's sampling defaults, so those (not the CLI flags) key
-    its entries, alongside *jpeg_dimensions*, which is the size the window sends to the model. The
-    metadata language rides along so switching it never replays results generated in the old
-    language, and so does the prompt, which carries the controlled vocabulary when there is one.
-    """
-    return build_cache_namespace(
-        model,
-        user_prompt=user_prompt,
-        temperature=DEFAULT_TEMPERATURE,
-        frequency_penalty=DEFAULT_FREQUENCY_PENALTY,
-        jpeg_dimensions=jpeg_dimensions,
-        jpeg_quality=DEFAULT_JPEG_QUALITY,
-        output_language=output_language,
-    )
 
 
 def _status_sort_key(item: QTreeWidgetItem) -> tuple[int, str]:
@@ -5208,7 +5180,7 @@ class MainWindow(QMainWindow):
         paths = hierarchy_preview(existing, edited, overwrite=overwrite, verbatim=verbatim)
         self._hierarchy.setPlainText(paths or _(_NONE))
         diff = keyword_diff(existing, edited, overwrite=overwrite, verbatim=verbatim)
-        self._diff.setHtml(_diff_html(diff))
+        self._diff.setHtml(keyword_diff_html(diff))
         # A collapsed section still tells the user whether saving changes anything.
         added = sum(1 for _kw, state in diff if state == ADDED)
         removed = sum(1 for _kw, state in diff if state == REMOVED)
@@ -7061,7 +7033,7 @@ class MainWindow(QMainWindow):
             results = undo_run(records, force=self._undo_force.isChecked(), dry_run=dry_run)
         finally:
             QApplication.restoreOverrideCursor()
-        self._undo_details.setPlainText(_undo_details_text(results, dry_run=dry_run))
+        self._undo_details.setPlainText(undo_details_text(results, dry_run=dry_run))
         summary = undo_summary(results)
         self._status.setText(
             _("Preview: {summary}").format(summary=summary) if dry_run else summary,
@@ -7386,7 +7358,7 @@ class MainWindow(QMainWindow):
         box = QMessageBox(self)
         box.setWindowTitle(_("Connection check"))
         box.setTextFormat(Qt.TextFormat.RichText)
-        box.setText(_check_results_html(results))
+        box.setText(check_results_html(results))
         all_ok = all(r.ok for r in results)
         box.setIcon(QMessageBox.Icon.Information if all_ok else QMessageBox.Icon.Warning)
         box.exec()
@@ -7835,51 +7807,6 @@ def _selection_modifiers_active() -> bool:
     return bool(
         modifiers & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier),
     )
-
-
-_DIFF_STYLE = {
-    ADDED: ("color:#3fb950", "+&nbsp;"),
-    REMOVED: ("color:#f85149;text-decoration:line-through", "&minus;&nbsp;"),
-}
-
-
-def _check_results_html(results: list[CheckResult]) -> str:
-    """
-    Render connection-check results as rich text: a colored mark, the check, then its detail.
-
-    Each check gets its own block with the detail on a second line, so long endpoint URLs and error
-    messages stay readable instead of running together on one line.
-    """
-    blocks: list[str] = []
-    for result in results:
-        mark = (
-            '<span style="color:#3fb950;">&#10004;</span>'
-            if result.ok
-            else '<span style="color:#f85149;">&#10008;</span>'
-        )
-        name = html.escape(result.name)
-        detail = html.escape(result.detail)
-        blocks.append(f'{mark} <b>{name}</b><br><span style="color:#8a8a8a;">{detail}</span>')
-    return "<br><br>".join(blocks)
-
-
-def _undo_details_text(results: list[UndoResult], *, dry_run: bool) -> str:
-    """Render one line per recorded write: what happened to it, and why when it was left alone."""
-    lines = [_("What undoing would do:") if dry_run else _("What was undone:")]
-    for result in results:
-        detail = f" ({result.detail})" if result.detail and not dry_run else ""
-        lines.append(f"  {undo_action_label(result.action)}: {result.target.name}{detail}")
-    return "\n".join(lines)
-
-
-def _diff_html(diff: list[tuple[str, str]]) -> str:
-    """Render the keyword diff as HTML: green added, red struck-through removed, grey kept."""
-    rows: list[str] = []
-    for keyword, state in diff:
-        safe = html.escape(keyword)
-        style, marker = _DIFF_STYLE.get(state, ("color:#8a8a8a", "&nbsp;&nbsp;&nbsp;"))
-        rows.append(f'<span style="{style}">{marker}{safe}</span>')
-    return "<br>".join(rows) or _("(no change)")
 
 
 def launch(argv: list[str] | None = None) -> int:

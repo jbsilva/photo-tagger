@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from photo_tagger import telemetry
+from photo_tagger.diagnostics import CheckResult
 from photo_tagger.errors import ConfigFileError
 from photo_tagger.fields import ExtraFields
 from photo_tagger.gui_state import (
@@ -81,6 +82,7 @@ from photo_tagger.gui_state import (
     caption_source_note,
     capture_year,
     chain_to_display,
+    check_results_html,
     clamp_zoom,
     config_text_with_language,
     config_text_with_output_language,
@@ -104,6 +106,7 @@ from photo_tagger.gui_state import (
     format_duration,
     format_existing_keywords,
     group_by_parent,
+    gui_cache_namespace,
     harmonize_sessions,
     harmonize_summary,
     hierarchy_preview,
@@ -113,6 +116,7 @@ from photo_tagger.gui_state import (
     keeps_copyright,
     keys_by_check,
     keyword_diff,
+    keyword_diff_html,
     keyword_lines,
     keywords_to_save,
     keywords_to_text,
@@ -162,6 +166,7 @@ from photo_tagger.gui_state import (
     thumb_badges,
     tooltip,
     undo_action_label,
+    undo_details_text,
     undo_summary,
     vocabulary_status,
     vocabulary_summary,
@@ -564,6 +569,38 @@ def test_rank_vision_models_surfaces_likely_first_without_dropping_any() -> None
     ranked = rank_vision_models(models)
     assert ranked[:2] == ["qwen3-vl-30b", "llava-7b"]
     assert set(ranked) == set(models)
+
+
+def test_check_results_html_marks_each_check_and_escapes_its_text() -> None:
+    """A passed and a failed check each get their mark, and an error with markup stays text."""
+    rendered = check_results_html(
+        [
+            CheckResult("ExifTool", ok=True, detail="13.10"),
+            CheckResult("Model", ok=False, detail="<none> served"),
+        ],
+    )
+    first, second = rendered.split("<br><br>")
+    assert "&#10004;" in first
+    assert "<b>ExifTool</b>" in first
+    assert "&#10008;" in second
+    assert "&lt;none&gt; served" in second
+
+
+def test_check_results_html_is_empty_without_checks() -> None:
+    """No checks render to nothing, rather than a stray separator."""
+    assert check_results_html([]) == ""
+
+
+def test_gui_cache_namespace_follows_the_image_size() -> None:
+    """Two sizes never read each other's results: the answer depends on what the model saw."""
+    small = gui_cache_namespace("m", "English", jpeg_dimensions=640)
+    large = gui_cache_namespace("m", "English", jpeg_dimensions=1024)
+    assert small != large
+
+
+def test_gui_cache_namespace_follows_the_metadata_language() -> None:
+    """Switching the metadata language never replays answers written in the old one."""
+    assert gui_cache_namespace("m", "English") != gui_cache_namespace("m", "German")
 
 
 def test_provider_labels_cover_every_provider() -> None:
@@ -1134,6 +1171,22 @@ def test_keyword_diff_overwrite_marks_removed() -> None:
     assert ("Eagle", ADDED) in diff
     assert ("Bird", UNCHANGED) in diff
     assert ("Beach", REMOVED) in diff
+
+
+def test_keyword_diff_html_styles_each_state_and_escapes_keywords() -> None:
+    """Added, removed, and kept keywords each read differently, and a keyword is never markup."""
+    rendered = keyword_diff_html([("Eagle", ADDED), ("Beach", REMOVED), ("<Bird>", UNCHANGED)])
+    added, removed, kept = rendered.split("<br>")
+    assert added == '<span style="color:#3fb950">+&nbsp;Eagle</span>'
+    assert "line-through" in removed
+    assert "Beach" in removed
+    assert "&lt;Bird&gt;" in kept
+    assert "color:#8a8a8a" in kept
+
+
+def test_keyword_diff_html_says_so_when_nothing_changes() -> None:
+    """An empty diff still tells the reader something."""
+    assert keyword_diff_html([]) == "(no change)"
 
 
 def test_folder_node_is_constructible() -> None:
@@ -1997,6 +2050,28 @@ def test_undo_summary_counts_what_was_put_back() -> None:
     assert undo_summary(all_good) == "Put back 2 files."
     mixed = [*all_good, UndoResult(Path("/c.xmp"), CHANGED, "changed since the run")]
     assert undo_summary(mixed) == "Put back 2 files; left 1 alone."
+
+
+def test_undo_details_text_lists_what_happened_to_each_file() -> None:
+    """After an undo, each file gets one line, with the reason when it was left alone."""
+    results = [
+        UndoResult(Path("/photos/a.xmp"), RESTORED),
+        UndoResult(Path("/photos/b.xmp"), CHANGED, "edited on 2 May"),
+    ]
+    assert undo_details_text(results, dry_run=False).splitlines() == [
+        "What was undone:",
+        f"  {undo_action_label(RESTORED)}: a.xmp",
+        f"  {undo_action_label(CHANGED)}: b.xmp (edited on 2 May)",
+    ]
+
+
+def test_undo_details_text_preview_leaves_out_the_reasons() -> None:
+    """A preview says what would happen; the reasons only matter once something was refused."""
+    results = [UndoResult(Path("/photos/b.xmp"), CHANGED, "edited on 2 May")]
+    assert undo_details_text(results, dry_run=True).splitlines() == [
+        "What undoing would do:",
+        f"  {undo_action_label(CHANGED)}: b.xmp",
+    ]
 
 
 # ---------------------------------------------------------------------------
