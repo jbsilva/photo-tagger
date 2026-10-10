@@ -34,7 +34,7 @@ from photo_tagger.cli_options import (
     to_telemetry_settings,
 )
 from photo_tagger.errors import BatchError, DiscoveryError, ProviderError
-from photo_tagger.metadata import SOURCE_SIDECAR, FieldReading, WriteTarget
+from photo_tagger.metadata import SOURCE_SIDECAR, FieldReading, FieldSources, WriteTarget
 from photo_tagger.pacing import SECONDS_PER_MINUTE
 from photo_tagger.pipeline import BatchTotals, ImageOutcome
 from photo_tagger.undo import UndoError, UndoJournal
@@ -2532,6 +2532,16 @@ def test_show_exits_1_when_nothing_matches(tmp_path: Path) -> None:
     assert exit_info.value.code == 1
 
 
+def _taken(year: int, **more: str) -> FieldSources:
+    """
+    Return what a photo taken in *year* carries in its sidecar, plus *more* tags there.
+
+    The sidecar, because `set` writes a RAW's sidecar by default, and preserve reads that file.
+    """
+    extra = {tag.replace("_", ":", 1): value for tag, value in more.items()}
+    return FieldSources(sidecar={"EXIF:DateTimeOriginal": f"{year}:05:04 10:00:00", **extra})
+
+
 def test_set_writes_the_copyright_fields_dated_per_photo(tmp_path: Path) -> None:
     """The year comes from each photo, so one command stamps a decade of shoots correctly."""
     old = _make_jpeg(tmp_path / "old.cr3")
@@ -2543,7 +2553,11 @@ def test_set_writes_the_copyright_fields_dated_per_photo(tmp_path: Path) -> None
         return (True, [])
 
     with (
-        patch.object(main_module, "read_capture_years", return_value={old: 2011, new: 2025}),
+        patch.object(
+            main_module,
+            "read_field_sources",
+            return_value={old: _taken(2011), new: _taken(2025)},
+        ),
         patch.object(main_module, "write_metadata_everywhere", side_effect=fake_write),
     ):
         _run_app(
@@ -2574,7 +2588,11 @@ def test_set_passes_the_sidecar_overrides_to_the_writer(tmp_path: Path) -> None:
     image = _make_jpeg(tmp_path / "img.dng")
 
     with (
-        patch.object(main_module, "read_capture_years", return_value={image.resolve(): 2025}),
+        patch.object(
+            main_module,
+            "read_field_sources",
+            return_value={image.resolve(): _taken(2025)},
+        ),
         patch.object(main_module, "write_metadata_everywhere", return_value=(True, [])) as write,
     ):
         _run_app(
@@ -2591,7 +2609,11 @@ def test_set_records_its_writes_for_undo(tmp_path: Path) -> None:
     journal = MagicMock()
 
     with (
-        patch.object(main_module, "read_capture_years", return_value={image.resolve(): 2025}),
+        patch.object(
+            main_module,
+            "read_field_sources",
+            return_value={image.resolve(): _taken(2025)},
+        ),
         patch.object(main_module, "write_metadata_everywhere", return_value=(True, [target])),
         patch.object(main_module, "open_journal", return_value=journal),
     ):
@@ -2605,7 +2627,11 @@ def test_set_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixtur
     image = _make_jpeg(tmp_path / "img.cr3")
 
     with (
-        patch.object(main_module, "read_capture_years", return_value={image.resolve(): 2025}),
+        patch.object(
+            main_module,
+            "read_field_sources",
+            return_value={image.resolve(): _taken(2025)},
+        ),
         patch.object(main_module, "write_metadata_everywhere") as write,
     ):
         _run_app(["set", "--input", str(image), "--dry-run", "--copyright", "(c) {year} Ada"])
@@ -2665,12 +2691,99 @@ def test_set_exits_1_when_a_write_fails(tmp_path: Path) -> None:
     """A failed write is exit 1, so a scripted stamp does not report success it did not have."""
     image = _make_jpeg(tmp_path / "img.cr3")
     with (
-        patch.object(main_module, "read_capture_years", return_value={image.resolve(): 2025}),
+        patch.object(
+            main_module,
+            "read_field_sources",
+            return_value={image.resolve(): _taken(2025)},
+        ),
         patch.object(main_module, "write_metadata_everywhere", return_value=(False, [])),
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(["set", "--input", str(image), "--artist", "Ada"])
     assert exit_info.value.code == 1
+
+
+def test_set_says_how_many_photos_got_no_notice(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """{year!} on an undated photo writes no notice, and the summary says so."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    with (
+        patch.object(
+            main_module,
+            "read_field_sources",
+            return_value={image.resolve(): FieldSources()},
+        ),
+        patch.object(main_module, "write_metadata_everywhere", return_value=(True, [])) as write,
+    ):
+        _run_app(["set", "--input", str(image), "--artist", "Ada", "--copyright", "(c) {year!}"])
+
+    assert "EXIF:Copyright" not in write.call_args.kwargs["extra"]
+    assert "1 photo(s) got no notice" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [([], None), (["--no-preserve-copyright"], "(c) 2025 Ada")],
+)
+def test_set_keeps_a_notice_unless_told_to_replace_it(
+    tmp_path: Path,
+    flag: list[str],
+    expected: str | None,
+) -> None:
+    """A photo with a notice keeps it by default, and --no-preserve-copyright replaces it."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    values = _taken(2025, EXIF_Copyright="(c) 2011 Ada")
+    with (
+        patch.object(main_module, "read_field_sources", return_value={image.resolve(): values}),
+        patch.object(main_module, "write_metadata_everywhere", return_value=(True, [])) as write,
+    ):
+        _run_app(["set", "--input", str(image), "--copyright", "(c) {year} Ada", *flag])
+
+    extra: dict[str, str] = write.call_args.kwargs["extra"] if write.call_args else {}
+    assert extra.get("EXIF:Copyright") == expected
+
+
+def test_set_counts_a_photo_that_keeps_everything_as_kept_not_failed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A second `set` over a stamped folder writes nothing and still exits 0."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    values = FieldSources(sidecar={"XMP:Rights": "(c) 2011 Ada", "XMP:Creator": "Ada"})
+    with (
+        patch.object(main_module, "read_field_sources", return_value={image.resolve(): values}),
+        patch.object(main_module, "write_metadata_everywhere") as write,
+    ):
+        _run_app(["set", "--input", str(image), "--artist", "Ada", "--copyright", "(c) {year}"])
+
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    assert "Wrote 0 of 1" in out
+    assert "1 photo(s) already carried everything asked for" in out
+
+
+def test_set_does_not_count_a_skipped_photo_as_kept(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """{year!} on an undated photo with nothing else to write is skipped, not kept."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    with (
+        patch.object(
+            main_module,
+            "read_field_sources",
+            return_value={image.resolve(): FieldSources()},
+        ),
+        patch.object(main_module, "write_metadata_everywhere") as write,
+    ):
+        _run_app(["set", "--input", str(image), "--copyright", "(c) {year!}"])
+
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    assert "already carried" not in out
+    assert "1 photo(s) got no notice" in out
 
 
 def test_tag_passes_the_copyright_fields_to_the_pipeline(tmp_path: Path) -> None:
@@ -2683,7 +2796,7 @@ def test_tag_passes_the_copyright_fields_to_the_pipeline(tmp_path: Path) -> None
         _run_app(["--input", str(image), "--artist", "Ada", "--copyright", "(c) {year} {artist}"])
 
     fields = captured["options"].extra_fields
-    assert fields.resolve(2025)["EXIF:Copyright"] == "(c) 2025 Ada"
+    assert fields.resolve(_taken(2025).values)["EXIF:Copyright"] == "(c) 2025 Ada"
 
 
 def test_tag_reads_the_copyright_table_from_the_config_file(
@@ -2704,7 +2817,7 @@ def test_tag_reads_the_copyright_table_from_the_config_file(
     with setup, create_agent, run_batch:
         _run_app(["--input", str(image)])
 
-    assert captured["options"].extra_fields.resolve(2025)["EXIF:Artist"] == "Ada Lovelace"
+    assert captured["options"].extra_fields.resolve({})["EXIF:Artist"] == "Ada Lovelace"
 
 
 def test_show_all_json_emits_the_raw_tag_dump(

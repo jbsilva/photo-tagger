@@ -79,6 +79,7 @@ from photo_tagger.gui_state import (
     build_save_job,
     build_tree,
     caption_source_note,
+    capture_year,
     chain_to_display,
     clamp_zoom,
     config_text_with_language,
@@ -92,6 +93,7 @@ from photo_tagger.gui_state import (
     extension_counts,
     extra_pass_status,
     failure_summary,
+    field_tags_to_read,
     fields_written,
     file_dialog_name_filters,
     file_type_label,
@@ -108,6 +110,7 @@ from photo_tagger.gui_state import (
     hierarchy_tree_text,
     journal_label,
     journal_time,
+    keeps_copyright,
     keys_by_check,
     keyword_diff,
     keyword_lines,
@@ -164,6 +167,7 @@ from photo_tagger.gui_state import (
     vocabulary_summary,
     watch_status_text,
     wrap_tooltip,
+    writes_nothing,
     zoom_label,
 )
 from photo_tagger.i18n import activate
@@ -175,6 +179,8 @@ from photo_tagger.metadata import (
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
     CaptionValue,
+    FieldSources,
+    WriteTarget,
 )
 from photo_tagger.models import KeywordSet
 from photo_tagger.pacing import PacingPlan
@@ -2231,6 +2237,15 @@ def test_anchored_scroll_clamps_below_zero() -> None:
 _NOTICE = "Copyright (c) {year} {artist}"
 
 
+def _taken(year: int) -> FieldSources:
+    """Return what a photo taken in *year* carries in the file itself, with nothing else on it."""
+    return FieldSources(image={"EXIF:DateTimeOriginal": f"{year}:05:04 10:00:00"})
+
+
+_EMBEDDED = [WriteTarget(path=Path("/a.jpg"), use_sidecar=False, existed=True)]
+_SIDECAR = [WriteTarget(path=Path("/a.xmp"), use_sidecar=True, existed=False)]
+
+
 def _copyright_options(**kwargs: object) -> SaveOptions:
     """Return a SaveOptions carrying a usable copyright block."""
     fields, error = build_copyright_fields(
@@ -2304,12 +2319,12 @@ def test_resolve_extra_tags_dates_the_notice_by_the_photo() -> None:
     """The year comes from the batch read, so one photo's notice is not another's."""
     old, new = Path("/photos/old.jpg"), Path("/photos/new.jpg")
     options = _copyright_options()
-    years = {old: 2011, new: 2025}
+    sources = {old: _taken(2011), new: _taken(2025)}
 
-    assert resolve_extra_tags(options, old, years)["EXIF:Copyright"] == (
+    assert resolve_extra_tags(options, old, sources)["EXIF:Copyright"] == (
         "Copyright (c) 2011 Ada Lovelace"
     )
-    assert resolve_extra_tags(options, new, years)["EXIF:Copyright"] == (
+    assert resolve_extra_tags(options, new, sources)["EXIF:Copyright"] == (
         "Copyright (c) 2025 Ada Lovelace"
     )
 
@@ -2319,23 +2334,35 @@ def test_resolve_extra_tags_is_empty_without_a_copyright() -> None:
     assert resolve_extra_tags(SaveOptions(), Path("/photos/a.jpg"), {}) == {}
 
 
-def test_resolve_extra_tags_falls_back_to_this_year() -> None:
-    """A photo whose year could not be read still gets a notice, dated today."""
+def test_resolve_extra_tags_leaves_an_undated_photo_undated() -> None:
+    """A photo missing from the read gets a notice without a year, never today's."""
     tags = resolve_extra_tags(_copyright_options(), Path("/photos/a.jpg"), {})
-    this_year = datetime.now(tz=UTC).astimezone().year
-    assert tags["EXIF:Copyright"] == f"Copyright (c) {this_year} Ada Lovelace"
+    assert tags["EXIF:Copyright"] == "Copyright (c) Ada Lovelace"
 
 
 def test_build_copyright_fields_reports_a_template_it_cannot_fill() -> None:
     """The dialog gets the reason as text, rather than an exception out of a Qt slot."""
     fields, error = build_copyright_fields(
         artist="",
-        notice="Copyright (c) {year} {artist}",
+        notice="Copyright (c) {year} {shot_at}",
         rights="",
         marked=None,
     )
     assert fields is None
-    assert "--artist" in error
+    assert "{shot_at}" in error
+
+
+def test_build_copyright_fields_carries_the_preserve_choice() -> None:
+    """The dialog's checkbox decides whether a save replaces what a photo has."""
+    fields, _error = build_copyright_fields(
+        artist="Ada",
+        notice="",
+        rights="",
+        marked=None,
+        preserve=False,
+    )
+    assert fields is not None
+    assert not fields.preserve
 
 
 def test_build_copyright_fields_trims_what_was_typed() -> None:
@@ -2348,7 +2375,7 @@ def test_build_copyright_fields_trims_what_was_typed() -> None:
     )
     assert error == ""
     assert fields is not None
-    assert fields.resolve(2025)["EXIF:Artist"] == "Ada Lovelace"
+    assert fields.resolve({})["EXIF:Artist"] == "Ada Lovelace"
 
 
 def test_load_sidecar_overrides_parses_the_config_entries() -> None:
@@ -2376,7 +2403,7 @@ def test_build_copyright_fields_keeps_config_only_assignments() -> None:
     """set_tags has no dialog row, so the window carries it through from the config file."""
     options = _copyright_options(assignments=["XMP-xmpRights:WebStatement=https://x.test/terms"])
     assert options.extra_fields is not None
-    resolved = options.extra_fields.resolve(2025)
+    resolved = options.extra_fields.resolve({})
     assert resolved["XMP-xmpRights:WebStatement"] == "https://x.test/terms"
 
 
@@ -2389,18 +2416,66 @@ def test_copyright_summary_lists_every_tag_for_a_real_year() -> None:
     assert "XMP-xmpRights:Marked = True" in summary
 
 
-def test_planned_copyright_shows_the_xmp_wording_for_the_year() -> None:
+def test_planned_copyright_shows_the_xmp_wording_for_the_photo() -> None:
     """The detail pane compares this with the file's notice, which is read XMP first."""
     fields = ExtraFields(notice="(c) {year} Ada", rights="© {year} Ada")
-    assert planned_copyright(fields, 2019) == "© 2019 Ada"
-    assert planned_copyright(ExtraFields(notice="(c) {year} Ada"), 2019) == "(c) 2019 Ada"
+    assert planned_copyright(fields, _taken(2019)) == "© 2019 Ada"
+    assert planned_copyright(ExtraFields(notice="(c) {year} Ada"), _taken(2019)) == "(c) 2019 Ada"
 
 
 def test_planned_copyright_is_none_without_a_notice() -> None:
     """No settings, or a name alone, put no notice on the photo."""
-    assert planned_copyright(None, 2019) is None
-    assert planned_copyright(ExtraFields(), 2019) is None
-    assert planned_copyright(ExtraFields(artist="Ada Lovelace"), 2019) is None
+    assert planned_copyright(None, _taken(2019)) is None
+    assert planned_copyright(ExtraFields(), _taken(2019)) is None
+    assert planned_copyright(ExtraFields(artist="Ada Lovelace"), _taken(2019)) is None
+
+
+def test_keeps_copyright_when_the_photo_has_a_notice_and_preserve_is_on() -> None:
+    """The detail pane says the notice stays, instead of showing one that is never written."""
+    fields = ExtraFields(notice="(c) {year} Ada")
+    has_one = FieldSources(image={"XMP:Rights": "(c) 2011 Grace"})
+    assert keeps_copyright(fields, has_one, _EMBEDDED)
+    assert planned_copyright(fields, has_one, _EMBEDDED) is None
+    assert keeps_copyright(ExtraFields(marked=True), has_one, _EMBEDDED)
+    assert not keeps_copyright(fields, FieldSources(), _EMBEDDED)
+    assert not keeps_copyright(ExtraFields(notice="(c)", preserve=False), has_one, _EMBEDDED)
+    assert not keeps_copyright(ExtraFields(artist="Ada"), has_one, _EMBEDDED)
+    assert not keeps_copyright(None, has_one, _EMBEDDED)
+
+
+def test_keeps_copyright_looks_only_at_the_files_the_save_writes() -> None:
+    """A notice in the photo does not stop a save that writes only its sidecar, and back."""
+    fields = ExtraFields(notice="(c) {year} Ada")
+    in_photo = FieldSources(image={"XMP:Rights": "(c) 2011 Grace"})
+    in_sidecar = FieldSources(sidecar={"XMP:Rights": "(c) 2011 Grace"})
+    assert not keeps_copyright(fields, in_photo, _SIDECAR)
+    assert not keeps_copyright(fields, in_sidecar, _EMBEDDED)
+    assert keeps_copyright(fields, in_sidecar, _SIDECAR)
+
+
+def test_capture_year_reads_the_first_usable_date() -> None:
+    """The preview year follows the same chain as {year}, and nothing else."""
+    shot_in = 2011
+    values = {"EXIF:DateTimeOriginal": "0000:00:00", "IPTC:DateCreated": str(shot_in)}
+    assert capture_year(FieldSources(sidecar=values)) == shot_in
+    assert capture_year(FieldSources(image={"File:FileModifyDate": "2025:01:01"})) is None
+
+
+def test_writes_nothing_only_when_the_job_and_the_copyright_are_both_empty() -> None:
+    """A photo that keeps its notice and gets no generated field is done, not failed."""
+    bare = SaveJob(path=Path("/a.jpg"), keywords=KeywordSet(), title=None, description=None)
+    assert writes_nothing(bare, {})
+    assert not writes_nothing(bare, {"EXIF:Artist": "Ada"})
+    assert not writes_nothing(replace(bare, title="T"), {})
+
+
+def test_field_tags_to_read_covers_the_defaults_and_the_templates() -> None:
+    """The load reads what the default chains need, and what a custom template names."""
+    tags = field_tags_to_read(ExtraFields(notice="{EXIF:Model}"))
+    assert "EXIF:DateTimeOriginal" in tags
+    assert "XMP:Rights" in tags
+    assert "EXIF:Model" in tags
+    assert field_tags_to_read(None) == field_tags_to_read(ExtraFields())
 
 
 def test_copyright_summary_says_when_nothing_is_written() -> None:
@@ -2453,6 +2528,18 @@ def test_merged_config_text_updates_and_clears_copyright_keys() -> None:
     )
     parsed = tomllib.loads(text)
     assert parsed["copyright"] == {"artist": "Ada Lovelace", "marked": False}
+
+
+def test_config_text_writes_preserve_copyright_only_when_it_is_off() -> None:
+    """Keeping is the default, so only the choice to replace takes a line, and a merge clears it."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    text = config_toml_text(_config_values(preserve_copyright=False))
+    assert tomllib.loads(text)["copyright"] == {"preserve_copyright": False}
+    merged = merged_config_text(text, _config_values(artist="Ada"))
+    assert tomllib.loads(merged)["copyright"] == {"artist": "Ada"}
+    fresh = merged_config_text("", _config_values(preserve_copyright=False))
+    assert tomllib.loads(fresh)["copyright"] == {"preserve_copyright": False}
 
 
 def test_merged_config_text_drops_a_copyright_table_left_empty() -> None:

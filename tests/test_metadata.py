@@ -26,7 +26,6 @@ from photo_tagger.metadata import (
     _dedup_preserving_first_case,
     _value_is_present,
     build_contextual_prompt,
-    capture_year,
     find_field_presence,
     find_tagged_images,
     format_metadata_value,
@@ -1851,9 +1850,67 @@ def test_read_all_tags_degrades_when_exiftool_cannot_run(tmp_path: Path) -> None
         assert read_all_tags(image) == {}
 
 
-def test_capture_year_falls_back_to_today_for_a_file_it_cannot_stat(tmp_path: Path) -> None:
-    """A copyright notice needs a year for every photo, even one that vanished mid-run."""
-    assert capture_year(tmp_path / "ghost.jpg", None) == datetime.now(tz=UTC).astimezone().year
+def test_field_values_match_the_read_spelling_and_prefer_the_sidecar() -> None:
+    """XMP-dc:Creator comes back as XMP:Creator, a blank value is no value, and a sidecar wins."""
+    from photo_tagger.metadata import field_values  # noqa: PLC0415
+
+    blocks = [
+        {"SourceFile": "a.jpg", "XMP:Creator": "Ada", "EXIF:Artist": " ", "IPTC:By-line": "Ada"},
+        {"SourceFile": "a.xmp", "XMP:Creator": ["Grace", "Ada"]},
+    ]
+    tags = ("XMP-dc:Creator", "EXIF:Artist", "IFD0:Artist", "iptc:by-line", "EXIF:Copyright")
+    found = field_values(blocks, tags)
+    assert found.values == {"XMP-dc:Creator": "Grace, Ada", "iptc:by-line": "Ada"}
+    assert found.image == {"XMP-dc:Creator": "Ada", "iptc:by-line": "Ada"}
+    assert found.sidecar == {"XMP-dc:Creator": "Grace, Ada"}
+
+
+def test_field_values_find_a_family_one_group_by_the_tag_name() -> None:
+    """System:, Canon:, and Keys: come back under File:, MakerNotes:, and QuickTime:."""
+    from photo_tagger.metadata import field_values  # noqa: PLC0415
+
+    blocks = [
+        {
+            "SourceFile": "a.mov",
+            "File:FileModifyDate": "2019:01:02 03:04:05",
+            "MakerNotes:OwnerName": "Ada",
+            "QuickTime:CreationDate": "2018:01:01",
+        },
+    ]
+    tags = ("System:FileModifyDate", "Canon:OwnerName", "Keys:CreationDate", "Keys:Missing")
+    assert field_values(blocks, tags).image == {
+        "System:FileModifyDate": "2019:01:02 03:04:05",
+        "Canon:OwnerName": "Ada",
+        "Keys:CreationDate": "2018:01:01",
+    }
+
+
+def test_field_sources_written_reads_only_the_target_files() -> None:
+    """Preserve looks at what the save writes: the photo, its sidecar, or both."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from photo_tagger.metadata import FieldSources, WriteTarget  # noqa: PLC0415
+
+    found = FieldSources(image={"EXIF:Copyright": "a"}, sidecar={"XMP:Rights": "b"})
+    photo = WriteTarget(path=Path("a.jpg"), use_sidecar=False, existed=True)
+    sidecar = WriteTarget(path=Path("a.xmp"), use_sidecar=True, existed=True)
+    assert found.written([photo]) == {"EXIF:Copyright": "a"}
+    assert found.written([sidecar]) == {"XMP:Rights": "b"}
+    assert found.written([photo, sidecar]) == found.values
+
+
+def test_read_field_sources_answers_every_photo_even_when_the_read_fails(tmp_path: Path) -> None:
+    """A failed read leaves the photos undated rather than stopping the write."""
+    from photo_tagger.metadata import read_field_sources  # noqa: PLC0415
+
+    image = tmp_path / "a.jpg"
+    image.write_bytes(b"x")
+    assert read_field_sources([image], ())[image].values == {}
+    with patch(
+        "photo_tagger.metadata.managed_helper",
+        side_effect=FileNotFoundError("no exiftool"),
+    ):
+        assert read_field_sources([image], ("EXIF:Artist",))[image].values == {}
 
 
 def test_fit_bytes_never_cuts_inside_a_character() -> None:

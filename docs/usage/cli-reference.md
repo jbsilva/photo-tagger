@@ -241,18 +241,50 @@ No model can guess who took a photo or who owns it. You write those fields yours
 into the same ExifTool call as the generated metadata. They belong to the output group, so
 `photo-tagger` and `photo-tagger watch` both take them.
 
-| Flag                         | Default | Env var | Description                                                                                                          |
-| ---------------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
-| `--artist`, `--creator` NAME | none    | `-`     | Who took the photo. Goes to `EXIF:Artist`, `XMP-dc:Creator`, and `IPTC:By-line`.                                     |
-| `--copyright` TEXT           | none    | `-`     | The copyright notice. Goes to `EXIF:Copyright`, `IPTC:CopyrightNotice`, and `XMP-dc:Rights`.                         |
-| `--rights` TEXT              | none    | `-`     | `XMP-dc:Rights` alone, for text that reads differently from `--copyright`.                                           |
-| `--marked` / `--not-marked`  | unset   | `-`     | `XMP-xmpRights:Marked`: under copyright, or in the public domain. If you pass neither, photo-tagger leaves it alone. |
-| `--set` TAG=VALUE            | none    | `-`     | Any other tag, under its ExifTool name. Repeatable. An empty value deletes the tag.                                  |
+| Flag                                               | Default | Env var | Description                                                                                                          |
+| -------------------------------------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--artist`, `--creator` NAME                       | none    | `-`     | Who took the photo. Goes to `EXIF:Artist`, `XMP-dc:Creator`, and `IPTC:By-line`.                                     |
+| `--copyright` TEXT                                 | none    | `-`     | The copyright notice. Goes to `EXIF:Copyright`, `IPTC:CopyrightNotice`, and `XMP-dc:Rights`.                         |
+| `--rights` TEXT                                    | none    | `-`     | `XMP-dc:Rights` alone, for text that reads differently from `--copyright`.                                           |
+| `--marked` / `--not-marked`                        | unset   | `-`     | `XMP-xmpRights:Marked`: under copyright, or in the public domain. If you pass neither, photo-tagger leaves it alone. |
+| `--preserve-copyright` / `--no-preserve-copyright` | keep    | `-`     | Keep the name and the notice a photo already has. `--no-preserve-copyright` replaces them.                           |
+| `--set` TAG=VALUE                                  | none    | `-`     | Any other tag, under its ExifTool name. Repeatable. An empty value deletes the tag.                                  |
 
-`--copyright` and `--rights` are templates. `{year}` becomes the year of the photo. `{artist}`
-becomes the name from `--artist`. The year is the photo's own `EXIF:DateTimeOriginal`. If the photo
-carries no capture date, the year comes from the file's timestamp. One command therefore stamps a
-decade of shoots, each with its own year.
+`--copyright` and `--rights` are templates. `{year}` becomes the year of the photo, from its capture
+date: `EXIF:DateTimeOriginal`, then the XMP and IPTC dates, then `EXIF:CreateDate`. One command
+therefore stamps a decade of shoots, each with its own year. `{artist}` becomes the name from
+`--artist`, or else the name the photo already carries.
+
+A placeholder is a chain of sources, separated by `|`. photo-tagger tries them from left to right
+and uses the first one with a value:
+
+- A tag name with its group reads that tag from the photo, for example `{EXIF:Artist}`.
+- A `%` after a tag formats a date with strftime codes, for example `{EXIF:DateTimeOriginal%Y}`.
+- Text in double quotes is a fallback. It always wins when the chain reaches it, and it can hold
+    placeholders of its own.
+- If a chain ends in `""` and no source answers, the placeholder drops out with the space before it.
+- If a chain ends with no quoted text and no source answers, photo-tagger writes no notice on that
+    photo and warns.
+
+`{year}` is short for the capture-date chain with `""` at the end. So is `{artist}` for `--artist`,
+`EXIF:Artist`, `XMP-dc:Creator`, and `IPTC:By-line`. A photo without a capture date therefore gets
+`Copyright (c) Ada Lovelace, All rights reserved` from the example below, when `--artist` is
+`Ada Lovelace`. Write `{year!}` or `{artist!}` to write no notice on such a photo instead. Its
+creator and rights flag are still written. photo-tagger never uses the file's timestamp, because a
+copy or an edit changes it. Name `{File:FileModifyDate%Y}` in a chain if you want it. Write `{{` and
+`}}` for literal braces.
+
+```text
+Copyright (c) {year} {artist}, All rights reserved
+Copyright (c) {year!} {EXIF:Artist|XMP-dc:Creator|"Studio Lovelace"}
+```
+
+By default, a photo that already has a notice in EXIF, XMP, or IPTC keeps it, with its XMP rights
+and its rights flag. A photo that already names a creator keeps that name. A second run therefore
+never dates an old notice again, and a folder with photos from other people keeps their credit. When
+the creator is kept, `{artist}` in a new notice names that creator, not `--artist`. Only the files a
+save writes count: a notice in a sidecar does not stop a save into the photo.
+`--no-preserve-copyright` writes your values over the old ones. `--set` is always written.
 
 EXIF types its copyright and artist fields as ASCII. UTF-8 only became legal there in Exif 3.0 (CIPA
 DC-008-2023). Nothing in a file says which of the two a value uses, so a `©` in `EXIF:Copyright` is
@@ -284,7 +316,7 @@ $ photo-tagger set -i ~/Pictures/2025 -r --embed-in-photo \
 Wrote 412 of 412 photo(s).
 ```
 
-It takes `-i/--input`, `--ext`, `-r/--recursive`, and the five flags above. It also takes these
+It takes `-i/--input`, `--ext`, `-r/--recursive`, and the six flags above. It also takes these
 flags, with the meanings they have everywhere else:
 
 - `--sidecar-mode`

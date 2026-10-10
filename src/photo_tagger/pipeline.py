@@ -23,7 +23,6 @@ from photo_tagger.config import (
     DEFAULT_TEMPERATURE,
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_USER_PROMPT,
-    TAG_EXIF_DATE_TIME_ORIGINAL,
     SidecarMode,
     SidecarOverrides,
     build_repair_prompt,
@@ -33,8 +32,8 @@ from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
 from photo_tagger.metadata import (
     build_contextual_prompt,
-    capture_year,
     managed_helper,
+    plan_writes,
     read_image_context,
     write_metadata_everywhere,
 )
@@ -349,8 +348,8 @@ class _PendingWrite:
     whether a preserved title or description is written at all), and the scratch pad the deferred
     :class:`ImageOutcome` is built from.
 
-    ``extra_tags`` is resolved here rather than at write time because its copyright year comes from
-    this photo's own capture date, which was read with the rest of its context.
+    ``extra_tags`` is resolved here rather than at write time because its copyright notice is filled
+    from this photo's own tags (its capture date, above all), read with the rest of its context.
     """
 
     keywords: list[str]
@@ -709,15 +708,26 @@ def _resolve_extra_tags(
     options: ProcessingOptions,
 ) -> dict[str, str]:
     """
-    Render this photo's copyright and ``--set`` tags, dating the notice by its capture year.
+    Render this photo's copyright and ``--set`` tags from the tags its template reads.
 
-    The capture date is already in *context* (the prompt uses it as a hint), so a per-photo year
-    costs no extra exiftool call.
+    Those tags were read with the rest of *context* (see :func:`_field_tags`), so a notice dated per
+    photo costs no extra exiftool call.
     """
     if options.extra_fields is None or options.extra_fields.is_empty:
         return {}
-    captured = context.camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL)
-    return options.extra_fields.resolve(capture_year(image_path, captured))
+    sources = context.field_sources
+    targets = plan_writes(image_path, options.sidecar_mode, options.sidecar_overrides)
+    return options.extra_fields.resolve(
+        sources.values,
+        existing=sources.written(targets),
+        photo=str(image_path),
+    )
+
+
+def _field_tags(options: ProcessingOptions) -> tuple[str, ...]:
+    """Name the tags the copyright templates read, for the photo's one context read."""
+    fields = options.extra_fields
+    return fields.source_tags if fields is not None and not fields.is_empty else ()
 
 
 def process_photo(
@@ -755,6 +765,7 @@ def process_photo(
             image_path,
             et=helper,
             include_content_hash=ctx.cache is not None,
+            field_tags=_field_tags(options),
         )
         existing_keywords_full = context.existing_keywords
         if not existing_keywords_full.is_empty():

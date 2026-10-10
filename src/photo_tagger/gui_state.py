@@ -39,6 +39,8 @@ from photo_tagger.csv_report import ReportRow
 from photo_tagger.discovery import parse_extensions, resolve_image_files
 from photo_tagger.errors import ConfigFileError, FieldError
 from photo_tagger.fields import (
+    ARTIST_READ_TAGS,
+    COPYRIGHT_READ_TAGS,
     TAG_EXIF_COPYRIGHT,
     TAG_XMP_RIGHTS,
     ExtraFields,
@@ -56,7 +58,10 @@ from photo_tagger.metadata import (
     SOURCE_SIDECAR,
     TAGGED_FIELDS,
     CaptionValue,
+    FieldSources,
+    WriteTarget,
     parse_sidecar_overrides,
+    plan_writes,
     select_camera_fields,
     select_location,
 )
@@ -70,6 +75,7 @@ from photo_tagger.pacing import (
 from photo_tagger.pipeline import MAX_TRACKED_DROPPED_TERMS
 from photo_tagger.programs import find_program
 from photo_tagger.sessions import build_session_vocabulary, plan_sessions
+from photo_tagger.templates import ARTIST_TAGS, YEAR_TAGS, format_date
 from photo_tagger.undo import (
     CHANGED,
     DELETED,
@@ -203,9 +209,10 @@ class PhotoItem:
     existing_description: str | None = None
     existing_keywords: KeywordSet = field(default_factory=KeywordSet)
     existing_copyright: str | None = None
-    # The year the photo was taken, read with the existing metadata. It dates the notice the
-    # detail pane says a save writes, before the photo is ever generated.
-    capture_year: int | None = None
+    # The tags a copyright template reads (the capture date, the name and notice already there),
+    # read with the existing metadata. They fill the notice the detail pane says a save writes,
+    # before the photo is ever generated.
+    field_sources: FieldSources = field(default_factory=FieldSources)
     existing_sources: list[str] = field(default_factory=list)
     # Every title and description found, per field, the one in use first. What it adds over the two
     # fields above is the value a sidecar shadows, which the detail pane names rather than hide.
@@ -547,28 +554,72 @@ def save_options_for(item: PhotoItem, options: SaveOptions) -> SaveOptions:
 def resolve_extra_tags(
     options: SaveOptions,
     path: Path,
-    years: Mapping[Path, int],
+    sources: Mapping[Path, FieldSources],
 ) -> dict[str, str]:
     """
     Render one photo's copyright tags, empty when the window writes none.
 
-    *years* is a batch read of capture years (see :func:`~photo_tagger.metadata.read_capture_years`)
-    so a save pays one ExifTool call for the whole batch. A photo missing from it falls back to this
-    year: a notice dated slightly wrong beats one with a hole in it.
+    *sources* is a batch read of the tags the templates need (see
+    :func:`~photo_tagger.metadata.read_field_sources`), so a save pays one ExifTool call for the
+    whole batch. A photo missing from it reads as one with nothing on it. Preserve looks only at
+    the files this save writes.
     """
     fields = options.extra_fields
     if fields is None or fields.is_empty:
         return {}
-    return fields.resolve(years.get(path) or datetime.now(tz=UTC).astimezone().year)
+    found = sources.get(path, FieldSources())
+    return fields.resolve(
+        found.values,
+        existing=found.written(save_targets(options, path)),
+        photo=str(path),
+    )
 
 
-def build_copyright_fields(
+def save_targets(options: SaveOptions, path: Path) -> list[WriteTarget]:
+    """List the files a save with *options* writes for *path*."""
+    return plan_writes(path, options.sidecar_mode, options.sidecar_overrides)
+
+
+def capture_year(sources: FieldSources) -> int | None:
+    """Return the year from the photo's first capture date (see ``{year}``), else None."""
+    values = sources.values
+    for tag in YEAR_TAGS:
+        if (year := format_date(values.get(tag, ""), "%Y")) is not None:
+            return int(year)
+    return None
+
+
+def writes_nothing(job: SaveJob, extra: Mapping[str, str]) -> bool:
+    """
+    Whether a save has nothing at all to put on the photo.
+
+    That happens when the copyright is the only thing to write and the photo already has it. The
+    writer refuses an empty write, but here it is not a failure: the photo is as asked.
+    """
+    return job.keywords.is_empty() and job.title is None and job.description is None and not extra
+
+
+def field_tags_to_read(fields: ExtraFields | None) -> tuple[str, ...]:
+    """
+    Name the tags to read with a photo's existing metadata, for the notice the detail pane shows.
+
+    The default chains and the notice already there always, plus whatever the current templates
+    name, so editing the dialog rarely needs a new read.
+    """
+    tags = [*YEAR_TAGS, *ARTIST_TAGS, *ARTIST_READ_TAGS, *COPYRIGHT_READ_TAGS]
+    if fields is not None:
+        tags += fields.source_tags
+    return tuple(dict.fromkeys(tags))
+
+
+def build_copyright_fields(  # noqa: PLR0913 - one keyword per dialog field.
     *,
     artist: str,
     notice: str,
     rights: str,
     marked: bool | None,
     assignments: Iterable[str] | None = None,
+    preserve: bool = True,
 ) -> tuple[ExtraFields | None, str]:
     """
     Validate what the Copyright dialog holds: the fields, or the message refusing them.
@@ -585,6 +636,7 @@ def build_copyright_fields(
             rights=rights.strip(),
             marked=marked,
             assignments=assignments,
+            preserve=preserve,
         )
     except FieldError as exc:
         return None, str(exc)
@@ -644,7 +696,7 @@ def copyright_summary(fields: ExtraFields | None, year: int) -> str:
     """
     if fields is None or fields.is_empty:
         return _("Nothing is written. Fill in a name or a notice above.")
-    resolved = fields.resolve(year)
+    resolved = fields.preview(year)
     lines = [
         ngettext(
             "Writes {n} tag. On a photo taken in {year}:",
@@ -656,17 +708,36 @@ def copyright_summary(fields: ExtraFields | None, year: int) -> str:
     return "\n".join(lines)
 
 
-def planned_copyright(fields: ExtraFields | None, year: int) -> str | None:
+def planned_copyright(
+    fields: ExtraFields | None,
+    sources: FieldSources,
+    targets: Iterable[WriteTarget] = (),
+) -> str | None:
     """
-    Return the notice a save puts on a photo taken in *year*, or None when it writes none.
+    Return the notice a save to *targets* puts on a photo, or None when it writes none.
 
     The XMP wording comes first, the same order the Existing side reads the file in, so the two
     columns compare like with like.
     """
     if fields is None or fields.is_empty:
         return None
-    payload = fields.resolve(year)
+    payload = fields.resolve(sources.values, existing=sources.written(targets))
     return payload.get(TAG_XMP_RIGHTS) or payload.get(TAG_EXIF_COPYRIGHT) or None
+
+
+def keeps_copyright(
+    fields: ExtraFields | None,
+    sources: FieldSources,
+    targets: Iterable[WriteTarget] = (),
+) -> bool:
+    """Whether a save to *targets* keeps the notice: those files have one, and preserve is on."""
+    existing = sources.written(targets)
+    return (
+        fields is not None
+        and fields.preserve
+        and fields.writes_notice
+        and any(existing.get(tag, "").strip() for tag in COPYRIGHT_READ_TAGS)
+    )
 
 
 def ascii_warning(fields: ExtraFields | None, year: int) -> str:
@@ -681,7 +752,7 @@ def ascii_warning(fields: ExtraFields | None, year: int) -> str:
     """
     if fields is None or fields.is_empty:
         return ""
-    if not (tags := non_ascii_tags(fields.resolve(year))):
+    if not (tags := non_ascii_tags(fields.preview(year))):
         return ""
     return _(
         "EXIF only allows plain ASCII before Exif 3.0, so some software will show {tags} "
@@ -2322,6 +2393,7 @@ class GuiConfigValues:
     copyright_notice: str = ""
     rights: str = ""
     marked: bool | None = None
+    preserve_copyright: bool = True
     # Window-only, under [gui]: the CLI writes every photo it generates, so it has no flag for it.
     save_after_generating: bool = False
     # Settings > Pacing, under [pacing]. The built-ins pace nothing, so a config the GUI writes
@@ -2344,12 +2416,14 @@ def _copyright_lines(values: GuiConfigValues) -> list[str]:
         )
         if value
     ]
-    if not entries and values.marked is None:
+    if not entries and values.marked is None and values.preserve_copyright:
         return []
     lines = ["", "[copyright]"]
     lines += [f"{key} = {_toml_str(value)}" for key, value in entries]
     if values.marked is not None:
         lines.append(f"marked = {_toml_bool(values.marked)}")
+    if not values.preserve_copyright:
+        lines.append("preserve_copyright = false")
     return lines
 
 
@@ -2465,7 +2539,13 @@ def _merge_copyright(document: TOMLDocument, values: GuiConfigValues) -> None:
     nothing in it goes too.
     """
     if "copyright" not in document and not any(
-        (values.artist, values.copyright_notice, values.rights, values.marked is not None),
+        (
+            values.artist,
+            values.copyright_notice,
+            values.rights,
+            values.marked is not None,
+            not values.preserve_copyright,
+        ),
     ):
         return
     table = _config_table(document, "copyright")
@@ -2482,6 +2562,11 @@ def _merge_copyright(document: TOMLDocument, values: GuiConfigValues) -> None:
         table.pop("marked", None)
     else:
         table["marked"] = values.marked
+    # The default is to keep, so only the choice to replace is worth a line.
+    if values.preserve_copyright:
+        table.pop("preserve_copyright", None)
+    else:
+        table["preserve_copyright"] = False
     if not table:
         document.pop("copyright", None)
 

@@ -501,10 +501,17 @@ the model produced. It is the GUI's
 
 A notice is a template. `{year}` becomes the year of the photo, and `{artist}` becomes the name
 above. One notice therefore dates a shoot from 2019 and one from last week correctly, in the same
-batch. The year is the photo's own capture date. A photo without one gets its file date instead.
+batch. The year is the photo's own capture date. On a photo without one, `{year}` drops out. A
+placeholder can also read any tag and fall back, as in `{EXIF:Artist|"Unknown"}`. The
+[CLI reference](cli-reference.md#copyright-and-other-fields) lists the full syntax.
 
-The panel under the fields lists the tags a save writes, and what each one says for a real year. A
-template with a typo in it is visible there before anything is written.
+**Keep the name and notice a photo already has** is on by default. A photo with a creator keeps it,
+and a photo with a notice keeps the notice, the XMP rights, and the rights flag. So Save Selected
+never dates an old notice again. The Copyright row of the detail pane says *(keeps the notice it
+has)* for such a photo. Uncheck the option to replace what the photos carry.
+
+The panel under the fields lists the tags a save writes on a photo with no notice yet, and what each
+one says for a real year. A template with a typo in it is visible there before anything is written.
 
 The **Insert** row types the awkward parts for you: `©`, `{year}`, and `{artist}`. Each one lands in
 the field holding the cursor, and the buttons take no focus, so you can keep typing where you left

@@ -7,12 +7,12 @@ It turns a name and a notice template into the exiftool tags that carry them, an
 fields ``photo-tagger show`` reads back.
 
 Pure and IO-free. :mod:`photo_tagger.metadata` makes the exiftool calls; this decides what goes in
-them. The year arrives as an argument rather than being read here, because it comes from the photo's
-own capture date (see :func:`photo_tagger.metadata.capture_year`).
+them. What a template reads from the photo (its capture date, the name already on it) arrives as a
+mapping, read before the write (see :func:`photo_tagger.metadata.read_field_sources`).
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -31,6 +31,13 @@ from photo_tagger.config import (
     TAG_XMP_TITLE,
 )
 from photo_tagger.errors import FieldError
+from photo_tagger.templates import (
+    SETTING_ARTIST,
+    MissingValueError,
+    Template,
+    parse_template,
+    sample_values,
+)
 
 
 if TYPE_CHECKING:
@@ -61,12 +68,8 @@ COPYRIGHT_READ_TAGS: tuple[str, ...] = (
     TAG_EXIF_COPYRIGHT,
     TAG_IPTC_COPYRIGHT_NOTICE,
 )
-
-# What ``{year}`` and ``{artist}`` may be spelled as in a notice template.
-_PLACEHOLDER_PATTERN = re.compile(r"\{([^{}]*)\}")
-_PLACEHOLDER_YEAR = "year"
-_PLACEHOLDER_ARTIST = "artist"
-_KNOWN_PLACEHOLDERS = (_PLACEHOLDER_YEAR, _PLACEHOLDER_ARTIST)
+# The name already on a photo, in the read spelling. With preserve on, any of them keeps the name.
+ARTIST_READ_TAGS: tuple[str, ...] = (TAG_EXIF_ARTIST, READ_XMP_CREATOR, TAG_IPTC_BY_LINE)
 
 
 @dataclass(slots=True, frozen=True)
@@ -104,17 +107,14 @@ SHOWN_TAGS: tuple[str, ...] = tuple(
 )
 
 
-def _placeholders(template: str) -> list[str]:
-    """Return the placeholder names used in *template*, in the order they appear."""
-    return _PLACEHOLDER_PATTERN.findall(template)
+def _parsed(template: str | None, flag: str) -> Template | None:
+    """Parse a notice template, None and blank ones staying unwritten."""
+    return parse_template(template, flag=flag) if template else None
 
 
-def _render(template: str | None, *, artist: str | None, year: int) -> str | None:
-    """Fill ``{year}`` and ``{artist}`` in *template*; None and blank templates stay unwritten."""
-    if not template:
-        return None
-    filled = template.replace(f"{{{_PLACEHOLDER_YEAR}}}", str(year))
-    return filled.replace(f"{{{_PLACEHOLDER_ARTIST}}}", artist or "")
+def _any_present(values: Mapping[str, str], tags: tuple[str, ...]) -> bool:
+    """Whether any of *tags* has a non-blank value in *values*."""
+    return any(values.get(tag, "").strip() for tag in tags)
 
 
 @dataclass(slots=True, frozen=True)
@@ -122,14 +122,18 @@ class ExtraFields:
     """
     Authorship, rights, and raw tag assignments applied to every photo in a run.
 
-    *notice* and *rights* are templates, not finished text: the year belongs to the photo, so
-    ``"Copyright (c) {year} {artist}"`` becomes a different string for a 2019 frame than for a 2025
-    one. *rights* is the XMP wording when it has to differ from the rest (a real ``©`` where EXIF
-    gets ``(c)``), and falls back to *notice*.
+    *notice* and *rights* are templates, not finished text (see :mod:`photo_tagger.templates`): the
+    year belongs to the photo, so ``"Copyright (c) {year} {artist}"`` becomes a different string for
+    a 2019 frame than for a 2025 one. *rights* is the XMP wording when it has to differ from the
+    rest (a real ``©`` where EXIF gets ``(c)``), and falls back to *notice*.
 
     *marked* is the XMP "this work is protected" flag: True for a copyrighted photo, False to
     declare it public domain, None to leave whatever the file says alone. *tags* holds raw
     ``TAG=VALUE`` assignments and is applied last, so it can override anything above it.
+
+    *preserve* keeps what a photo already says. A photo with a name keeps it, and a photo with a
+    notice keeps the notice, the rights, and the flag. So a second run never re-dates a notice, and
+    a folder with photos from other people keeps their credit.
     """
 
     artist: str | None = None
@@ -137,36 +141,131 @@ class ExtraFields:
     rights: str | None = None
     marked: bool | None = None
     tags: Mapping[str, str] = field(default_factory=dict)
+    preserve: bool = True
+    _notice: Template | None = field(init=False, repr=False, compare=False)
+    _rights: Template | None = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Parse the templates once, raising :class:`FieldError` when one is malformed."""
+        object.__setattr__(self, "_notice", _parsed(self.notice, "--copyright"))
+        object.__setattr__(self, "_rights", _parsed(self.rights, "--rights"))
 
     @property
     def is_empty(self) -> bool:
         """Report whether this would write nothing, so callers can skip the work entirely."""
         return not (self.artist or self.notice or self.rights or self.tags) and self.marked is None
 
-    def resolve(self, year: int) -> dict[str, str]:
+    @property
+    def writes_notice(self) -> bool:
+        """Whether a notice, the rights, or the flag is configured: the fields preserve guards."""
+        return bool(self.notice or self.rights) or self.marked is not None
+
+    @property
+    def source_tags(self) -> tuple[str, ...]:
+        """Tags :meth:`resolve` reads: what the templates name, and what it keeps."""
+        tags = [
+            tag for template in (self._notice, self._rights) if template for tag in template.tags()
+        ]
+        if self.preserve and self.artist:
+            tags += ARTIST_READ_TAGS
+        if self.preserve and self.writes_notice:
+            tags += COPYRIGHT_READ_TAGS
+        return tuple(dict.fromkeys(tags))
+
+    def resolve(
+        self,
+        values: Mapping[str, str],
+        *,
+        existing: Mapping[str, str] | None = None,
+        photo: str = "",
+        skipped: list[str] | None = None,
+    ) -> dict[str, str]:
         """
-        Render the exiftool tag map for a photo taken in *year*.
+        Render the exiftool tag map for one photo, from its *values* (see :attr:`source_tags`).
+
+        *existing* is what the files this save writes already carry, which is all that preserve
+        looks at. It defaults to *values*, for a caller that writes every file it read.
 
         Returns an empty map when nothing was configured. A blank value is kept rather than dropped:
         ``--set XMP-dc:Rights=`` is how ExifTool deletes a tag, and that is a thing people want from
-        a tool that writes rights metadata.
+        a tool that writes rights metadata. A template that finds nothing on this photo leaves its
+        field unwritten, with a warning that names *photo*, and adds the option to *skipped*.
         """
+        existing = values if existing is None else existing
         payload: dict[str, str] = {}
-        if self.artist:
+        keep_creator = self.preserve and _any_present(existing, ARTIST_READ_TAGS)
+        if self.artist and not keep_creator:
             payload[TAG_EXIF_ARTIST] = self.artist
             payload[TAG_XMP_CREATOR] = self.artist
             payload[TAG_IPTC_BY_LINE] = self.artist
-        notice = _render(self.notice, artist=self.artist, year=year)
+        if not (self.preserve and _any_present(existing, COPYRIGHT_READ_TAGS)):
+            # A kept creator is the photo's author, so {artist} names them, not the --artist.
+            artist = "" if keep_creator else (self.artist or "")
+            missing = skipped if skipped is not None else []
+            payload |= self._notice_tags(values, artist=artist, photo=photo, skipped=missing)
+        payload.update(self.tags)
+        return payload
+
+    def preview(self, year: int) -> dict[str, str]:
+        """Render the tags for a photo taken in *year* with nothing on it yet, for a preview."""
+        values = {
+            tag: value
+            for template in (self._notice, self._rights)
+            if template
+            for tag, value in sample_values(template, year).items()
+        }
+        return replace(self, preserve=False).resolve(values)
+
+    def _notice_tags(
+        self,
+        values: Mapping[str, str],
+        *,
+        artist: str,
+        photo: str,
+        skipped: list[str],
+    ) -> dict[str, str]:
+        """Render the notice, the rights, and the flag."""
+        payload: dict[str, str] = {}
+        settings = {SETTING_ARTIST: artist}
+        notice = self._render(self._notice, values, settings, flag="--copyright", photo=photo)
+        if notice is None and self._notice is not None:
+            skipped.append("--copyright")
         if notice:
             payload[TAG_EXIF_COPYRIGHT] = notice
             payload[TAG_IPTC_COPYRIGHT_NOTICE] = notice
-        if rights := (_render(self.rights, artist=self.artist, year=year) or notice):
+        rights = self._render(self._rights, values, settings, flag="--rights", photo=photo)
+        if rights is None and self._rights is not None and not notice:
+            # XMP falls back to the notice, so the field is unwritten only when both find nothing.
+            skipped.append("--rights")
+        if rights := (rights or notice):
             payload[TAG_XMP_RIGHTS] = rights
         if self.marked is not None:
             # ExifTool spells this boolean out; the XMP value is the literal string.
             payload[TAG_XMP_MARKED] = "True" if self.marked else "False"
-        payload.update(self.tags)
         return payload
+
+    def _render(
+        self,
+        template: Template | None,
+        values: Mapping[str, str],
+        settings: Mapping[str, str],
+        *,
+        flag: str,
+        photo: str,
+    ) -> str | None:
+        """Fill one template, or return None (with a warning) when it finds nothing to say."""
+        if template is None:
+            return None
+        try:
+            return template.render(values, settings)
+        except MissingValueError as exc:
+            logger.warning(
+                "copyright_field_skipped",
+                flag=flag,
+                placeholder=exc.placeholder,
+                file=photo,
+            )
+            return None
 
 
 # The tags a reader is entitled to treat as 7-bit ASCII. EXIF types Artist (0x013B) and Copyright
@@ -265,42 +364,32 @@ def parse_assignment(item: str) -> tuple[str, str]:
     return tag, value
 
 
-def _check_template(template: str | None, *, flag: str, artist: str | None) -> None:
-    """Refuse a notice template with a placeholder that cannot be filled in."""
-    if not template:
-        return
-    for name in _placeholders(template):
-        if name not in _KNOWN_PLACEHOLDERS:
-            logger.error("field_template_unknown_placeholder", flag=flag, placeholder=name)
-            known = ", ".join(f"{{{p}}}" for p in _KNOWN_PLACEHOLDERS)
-            msg = f"{flag} does not know the placeholder {{{name}}}. Available: {known}"
-            raise FieldError(msg)
-        if name == _PLACEHOLDER_ARTIST and not artist:
-            logger.error("field_template_needs_artist", flag=flag)
-            msg = f"{flag} uses {{artist}}, so --artist has to say who that is"
-            raise FieldError(msg)
-
-
-def build_extra_fields(
+def build_extra_fields(  # noqa: PLR0913 - one keyword per copyright setting.
     *,
     artist: str | None = None,
     notice: str | None = None,
     rights: str | None = None,
     marked: bool | None = None,
     assignments: Iterable[str] | None = None,
+    preserve: bool = True,
 ) -> ExtraFields:
     """
     Validate what the user asked for and bundle it into an :class:`ExtraFields`.
 
-    Raises :class:`FieldError` on a malformed ``--set`` or a placeholder that cannot be filled, so a
-    typo stops the run before the first photo is written rather than stamping five hundred of them
-    with ``Copyright (c) {shot_at}``.
+    Raises :class:`FieldError` on a malformed ``--set`` or template, so a typo stops the run before
+    the first photo is written rather than stamping five hundred of them with
+    ``Copyright (c) {shot_at}``.
     """
     artist = (artist or "").strip() or None
-    _check_template(notice, flag="--copyright", artist=artist)
-    _check_template(rights, flag="--rights", artist=artist)
     tags = dict(parse_assignment(item) for item in (assignments or []))
-    fields = ExtraFields(artist=artist, notice=notice, rights=rights, marked=marked, tags=tags)
+    fields = ExtraFields(
+        artist=artist,
+        notice=notice,
+        rights=rights,
+        marked=marked,
+        tags=tags,
+        preserve=preserve,
+    )
     if not fields.is_empty:
         logger.debug(
             "extra_fields_configured",
@@ -309,5 +398,6 @@ def build_extra_fields(
             rights=bool(rights),
             marked=marked,
             raw_tags=len(tags),
+            preserve=preserve,
         )
     return fields

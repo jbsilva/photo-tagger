@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from photo_tagger.ai import _attach_partial_usage
 from photo_tagger.errors import BatchError
 from photo_tagger.fields import ExtraFields
-from photo_tagger.metadata import ImageContext
+from photo_tagger.metadata import FieldSources, ImageContext
 from photo_tagger.models import InferenceResult, KeywordSet
 from photo_tagger.pacing import Pacer, PacingPlan
 from photo_tagger.pipeline import (
@@ -2588,7 +2588,7 @@ def test_process_photo_writes_the_copyright_fields_with_the_capture_year(
     tmp_path: Path,
     patched_pipeline: dict[str, Any],
 ) -> None:
-    """The notice is dated by the photo, using the capture date already read for the prompt."""
+    """The notice is filled from the photo's own tags, read with the rest of its context."""
     image = tmp_path / "img.cr3"
     image.write_text("x")
     options = ProcessingOptions(
@@ -2599,12 +2599,13 @@ def test_process_photo_writes_the_copyright_fields_with_the_capture_year(
         ),
     )
 
-    with patch(
-        "photo_tagger.pipeline.read_image_context",
-        return_value=ImageContext(camera_info={"EXIF:DateTimeOriginal": "2019:07:14 10:32:11"}),
-    ):
+    context = ImageContext(
+        field_sources=FieldSources(image={"EXIF:DateTimeOriginal": "2019:07:14 10:32:11"}),
+    )
+    with patch("photo_tagger.pipeline.read_image_context", return_value=context) as read:
         assert process_photo(image, _ctx(options=options)) is True
 
+    assert "EXIF:DateTimeOriginal" in read.call_args.kwargs["field_tags"]
     extra = patched_pipeline["write"].call_args.kwargs["extra"]
     assert extra["EXIF:Copyright"] == "Copyright (c) 2019 Ada Lovelace"
     assert extra["XMP-dc:Creator"] == "Ada Lovelace"
@@ -2624,6 +2625,48 @@ def test_process_photo_writes_no_extra_tags_by_default(
     assert patched_pipeline["write"].call_args.kwargs["extra"] == {}
 
 
+def test_process_photo_keeps_a_notice_the_photo_already_has(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """With preserve on (the default), a tagged photo keeps its own notice and credit."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    options = ProcessingOptions(extra_fields=ExtraFields(artist="Ada", notice="(c) {year}"))
+    kept = {"XMP:Rights": "(c) 2011", "XMP:Creator": "Grace"}
+    context = ImageContext(field_sources=FieldSources(sidecar=kept))
+
+    with patch("photo_tagger.pipeline.read_image_context", return_value=context):
+        assert process_photo(image, _ctx(options=options)) is True
+
+    assert patched_pipeline["write"].call_args.kwargs["extra"] == {}
+
+
+def test_process_photo_ignores_a_notice_in_a_file_it_does_not_write(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """An embedded save still stamps a photo whose only notice sits in a sidecar."""
+    image = tmp_path / "img.jpg"
+    image.write_text("x")
+    options = ProcessingOptions(
+        extra_fields=ExtraFields(notice="(c) {year}"),
+        sidecar_mode="none",
+    )
+    sources = FieldSources(
+        image={"EXIF:DateTimeOriginal": "2019:01:02 03:04:05"},
+        sidecar={"XMP:Rights": "(c) 2011"},
+    )
+
+    with patch(
+        "photo_tagger.pipeline.read_image_context",
+        return_value=ImageContext(field_sources=sources),
+    ):
+        assert process_photo(image, _ctx(options=options)) is True
+
+    assert patched_pipeline["write"].call_args.kwargs["extra"]["EXIF:Copyright"] == "(c) 2019"
+
+
 def test_session_mode_keeps_each_photo_its_own_copyright_year(
     tmp_path: Path,
     patched_pipeline: dict[str, Any],
@@ -2634,8 +2677,12 @@ def test_session_mode_keeps_each_photo_its_own_copyright_year(
     for path in (old, new):
         path.write_text("x")
     years = {
-        old: ImageContext(camera_info={"EXIF:DateTimeOriginal": "2011:01:02 03:04:05"}),
-        new: ImageContext(camera_info={"EXIF:DateTimeOriginal": "2025:01:02 03:04:05"}),
+        old: ImageContext(
+            field_sources=FieldSources(image={"EXIF:DateTimeOriginal": "2011:01:02 03:04:05"}),
+        ),
+        new: ImageContext(
+            field_sources=FieldSources(image={"EXIF:DateTimeOriginal": "2025:01:02 03:04:05"}),
+        ),
     }
 
     with patch(

@@ -7,7 +7,6 @@ to real (small) JPEG files in a tmp directory.
 
 import os
 import shutil
-from datetime import UTC, datetime
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -24,12 +23,11 @@ from photo_tagger.metadata import (
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
     WriteResult,
-    capture_year,
     iter_field_presence,
     metadata_targets,
     read_all_tags,
     read_caption,
-    read_capture_years,
+    read_field_sources,
     read_fields,
     read_image_context,
     write_metadata,
@@ -555,25 +553,27 @@ def test_extra_tags_alone_are_enough_to_write(tmp_path: Path) -> None:
         )
 
 
-def test_capture_year_comes_from_the_photo_not_from_today(tmp_path: Path) -> None:
-    """A 2019 frame is stamped 2019, whenever the run happens."""
-    shot_in = 2019
+def test_read_field_sources_reads_the_capture_date_and_the_sidecar(tmp_path: Path) -> None:
+    """Each value comes back under the spelling asked for, a sidecar's answer included."""
     img = _write_jpeg(tmp_path / "img.jpg")
-    _set_capture_date(img, f"{shot_in}:07:14 10:32:11")
+    _set_capture_date(img, "2019:07:14 10:32:11")
+    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
+        et.execute("-o", str(tmp_path / "img.xmp"), "-XMP-dc:Creator=Ada", str(img))
+    tags = ("EXIF:DateTimeOriginal", "XMP-dc:Creator", "EXIF:Copyright")
 
-    assert read_capture_years([img]) == {img: shot_in}
-    assert capture_year(img, f"{shot_in}:07:14 10:32:11") == shot_in
+    found = read_field_sources([img], tags)[img]
+    assert found.values == {"EXIF:DateTimeOriginal": "2019:07:14 10:32:11", "XMP-dc:Creator": "Ada"}
+    assert found.sidecar["XMP-dc:Creator"] == "Ada"
+    assert "XMP-dc:Creator" not in found.image
 
 
-def test_capture_year_falls_back_to_the_file_mtime(tmp_path: Path) -> None:
-    """A photo with no capture date still gets a year: the file's own."""
+def test_read_field_sources_never_dates_a_photo_by_its_file_time(tmp_path: Path) -> None:
+    """A photo with no capture date reads as undated, whatever the file's timestamp says."""
     img = _write_jpeg(tmp_path / "img.jpg")
-    os.utime(img, (1_000_000_000, 1_000_000_000))  # 2001-09-09 UTC
-    expected = datetime.fromtimestamp(1_000_000_000, tz=UTC).astimezone().year
+    os.utime(img, (1_000_000_000, 1_000_000_000))
 
-    assert read_capture_years([img]) == {img: expected}
-    assert capture_year(img, None) == expected
-    assert capture_year(img, "not a date") == expected
+    tags = ("EXIF:DateTimeOriginal", "EXIF:CreateDate")
+    assert read_field_sources([img], tags)[img].values == {}
 
 
 def test_read_fields_reports_the_tag_behind_every_value(tmp_path: Path) -> None:

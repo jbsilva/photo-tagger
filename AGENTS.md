@@ -33,6 +33,9 @@ module owns one part of that pipeline:
   stores no verdict. `--repair-language` then asks the model again, with the prompt in
   `config.build_repair_prompt`. The repair runs before the cache write, so a rerun never pays for a
   repair that worked. One that came back mixed leaves the original cached and is asked again.
+- `fields.py`: the copyright and credit fields a run writes (`ExtraFields`), and `--set`.
+  `templates.py` parses and fills their notice templates: chains of tags with quoted fallbacks. It
+  is pure: the tag values arrive as a mapping, read before the write.
 - `undo.py`: the write journal of each run and the restore logic of the `undo` command. `watch.py`:
   the folder watcher (it polls) behind the `watch` command.
 - `models.py`: shared data types. `GeneratedMetadata` is the schema of the model, next to

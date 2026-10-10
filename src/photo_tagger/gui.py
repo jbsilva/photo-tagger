@@ -138,7 +138,6 @@ from photo_tagger.config import (
     DEFAULT_SIDECAR_MODE,
     DEFAULT_TEMPERATURE,
     DEFAULT_USER_PROMPT,
-    TAG_EXIF_DATE_TIME_ORIGINAL,
     SidecarMode,
     build_repair_prompt,
 )
@@ -218,6 +217,7 @@ from photo_tagger.gui_state import (
     build_save_job,
     build_tree,
     caption_source_note,
+    capture_year,
     clamp_zoom,
     config_text_with_language,
     config_text_with_output_language,
@@ -229,6 +229,7 @@ from photo_tagger.gui_state import (
     extension_counts,
     extra_pass_status,
     failure_summary,
+    field_tags_to_read,
     file_dialog_name_filters,
     file_type_label,
     filter_photos,
@@ -240,6 +241,7 @@ from photo_tagger.gui_state import (
     harmonize_summary,
     hierarchy_preview,
     journal_label,
+    keeps_copyright,
     keys_by_check,
     keyword_diff,
     keyword_lines,
@@ -273,6 +275,7 @@ from photo_tagger.gui_state import (
     reveal_label,
     review_summary,
     save_options_for,
+    save_targets,
     search_summary,
     sidecar_overrides_summary,
     sort_photos,
@@ -292,6 +295,7 @@ from photo_tagger.gui_state import (
     vocabulary_summary,
     watch_status_text,
     wrap_tooltip,
+    writes_nothing,
     zoom_label,
 )
 from photo_tagger.gui_usage import (
@@ -320,14 +324,13 @@ from photo_tagger.metadata import (
     FIELD_KEYWORDS,
     FIELD_TITLE,
     build_contextual_prompt,
-    capture_year,
     first_caption,
     iter_field_presence,
     managed_helper,
     prompt_with_hint,
     read_caption,
     read_caption_values,
-    read_capture_years,
+    read_field_sources,
     read_image_context,
     read_metadata_sources,
     write_metadata_everywhere,
@@ -1211,6 +1214,9 @@ class SaveWorker(QObject):
         self._journal = journal
         self._emitted = 0
         self._stop = False
+        # The photos with nothing to write, because they keep the notice they have. Filled before
+        # file_done is sent, so the window's slot can tell such a save from a stamp.
+        self.kept: set[str] = set()
 
     def stop(self) -> None:
         """Ask the loop to stop before the next photo; the write in flight finishes."""
@@ -1230,34 +1236,42 @@ class SaveWorker(QObject):
                 self.file_done.emit(str(job.path), False)  # noqa: FBT003 - Qt signal argument
         self.finished.emit()
 
-    def _capture_years(self, helper: ExifToolHelper) -> dict[Path, int]:
+    def _field_sources(self, helper: ExifToolHelper) -> dict[Path, dict[str, str]]:
         """
-        Read the batch's capture years in one call, for dating the copyright notice.
+        Read the tags the copyright templates need for the whole batch, in one call.
 
         Skipped entirely when no copyright is configured, so the usual save still costs exactly one
         ExifTool write per photo and nothing else.
         """
-        if not self._options.writes_copyright:
+        fields = self._options.extra_fields
+        if fields is None or fields.is_empty:
             return {}
-        return read_capture_years([job.path for job in self._jobs], et=helper)
+        return read_field_sources([job.path for job in self._jobs], fields.source_tags, et=helper)
 
     def _write_all(self, helper: ExifToolHelper) -> None:
         """Write each job in turn, one photo's failure never stopping the rest."""
-        years = self._capture_years(helper)
+        sources = self._field_sources(helper)
         for job in self._jobs:
             if self._stop:
                 return
             try:
-                ok, targets = write_metadata_everywhere(
-                    job.path,
-                    job.keywords,
-                    description=job.description,
-                    title=job.title,
-                    extra=resolve_extra_tags(self._options, job.path, years),
-                    backup=self._options.backup,
-                    sidecar_mode=self._options.sidecar_mode,
-                    sidecar_overrides=self._options.sidecar_overrides,
-                    et=helper,
+                extra = resolve_extra_tags(self._options, job.path, sources)
+                if writes_nothing(job, extra):
+                    self.kept.add(str(job.path))
+                ok, targets = (
+                    (True, [])
+                    if writes_nothing(job, extra)
+                    else write_metadata_everywhere(
+                        job.path,
+                        job.keywords,
+                        description=job.description,
+                        title=job.title,
+                        extra=extra,
+                        backup=self._options.backup,
+                        sidecar_mode=self._options.sidecar_mode,
+                        sidecar_overrides=self._options.sidecar_overrides,
+                        et=helper,
+                    )
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("gui_save_failed", file=job.path.name, error=str(exc))
@@ -2115,6 +2129,7 @@ class MainWindow(QMainWindow):
             rights=output.rights or "",
             marked=output.marked,
             assignments=self._copyright_tags,
+            preserve=output.preserve_copyright,
         )
         if error:
             # A config the CLI would refuse must not take the window down with it. The dialog
@@ -2636,6 +2651,7 @@ class MainWindow(QMainWindow):
             copyright_notice=self._notice_field.text().strip(),
             rights=self._rights_field.text().strip(),
             marked=self._marked_box.currentData(),
+            preserve_copyright=self._preserve_copyright_box.isChecked(),
             save_after_generating=self._autosave_action.isChecked(),
             duty=self._pacing_plan.duty_percent,
             battery_floor=self._pacing_plan.battery_floor,
@@ -5096,7 +5112,10 @@ class MainWindow(QMainWindow):
             return
         # Every caption value, not just the winning one: the pane names what a sidecar shadows.
         found = read_caption_values(item.path)
-        context = read_image_context(item.path)
+        context = read_image_context(
+            item.path,
+            field_tags=field_tags_to_read(self._copyright_fields),
+        )
         item.existing_caption_sources = found
         title = first_caption(found[FIELD_TITLE])
         description = first_caption(found[FIELD_DESCRIPTION])
@@ -5104,11 +5123,7 @@ class MainWindow(QMainWindow):
         item.existing_description = description
         item.existing_keywords = context.existing_keywords
         item.existing_copyright = context.existing_copyright
-        # The same year a save dates the notice by, mtime fallback included.
-        item.capture_year = capture_year(
-            item.path,
-            context.camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL),
-        )
+        item.field_sources = context.field_sources
         item.loaded = True
         if not item.has_proposal:
             # Seed the editable copy from the existing values so a file can be edited and saved
@@ -5327,19 +5342,17 @@ class MainWindow(QMainWindow):
         """
         Resolve one photo's copyright tags for the inline (single photo) save path.
 
-        The year comes from the photo's own capture date. A generated photo already has it in hand;
-        any other one costs the read, which only happens when a copyright is configured at all. The
-        batch path reads the whole batch at once instead.
+        The tags are read fresh, right before the write, which only happens when a copyright is
+        configured at all. The batch path reads the whole batch at once instead.
         """
-        if not options.writes_copyright:
+        fields = options.extra_fields
+        if fields is None or fields.is_empty:
             return {}
-        captured = item.camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL)
-        years = (
-            {item.path: capture_year(item.path, captured)}
-            if captured
-            else read_capture_years([item.path])
+        return resolve_extra_tags(
+            options,
+            item.path,
+            read_field_sources([item.path], fields.source_tags),
         )
-        return resolve_extra_tags(options, item.path, years)
 
     def _write_item(self, item: PhotoItem) -> bool:
         """
@@ -5351,15 +5364,20 @@ class MainWindow(QMainWindow):
         options = self._save_options()
         job = build_save_job(item, options)
         try:
-            ok, targets = write_metadata_everywhere(
-                job.path,
-                job.keywords,
-                description=job.description,
-                title=job.title,
-                extra=self._copyright_tags_for(options, item),
-                backup=options.backup,
-                sidecar_mode=options.sidecar_mode,
-                sidecar_overrides=options.sidecar_overrides,
+            extra = self._copyright_tags_for(options, item)
+            ok, targets = (
+                (True, [])
+                if writes_nothing(job, extra)
+                else write_metadata_everywhere(
+                    job.path,
+                    job.keywords,
+                    description=job.description,
+                    title=job.title,
+                    extra=extra,
+                    backup=options.backup,
+                    sidecar_mode=options.sidecar_mode,
+                    sidecar_overrides=options.sidecar_overrides,
+                )
             )
         except Exception as exc:  # noqa: BLE001 - exiftool itself failing to start must surface
             # as a failed save, not an uncaught exception Qt swallows into the log unseen.
@@ -5459,7 +5477,8 @@ class MainWindow(QMainWindow):
         if item is None or job is None:
             return
         stamp_only = not reports_status(item, job)
-        self._usage.saved(item, ok=ok, now=time.monotonic(), stamp_only=stamp_only)
+        kept = self._save_worker is not None and path in self._save_worker.kept
+        self._usage.saved(item, ok=ok, now=time.monotonic(), stamp_only=stamp_only, kept=kept)
         self._apply_write_result(item, job, ok=ok)
         self._saved_ok += int(ok)
         self._advance_progress()
@@ -6342,7 +6361,7 @@ class MainWindow(QMainWindow):
 
     def _build_copyright_form(self) -> QFormLayout:
         """
-        Build the four rows the Copyright dialog edits.
+        Build the five rows the Copyright dialog edits.
 
         The growth policy is set rather than left to the style: QMacStyle keeps a form's fields at
         their size hint, which left the notice field a couple of hundred pixels wide in a dialog
@@ -6384,9 +6403,20 @@ class MainWindow(QMainWindow):
         )
         form.addRow(_("Rights flag"), self._marked_box)
 
+        self._preserve_copyright_box = QCheckBox(_("Keep the name and notice a photo already has"))
+        self._preserve_copyright_box.setChecked(output.preserve_copyright)
+        self._preserve_copyright_box.setToolTip(
+            tooltip(
+                "A photo with a creator keeps it, and one with a notice keeps the notice, the XMP "
+                "rights, and the flag. Uncheck to replace them.",
+            ),
+        )
+        form.addRow("", self._preserve_copyright_box)
+
         for widget in (self._artist_field, self._notice_field, self._rights_field):
             widget.textChanged.connect(self._refresh_copyright)
         self._marked_box.currentIndexChanged.connect(self._refresh_copyright)
+        self._preserve_copyright_box.toggled.connect(self._refresh_copyright)
         return form
 
     def _build_copyright_inserts(self) -> QHBoxLayout:
@@ -6424,6 +6454,7 @@ class MainWindow(QMainWindow):
             rights=self._rights_field.text(),
             marked=self._marked_box.currentData(),
             assignments=self._copyright_tags,
+            preserve=self._preserve_copyright_box.isChecked(),
         )
         self._sync_copyright_enabled()
         year = self._preview_year()
@@ -6464,23 +6495,24 @@ class MainWindow(QMainWindow):
         """
         Return the year the preview stands for: the open photo's, else this one.
 
-        A photo's capture date is already in hand once it has been generated or opened, and showing
-        the year of the photo on screen is what makes a wrong template obvious.
+        A photo's capture date is already in hand once it has been opened, and showing the year of
+        the photo on screen is what makes a wrong template obvious.
         """
         item = self._current
-        if item is None:
-            return datetime.now(tz=UTC).astimezone().year
-        captured = item.camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL)
-        if captured:
-            return capture_year(item.path, captured)
-        return item.capture_year or datetime.now(tz=UTC).astimezone().year
+        year = capture_year(item.field_sources) if item is not None else None
+        return year or datetime.now(tz=UTC).astimezone().year
 
     def _refresh_planned_copyright(self) -> None:
         """Say in the Copyright row what a save writes on the open photo, if anything."""
         if self._current is None:
             return
         fields = self._copyright_fields if self._write_copyright.isChecked() else None
-        planned = planned_copyright(fields, self._preview_year())
+        sources = self._current.field_sources
+        targets = save_targets(self._save_options(), self._current.path)
+        if keeps_copyright(fields, sources, targets):
+            self._planned_copyright.setText(_("(keeps the notice it has)"))
+            return
+        planned = planned_copyright(fields, sources, targets)
         self._planned_copyright.setText(planned or _("(not written)"))
 
     def _show_copyright(self) -> None:

@@ -70,6 +70,7 @@ from photo_tagger.metadata import (
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
     CaptionValue,
+    FieldSources,
     ImageContext,
 )
 from photo_tagger.models import InferenceResult, KeywordSet
@@ -6134,6 +6135,17 @@ def test_the_repair_toggle_lands_in_the_saved_settings(window: gui.MainWindow) -
 # ---------------------------------------------------------------------------
 
 
+def _taken(year: int, **more: str) -> FieldSources:
+    """
+    Return what a photo taken in *year* carries, plus *more* tags, in the photo and its sidecar.
+
+    Both files, so the values count whichever of them the Write To mode saves to.
+    """
+    values = {"EXIF:DateTimeOriginal": f"{year}:05:04 10:00:00"}
+    values |= {tag.replace("_", ":", 1): value for tag, value in more.items()}
+    return FieldSources(image=values, sidecar=values)
+
+
 def _fill_copyright(
     window: gui.MainWindow,
     *,
@@ -6161,10 +6173,10 @@ def test_copyright_dialog_previews_the_resolved_tags(window: gui.MainWindow) -> 
 
 
 def test_copyright_dialog_reports_a_template_it_cannot_fill(window: gui.MainWindow) -> None:
-    """A placeholder with nobody to fill it in says so, and nothing is written."""
-    _fill_copyright(window, artist="", notice="Copyright (c) {year} {artist}")
+    """A placeholder it does not know says so, and nothing is written."""
+    _fill_copyright(window, notice="Copyright (c) {year} {shot_at}")
 
-    assert "--artist" in window._copyright_preview.toPlainText()  # noqa: SLF001
+    assert "{shot_at}" in window._copyright_preview.toPlainText()  # noqa: SLF001
     assert window._copyright_fields is None  # noqa: SLF001
     assert not window._writes_copyright()  # noqa: SLF001
 
@@ -6187,7 +6199,11 @@ def test_save_writes_the_copyright_dated_by_the_photo(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
-    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2011))
+    monkeypatch.setattr(
+        gui,
+        "read_field_sources",
+        lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011)),
+    )
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
@@ -6209,7 +6225,7 @@ def test_the_copyright_row_compares_the_file_with_what_a_save_writes(
     _stub_reads(monkeypatch, keywords=[])
     context = ImageContext(
         existing_copyright="(c) 2019 Someone Else",
-        camera_info={"EXIF:DateTimeOriginal": "2011:05:01 10:00:00"},
+        field_sources=_taken(2011, XMP_Rights="(c) 2019 Someone Else"),
     )
     monkeypatch.setattr(gui, "read_image_context", lambda _p, **_k: context)
     _add_dir(window, {"a": img})
@@ -6219,6 +6235,9 @@ def test_the_copyright_row_compares_the_file_with_what_a_save_writes(
     assert window._planned_copyright.text() == "(not written)"  # noqa: SLF001
 
     _fill_copyright(window)
+    assert window._planned_copyright.text() == "(keeps the notice it has)"  # noqa: SLF001
+
+    window._preserve_copyright_box.setChecked(False)  # noqa: SLF001
     assert window._planned_copyright.text() == "Copyright (c) 2011 Ada Lovelace"  # noqa: SLF001
 
     window._write_copyright.setChecked(False)  # noqa: SLF001
@@ -6248,7 +6267,11 @@ def test_a_saved_notice_takes_the_photo_out_of_no_copyright(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _capture_write(monkeypatch)
-    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2011))
+    monkeypatch.setattr(
+        gui,
+        "read_field_sources",
+        lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011)),
+    )
     _add_dir(window, {"a": img})
     window._on_scan_done({str(img): set()})  # noqa: SLF001
     _select(window, window._leaf_for(img))  # noqa: SLF001
@@ -6259,29 +6282,32 @@ def test_a_saved_notice_takes_the_photo_out_of_no_copyright(
     assert not gui.photo_matches_filter(window._items[str(img)], gui.FILTER_NO_COPYRIGHT)  # noqa: SLF001
 
 
-def test_save_reuses_a_capture_date_already_read(
+def test_save_reads_the_photo_right_before_the_write(
     window: gui.MainWindow,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A generated photo has its capture date in hand, so the save pays no second read."""
+    """A single save reads what the templates need fresh, and keeps a notice the photo has."""
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
+    asked: list[tuple[str, ...]] = []
 
-    def _refuse(*_a: object, **_k: object) -> dict[Path, int]:
-        message = "the capture date was already read"
-        raise AssertionError(message)
+    def fake_read(paths: list[Path], tags: tuple[str, ...], **_k: object) -> dict[Path, object]:
+        asked.append(tags)
+        return dict.fromkeys(paths, _taken(2019, EXIF_Copyright="(c) 2011 Grace"))
 
-    monkeypatch.setattr(gui, "read_capture_years", _refuse)
+    monkeypatch.setattr(gui, "read_field_sources", fake_read)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    window._items[str(img)].camera_info = {"EXIF:DateTimeOriginal": "2019:07:14 10:32:11"}  # noqa: SLF001
     _fill_copyright(window)
 
     window._save_current()  # noqa: SLF001
 
-    assert captured["extra"]["EXIF:Copyright"] == "Copyright (c) 2019 Ada Lovelace"  # type: ignore[index]
+    assert "EXIF:DateTimeOriginal" in asked[0]
+    extra = captured["extra"]
+    assert "EXIF:Copyright" not in extra  # type: ignore[operator]
+    assert extra["EXIF:Artist"] == "Ada Lovelace"  # type: ignore[index]
 
 
 def test_save_writes_nothing_extra_without_a_copyright(
@@ -6310,7 +6336,11 @@ def test_a_copyright_alone_is_enough_to_save(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
-    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2025))
+    monkeypatch.setattr(
+        gui,
+        "read_field_sources",
+        lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2025)),
+    )
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
@@ -6333,7 +6363,11 @@ def test_save_selected_stamps_a_copyright_on_photos_never_generated(
     tagged = _jpeg(tmp_path / "b.jpg")
     _stub_reads(monkeypatch, keywords=["Old"])
     _stub_save_helper(monkeypatch)
-    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2011))
+    monkeypatch.setattr(
+        gui,
+        "read_field_sources",
+        lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011)),
+    )
     written: dict[str, dict[str, object]] = {}
 
     def fake_write(path: Path, keywords: KeywordSet, **kwargs: object) -> bool:
@@ -6387,11 +6421,11 @@ def test_save_worker_dates_each_photo_in_the_batch(
     old, new = tmp_path / "old.jpg", tmp_path / "new.jpg"
     reads: list[list[Path]] = []
 
-    def fake_years(paths: list[Path], **_kwargs: object) -> dict[Path, int]:
+    def fake_sources(paths: list[Path], _tags: object, **_kwargs: object) -> dict[Path, object]:
         reads.append(list(paths))
-        return {old: 2011, new: 2025}
+        return {old: _taken(2011), new: _taken(2025)}
 
-    monkeypatch.setattr(gui, "read_capture_years", fake_years)
+    monkeypatch.setattr(gui, "read_field_sources", fake_sources)
     written: dict[str, object] = {}
 
     def fake_write(path: Path, _keywords: object, **kwargs: object) -> bool:
@@ -6417,6 +6451,35 @@ def test_save_worker_dates_each_photo_in_the_batch(
     assert written["new.jpg"]["EXIF:Copyright"] == "(c) 2025 Ada"  # type: ignore[index]
 
 
+def test_save_worker_counts_a_photo_that_keeps_its_notice_as_done(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copyright-only save of a photo that has one writes nothing, and reports success."""
+    monkeypatch.setattr(gui, "managed_helper", lambda _et: nullcontext(None))
+    image = tmp_path / "a.jpg"
+    monkeypatch.setattr(
+        gui,
+        "read_field_sources",
+        lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011, EXIF_Copyright="(c) 2011")),
+    )
+
+    def _refuse(*_a: object, **_k: object) -> bool:
+        message = "nothing to write, so no write"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(metadata, "write_metadata", _refuse)
+    fields, _error = build_copyright_fields(artist="", notice="(c) {year}", rights="", marked=None)
+    job = SaveJob(path=image, keywords=KeywordSet(), title=None, description=None)
+    worker = gui.SaveWorker([job], options=SaveOptions(extra_fields=fields))
+    done: list[tuple[str, bool]] = []
+    worker.file_done.connect(lambda path, ok: done.append((path, ok)))
+
+    worker.run()
+
+    assert done == [(str(image), True)]
+
+
 def test_save_worker_skips_the_capture_read_without_a_copyright(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -6428,7 +6491,7 @@ def test_save_worker_skips_the_capture_read_without_a_copyright(
         message = "no copyright, no capture-date read"
         raise AssertionError(message)
 
-    monkeypatch.setattr(gui, "read_capture_years", _refuse)
+    monkeypatch.setattr(gui, "read_field_sources", _refuse)
     monkeypatch.setattr(metadata, "write_metadata", lambda *_a, **_k: True)
     jobs = [SaveJob(path=tmp_path / "a.jpg", keywords=KeywordSet(), title="T", description=None)]
 
@@ -6445,6 +6508,7 @@ def test_saving_settings_persists_the_copyright(
     monkeypatch.setattr(gui, "user_config_path", lambda: config)
     monkeypatch.setattr(gui, "find_config_file", lambda: None)
     _fill_copyright(window, rights="© {year} {artist}")
+    window._preserve_copyright_box.setChecked(False)  # noqa: SLF001
 
     window._save_config()  # noqa: SLF001
 
@@ -6455,6 +6519,9 @@ def test_saving_settings_persists_the_copyright(
     assert saved["copyright_notice"] == "Copyright (c) {year} {artist}"
     assert saved["rights"] == "© {year} {artist}"
     assert saved["marked"] is True
+    assert saved["preserve_copyright"] is False
+    assert window._copyright_fields is not None  # noqa: SLF001
+    assert not window._copyright_fields.preserve  # noqa: SLF001
 
 
 def test_copyright_fields_fill_the_dialog(window: gui.MainWindow) -> None:
@@ -6621,7 +6688,11 @@ def test_write_copyright_toggle_skips_the_block(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
-    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2025))
+    monkeypatch.setattr(
+        gui,
+        "read_field_sources",
+        lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2025)),
+    )
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)

@@ -174,10 +174,12 @@ any other tag under its ExifTool name. A tagging run, the `set` command, and a s
 else. ExifTool ignores an EXIF tag there without a word, but a payload with nothing left in it fails
 the write.
 
-A notice is a template. `{year}` becomes the year of the photo, and `{artist}` becomes the name. The
-year comes from `EXIF:DateTimeOriginal`. If the photo carries no capture date, the year comes from
-the file's mtime. The pipeline reads that tag for the prompt anyway, so a dated notice costs no
-extra ExifTool call.
+A notice is a template (`templates.py`). `{year}` becomes the year of the photo, and `{artist}`
+becomes the name. A placeholder is a chain of tags and quoted fallbacks, and
+`ExtraFields.source_tags` names every tag the templates read. The pipeline adds them to the context
+read it makes anyway, so a dated notice costs no extra ExifTool call. `set` and a GUI save read them
+in one batch before the writes. The file's mtime never dates a notice. With `preserve` on (the
+default), a photo that already has a notice or a creator keeps it.
 
 ### Sidecar or embedded
 

@@ -510,11 +510,24 @@ class GuiUsage:
         if self.run is not None:
             self.run.generated(key, proposal)
 
-    def saved(self, item: PhotoItem, *, ok: bool, now: float, stamp_only: bool = False) -> None:
-        """Count one photo a save wrote (or failed to), in the run and in the session."""
+    def saved(
+        self,
+        item: PhotoItem,
+        *,
+        ok: bool,
+        now: float,
+        stamp_only: bool = False,
+        kept: bool = False,
+    ) -> None:
+        """
+        Count one photo a save wrote (or failed to), in the run and in the session.
+
+        *kept* is a save with nothing to write, because the photo keeps the notice it has: it counts
+        in the run, but it is no stamp and no review.
+        """
         if self.run is not None:
             self.run.photo_saved(item, ok=ok, now=now)
-        if ok:
+        if ok and not kept:
             self._saved.add(str(item.path))
             self.review.add(item, now=now, stamp_only=stamp_only)
 
@@ -628,6 +641,7 @@ def window_settings(values: GuiConfigValues, facts: WindowFacts) -> telemetry.Se
         copyright_notice=bool(copyright_fields and copyright_fields.notice),
         rights=bool(copyright_fields and copyright_fields.rights),
         marked=_marked_label(marked=copyright_fields.marked if copyright_fields else None),
+        overwrite_copyright=bool(copyright_fields and not copyright_fields.preserve),
         set_tags=len(copyright_fields.tags) if copyright_fields else 0,
         paced=values.duty < telemetry.Settings().duty or values.battery_floor > 0,
         duty=values.duty,

@@ -9,9 +9,11 @@ This file lists all notable changes to this project. The format follows the
 ### Added
 
 - `--artist`, `--copyright`, `--rights`, `--marked`, and `--set TAG=VALUE` write your credit and
-  notice into EXIF, XMP, and IPTC. `{year}` comes from each photo's capture date. `--set` takes only
-  metadata tags (not `FileName` or `Directory`), and `--no-write-copyright` skips the whole block
-  for one run. The configuration table is `[copyright]`.
+  notice into EXIF, XMP, and IPTC. `{year}` comes from each photo's capture date, and a placeholder
+  can chain tags with a fallback (`{EXIF:Artist|"Unknown"}`). A photo keeps the notice and the
+  creator it has, unless you pass `--no-preserve-copyright`. `--set` takes only metadata tags (not
+  `FileName` or `Directory`), and `--no-write-copyright` skips the whole block for one run. The
+  configuration table is `[copyright]`.
 - `photo-tagger set` writes those fields with no model call. `photo-tagger show` prints what a photo
   carries and names the tag behind each value.
 - GUI: **Settings > Copyright...** sets the notice, and **Save Selected** stamps it on photos that

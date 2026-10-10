@@ -397,3 +397,13 @@ def test_a_stamp_counts_as_copyright_only_not_as_a_plain_edit(tmp_path: Path) ->
     tally.add(item, now=2.0)
     stats = tally.stats()
     assert (stats.saved, stats.copyright_only, stats.manual_only) == (2, 1, 1)
+
+
+def test_a_save_that_kept_the_notice_is_no_stamp(tmp_path: Path) -> None:
+    """A photo that kept its own notice got nothing written, so it is neither stamp nor review."""
+    usage = GuiUsage(now=0.0)
+    item = PhotoItem(path=tmp_path / "a.jpg")
+    usage.saved(item, ok=True, now=1.0, stamp_only=True, kept=True)
+    assert usage.review.stats().copyright_only == 0
+    usage.saved(item, ok=True, now=2.0, stamp_only=True)
+    assert usage.review.stats().copyright_only == 1

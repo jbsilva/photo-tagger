@@ -328,6 +328,7 @@ class Settings:
     copyright_notice: bool = False
     rights: bool = False
     marked: str = "unset"  # unset | copyrighted | public-domain
+    overwrite_copyright: bool = False  # replace a name or notice a photo already has
     set_tags: int = 0
     # Pacing.
     paced: bool = False

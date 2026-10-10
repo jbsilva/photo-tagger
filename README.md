@@ -285,7 +285,9 @@ photo-tagger -i ~/Pictures/2025 \
 The credit goes to `EXIF:Artist`, `XMP-dc:Creator`, and `IPTC:By-line`. The notice goes to
 `EXIF:Copyright` and `IPTC:CopyrightNotice`, and `--rights` gives `XMP-dc:Rights` its own UTF-8
 wording. `--marked` sets `XMP-xmpRights:Marked`. `{year}` is the year of the photo, read from its
-capture date, so a folder of ten years gets ten different notices. `--set 'TAG=VALUE'` writes any
+capture date, so a folder of ten years gets ten different notices. A placeholder can also read any
+tag and fall back, as in `{EXIF:Artist|XMP-dc:Creator|"Unknown"}`. A photo that already has a notice
+or a creator keeps it, unless you pass `--no-preserve-copyright`. `--set 'TAG=VALUE'` writes any
 other ExifTool tag.
 
 To stamp photos that are already tagged, `photo-tagger set` does the same without calling a model:
@@ -470,8 +472,9 @@ plain CLI install stays lightweight.
 
 **Settings > Copyright...** holds your credit and copyright notice, written by every save next to
 whatever the model produced. `{year}` in a notice becomes the year of that photo, so the same notice
-fits every shoot. The panel under the fields shows the tags a save writes, before it writes them.
-With a copyright set, a save writes it even with Title, Description, and Keywords all unchecked.
+fits every shoot. A photo that already has a notice keeps it, unless you uncheck the option. The
+panel under the fields shows the tags a save writes, before it writes them. With a copyright set, a
+save writes it even with Title, Description, and Keywords all unchecked.
 
 The window covers the same keyword workflow as the CLI. **Settings > Keyword Rules...** picks the
 controlled vocabulary that generated keywords snap onto (with a strict toggle), and the session gap

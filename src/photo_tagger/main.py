@@ -92,11 +92,12 @@ from photo_tagger.locking import FileLock, LockHeldError
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.metadata import (
     SOURCE_SIDECAR,
+    FieldSources,
     managed_helper,
     plan_writes,
     prompt_with_hint,
     read_all_tags,
-    read_capture_years,
+    read_field_sources,
     read_fields,
     select_camera_fields,
     select_location,
@@ -441,49 +442,99 @@ def show(
             _show_one(console, image_file, all_tags=all_tags, as_json=as_json, et=helper)
 
 
+@dataclass(slots=True)
+class _FieldsTally:
+    """What a ``set`` run did to each photo."""
+
+    written: int = 0
+    failed: list[Path] = field(default_factory=list)
+    # A template found nothing on the photo, so that field was left unwritten.
+    skipped: int = 0
+    # Everything asked for was already on the photo, and --preserve-copyright kept it.
+    kept: int = 0
+
+
 def _write_fields(
     image_files: list[Path],
     fields: ExtraFields,
     *,
     output: OutputConfig,
     journal: UndoJournal | None,
-) -> tuple[int, list[Path]]:
+) -> _FieldsTally:
     """
-    Stamp every photo with *fields*, dated by its own capture year, where *output* says to write.
+    Stamp every photo with *fields*, filled from its own tags, where *output* says to write.
 
-    Returns (written, failed). One ExifTool process for the batch, and one batched read of the
-    capture dates before it, so a thousand photos cost two round trips plus one write each.
+    One ExifTool process for the batch, and one batched read of the tags the templates need before
+    it, so a thousand photos cost two round trips plus one write each.
     """
-    written = 0
-    failed: list[Path] = []
-    backup = output.backup_xmp
-    sidecar_mode = resolve_sidecar_mode(output)
-    sidecar_overrides = resolve_sidecar_overrides(output)
+    tally = _FieldsTally()
     with managed_helper(None) as helper:
-        years = read_capture_years(image_files, et=helper)
+        sources = read_field_sources(image_files, fields.source_tags, et=helper)
         for image_file in image_files:
-            ok, targets = write_metadata_everywhere(
-                image_file,
-                KeywordSet(),
-                extra=fields.resolve(years[image_file]),
-                backup=backup,
-                sidecar_mode=sidecar_mode,
-                sidecar_overrides=sidecar_overrides,
-                et=helper,
-            )
-            if journal is not None:
-                for target in targets:
-                    journal.record(
-                        image_file,
-                        target.path,
-                        created=not target.existed,
-                        backed_up=target.made_backup(backup=backup),
-                    )
-            if ok:
-                written += 1
+            missing: list[str] = []
+            extra = _resolve_for(fields, image_file, sources[image_file], output, skipped=missing)
+            tally.skipped += bool(missing)
+            if not extra:
+                # Nothing to write because the photo keeps what it has, not because a template
+                # found nothing: that one is counted as skipped.
+                tally.kept += not missing
+            elif _write_extra(image_file, extra, output=output, journal=journal, et=helper):
+                tally.written += 1
             else:
-                failed.append(image_file)
-    return written, failed
+                tally.failed.append(image_file)
+    return tally
+
+
+def _resolve_for(
+    fields: ExtraFields,
+    image_file: Path,
+    sources: FieldSources,
+    output: OutputConfig,
+    *,
+    skipped: list[str] | None = None,
+) -> dict[str, str]:
+    """Render one photo's fields, preserving only what the files this save writes carry."""
+    targets = plan_writes(
+        image_file,
+        resolve_sidecar_mode(output),
+        resolve_sidecar_overrides(output),
+    )
+    return fields.resolve(
+        sources.values,
+        existing=sources.written(targets),
+        photo=str(image_file),
+        skipped=skipped,
+    )
+
+
+def _write_extra(
+    image_file: Path,
+    extra: dict[str, str],
+    *,
+    output: OutputConfig,
+    journal: UndoJournal | None,
+    et: ExifToolHelper,
+) -> bool:
+    """Write one photo's resolved fields and journal the files it touched."""
+    backup = output.backup_xmp
+    ok, targets = write_metadata_everywhere(
+        image_file,
+        KeywordSet(),
+        extra=extra,
+        backup=backup,
+        sidecar_mode=resolve_sidecar_mode(output),
+        sidecar_overrides=resolve_sidecar_overrides(output),
+        et=et,
+    )
+    if journal is not None:
+        for target in targets:
+            journal.record(
+                image_file,
+                target.path,
+                created=not target.existed,
+                backed_up=target.made_backup(backup=backup),
+            )
+    return ok
 
 
 @app.command(name="set")
@@ -565,8 +616,9 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
     without paying for inference.
 
     The year comes from each photo, not from today: ``{year}`` in a notice becomes the year that
-    photo was taken (its EXIF capture date, falling back to the file's own timestamp), so one
-    command stamps a decade of shoots correctly.
+    photo was taken (its capture date in EXIF, XMP, or IPTC), so one command stamps a decade of
+    shoots correctly. A photo that already has a name or a notice keeps it, unless you pass
+    ``--no-preserve-copyright``.
 
     No keyword, title, or description is read or rewritten. Like every save, a write also names
     photo-tagger in the file (ProcessingSoftware, and an xmpMM:History event). Writes are recorded,
@@ -612,19 +664,35 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
     telemetry.note(photos=len(image_files))
     _refuse_fields_no_target_can_hold(console, image_files, fields, output)
     if dry_run:
-        _preview_fields(console, image_files, fields)
+        _preview_fields(console, image_files, fields, output)
         return
 
-    written, failed = _write_fields(
+    tally = _write_fields(
         image_files,
         fields,
         output=output,
         journal=open_journal(datetime.now(tz=UTC), enabled=undo_log),
     )
-    telemetry.note(written=written, failed=len(failed))
-    console.print(f"[green]Wrote {written} of {len(image_files)} photo(s).[/green]")
-    if failed:
-        console.print(f"[red]{len(failed)} failed; see the log for what ExifTool said.[/red]")
+    telemetry.note(written=tally.written, failed=len(tally.failed))
+    _report_fields(console, tally, len(image_files))
+
+
+def _report_fields(console: Console, tally: _FieldsTally, total: int) -> None:
+    """Print what a ``set`` run did, and exit 1 when any write failed."""
+    console.print(f"[green]Wrote {tally.written} of {total} photo(s).[/green]")
+    if tally.kept:
+        console.print(
+            f"{tally.kept} photo(s) already carried everything asked for, and kept it. Pass "
+            "--no-preserve-copyright to replace it.",
+        )
+    if tally.skipped:
+        console.print(
+            f"[yellow]{tally.skipped} photo(s) got no notice: the template found nothing on "
+            'them. End the placeholder with a fallback, such as {year|""}, to write one '
+            "anyway.[/yellow]",
+        )
+    if tally.failed:
+        console.print(f"[red]{len(tally.failed)} failed; see the log for what ExifTool said.[/red]")
         raise SystemExit(1)
 
 
@@ -647,7 +715,7 @@ def _refuse_fields_no_target_can_hold(
         for image_file in image_files
         for target in plan_writes(image_file, mode, overrides)
     )
-    if only_sidecars and not sidecar_can_hold(fields.resolve(datetime.now(tz=UTC).year)):
+    if only_sidecars and not sidecar_can_hold(fields.preview(datetime.now(tz=UTC).year)):
         console.print(
             "[red]Every tag asked for is EXIF or IPTC, and an XMP sidecar holds neither. Write "
             "into the photos with --embed-in-photo or --sidecar-mode both.[/red]",
@@ -655,13 +723,18 @@ def _refuse_fields_no_target_can_hold(
         raise SystemExit(1)
 
 
-def _preview_fields(console: Console, image_files: list[Path], fields: ExtraFields) -> None:
+def _preview_fields(
+    console: Console,
+    image_files: list[Path],
+    fields: ExtraFields,
+    output: OutputConfig,
+) -> None:
     """Print the tags each photo would get under ``--dry-run``, without opening it for writing."""
-    years = read_capture_years(image_files)
+    sources = read_field_sources(image_files, fields.source_tags)
     for image_file in image_files:
         console.print(str(image_file), style="bold")
         table = _two_column_table("Tag", "Value")
-        for tag, value in fields.resolve(years[image_file]).items():
+        for tag, value in _resolve_for(fields, image_file, sources[image_file], output).items():
             table.add_row(tag, Text(value))
         console.print(table)
 

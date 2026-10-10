@@ -126,6 +126,7 @@ dry_run = false           # Run the model and log results, but write nothing.
 # copyright_notice = "Copyright (c) {year} {artist}, All rights reserved"
 # rights = "© {year} {artist}, All rights reserved"  # XMP-dc:Rights only.
 # marked = true            # XMP-xmpRights:Marked; false declares public domain.
+# preserve_copyright = true  # Keep the name and notice a photo already has.
 # set_tags = ["XMP-xmpRights:WebStatement=https://example.com/terms"]
 
 [log]

@@ -20,16 +20,21 @@ from photo_tagger.fields import (
 )
 
 
+def _taken(year: int) -> dict[str, str]:
+    """Return the tag values of a photo taken in *year* with nothing else on it."""
+    return {"EXIF:DateTimeOriginal": f"{year}:05:04 10:00:00"}
+
+
 def test_empty_fields_resolve_to_nothing() -> None:
     """A run that asked for no field writes no tag, and says so up front."""
     fields = ExtraFields()
     assert fields.is_empty
-    assert fields.resolve(2025) == {}
+    assert fields.resolve(_taken(2025)) == {}
 
 
 def test_artist_is_written_to_every_namespace() -> None:
     """A credit lands in EXIF, XMP, and IPTC, so no application shows the photo as uncredited."""
-    payload = ExtraFields(artist="Ada Lovelace").resolve(2025)
+    payload = ExtraFields(artist="Ada Lovelace").resolve(_taken(2025))
     assert payload == {
         TAG_EXIF_ARTIST: "Ada Lovelace",
         TAG_XMP_CREATOR: "Ada Lovelace",
@@ -40,7 +45,7 @@ def test_artist_is_written_to_every_namespace() -> None:
 def test_notice_fills_the_year_and_the_artist() -> None:
     """Both placeholders are substituted, and the notice reaches all three copyright tags."""
     fields = ExtraFields(artist="Ada Lovelace", notice="Copyright (c) {year} {artist}")
-    payload = fields.resolve(2019)
+    payload = fields.resolve(_taken(2019))
     expected = "Copyright (c) 2019 Ada Lovelace"
     assert payload[TAG_EXIF_COPYRIGHT] == expected
     assert payload[TAG_IPTC_COPYRIGHT_NOTICE] == expected
@@ -54,38 +59,38 @@ def test_rights_overrides_only_the_xmp_spelling() -> None:
         notice="Copyright (c) {year} {artist}",
         rights="© {year} {artist}",
     )
-    payload = fields.resolve(2025)
+    payload = fields.resolve(_taken(2025))
     assert payload[TAG_XMP_RIGHTS] == "© 2025 Ada Lovelace"
     assert payload[TAG_EXIF_COPYRIGHT] == "Copyright (c) 2025 Ada Lovelace"
 
 
 def test_rights_alone_writes_only_xmp() -> None:
     """Asking for XMP rights and nothing else leaves the EXIF and IPTC notices alone."""
-    payload = ExtraFields(rights="© {year} Ada").resolve(2025)
+    payload = ExtraFields(rights="© {year} Ada").resolve(_taken(2025))
     assert payload == {TAG_XMP_RIGHTS: "© 2025 Ada"}
 
 
 @pytest.mark.parametrize(("marked", "expected"), [(True, "True"), (False, "False")])
 def test_marked_writes_the_literal_xmp_boolean(*, marked: bool, expected: str) -> None:
     """XMP spells this flag out, so the payload carries the word rather than a Python bool."""
-    assert ExtraFields(marked=marked).resolve(2025) == {TAG_XMP_MARKED: expected}
+    assert ExtraFields(marked=marked).resolve(_taken(2025)) == {TAG_XMP_MARKED: expected}
 
 
 def test_marked_unset_leaves_the_tag_alone() -> None:
     """None is the third state: whatever the photo already says stays."""
-    assert TAG_XMP_MARKED not in ExtraFields(artist="Ada").resolve(2025)
+    assert TAG_XMP_MARKED not in ExtraFields(artist="Ada").resolve(_taken(2025))
 
 
 def test_raw_tags_are_applied_last() -> None:
     """--set names a tag by hand, so it overrides what the copyright fields put there."""
     fields = ExtraFields(artist="Ada", tags={TAG_XMP_CREATOR: "Someone Else"})
-    assert fields.resolve(2025)[TAG_XMP_CREATOR] == "Someone Else"
-    assert fields.resolve(2025)[TAG_EXIF_ARTIST] == "Ada"
+    assert fields.resolve(_taken(2025))[TAG_XMP_CREATOR] == "Someone Else"
+    assert fields.resolve(_taken(2025))[TAG_EXIF_ARTIST] == "Ada"
 
 
 def test_blank_notice_writes_no_copyright() -> None:
     """An empty template is "nothing asked for", not an empty copyright tag."""
-    assert ExtraFields(artist="Ada", notice="").resolve(2025) == {
+    assert ExtraFields(artist="Ada", notice="").resolve(_taken(2025)) == {
         TAG_EXIF_ARTIST: "Ada",
         TAG_XMP_CREATOR: "Ada",
         TAG_IPTC_BY_LINE: "Ada",
@@ -123,16 +128,117 @@ def test_build_rejects_an_unknown_placeholder() -> None:
         build_extra_fields(notice="Copyright (c) {shot_at}")
 
 
-def test_build_rejects_artist_placeholder_without_an_artist() -> None:
-    """{artist} with nobody to name would stamp a notice with a hole in it."""
-    with pytest.raises(FieldError, match="--artist"):
-        build_extra_fields(notice="Copyright (c) {year} {artist}")
+def test_artist_placeholder_falls_back_to_the_name_on_the_photo() -> None:
+    """Without --artist, {artist} reads the credit the photo already carries."""
+    fields = build_extra_fields(notice="(c) {year} {artist}")
+    values = _taken(2025) | {"XMP-dc:Creator": "Grace Hopper"}
+    assert fields.resolve(values)[TAG_EXIF_COPYRIGHT] == "(c) 2025 Grace Hopper"
 
 
-def test_build_accepts_artist_placeholder_with_an_artist() -> None:
-    """The same template is fine once --artist says who that is."""
+def test_artist_placeholder_prefers_the_artist_setting() -> None:
+    """--artist wins over the name on the photo."""
+    fields = build_extra_fields(artist="Ada", notice="(c) {year} {artist}", preserve=False)
+    values = _taken(2025) | {"EXIF:Artist": "Grace Hopper"}
+    assert fields.resolve(values)[TAG_EXIF_COPYRIGHT] == "(c) 2025 Ada"
+
+
+def test_a_placeholder_that_finds_nothing_drops_with_its_space() -> None:
+    """A photo with no date and no name still gets a notice, without a hole in it."""
+    fields = build_extra_fields(notice="Copyright (c) {year} {artist}, All rights reserved")
+    assert fields.resolve({})[TAG_EXIF_COPYRIGHT] == "Copyright (c), All rights reserved"
+
+
+def test_a_required_placeholder_skips_the_field_and_says_so() -> None:
+    """{year!} on an undated photo writes no notice, and the caller learns which option it was."""
+    fields = build_extra_fields(artist="Ada", notice="(c) {year!} {artist}")
+    skipped: list[str] = []
+    payload = fields.resolve({}, photo="a.jpg", skipped=skipped)
+    assert TAG_EXIF_COPYRIGHT not in payload
+    assert TAG_XMP_RIGHTS not in payload
+    assert payload[TAG_EXIF_ARTIST] == "Ada"
+    assert skipped == ["--copyright"]
+
+
+def test_a_skipped_rights_template_falls_back_to_the_notice() -> None:
+    """--rights defaults to --copyright, also on a photo where --rights finds nothing."""
+    fields = build_extra_fields(notice="(c) Ada", rights="© {year!} Ada")
+    skipped: list[str] = []
+    assert fields.resolve({}, skipped=skipped)[TAG_XMP_RIGHTS] == "(c) Ada"
+    assert skipped == []  # XMP-dc:Rights was written, with the notice
+    lone = build_extra_fields(rights="© {year!} Ada")
+    assert lone.resolve({}, skipped=skipped) == {}
+    assert skipped == ["--rights"]
+
+
+def test_the_capture_date_falls_back_through_xmp_and_iptc() -> None:
+    """A scan with only an IPTC date is still dated by it, and no file timestamp is read."""
+    fields = build_extra_fields(notice="(c) {year}")
+    values = {"IPTC:DateCreated": "1987:06:01", "File:FileModifyDate": "2025:01:01 00:00:00"}
+    assert fields.resolve(values)[TAG_EXIF_COPYRIGHT] == "(c) 1987"
+
+
+def test_preserve_keeps_the_notice_and_the_name_a_photo_has() -> None:
+    """A second run never re-dates a notice, and another photographer's credit stays."""
+    fields = build_extra_fields(artist="Ada", notice="(c) {year} {artist}", marked=True)
+    values = _taken(2025) | {"XMP:Rights": "(c) 2019 Grace", "IPTC:By-line": "Grace"}
+    assert fields.resolve(values) == {}
+
+
+def test_preserve_decides_the_name_and_the_notice_apart() -> None:
+    """A photo with a notice but no credit still gets the credit."""
     fields = build_extra_fields(artist="Ada", notice="(c) {year} {artist}")
-    assert fields.resolve(2025)[TAG_EXIF_COPYRIGHT] == "(c) 2025 Ada"
+    payload = fields.resolve(_taken(2025) | {"EXIF:Copyright": "(c) 2019 Ada"})
+    assert payload == {TAG_EXIF_ARTIST: "Ada", TAG_XMP_CREATOR: "Ada", TAG_IPTC_BY_LINE: "Ada"}
+
+
+def test_a_kept_creator_is_the_one_a_new_notice_names() -> None:
+    """Someone else's photo keeps their name, and {artist} names them, never --artist."""
+    fields = build_extra_fields(artist="Me", notice="(c) {year} {artist}")
+    payload = fields.resolve(_taken(2019) | {"EXIF:Artist": "Other"})
+    assert TAG_EXIF_ARTIST not in payload
+    assert payload[TAG_EXIF_COPYRIGHT] == "(c) 2019 Other"
+
+
+def test_preserve_reads_only_the_existing_values_it_is_given() -> None:
+    """A notice among the values but not in the files the save writes does not stop it."""
+    fields = build_extra_fields(notice="(c) {year}")
+    values = _taken(2019) | {"XMP:Rights": "(c) 2011"}
+    assert fields.resolve(values, existing={})[TAG_EXIF_COPYRIGHT] == "(c) 2019"
+    assert fields.resolve(values, existing={"XMP:Rights": "(c) 2011"}) == {}
+
+
+def test_no_preserve_replaces_what_a_photo_has() -> None:
+    """--no-preserve-copyright writes the configured values over the old ones."""
+    fields = build_extra_fields(artist="Ada", notice="(c) {year}", preserve=False)
+    values = _taken(2025) | {"EXIF:Copyright": "(c) 2019", "EXIF:Artist": "Grace"}
+    payload = fields.resolve(values)
+    assert payload[TAG_EXIF_ARTIST] == "Ada"
+    assert payload[TAG_EXIF_COPYRIGHT] == "(c) 2025"
+
+
+def test_preserve_never_holds_back_a_raw_assignment() -> None:
+    """--set is an explicit order, so it is written even on a photo with a notice."""
+    fields = build_extra_fields(notice="(c)", assignments=["XMP-dc:Rights=mine"])
+    assert fields.resolve({"EXIF:Copyright": "old"}) == {"XMP-dc:Rights": "mine"}
+
+
+def test_source_tags_name_what_the_templates_and_preserve_read() -> None:
+    """The read before a write asks for the template tags, and for what preserve looks at."""
+    fields = build_extra_fields(artist="Ada", notice='{EXIF:Model|"x"}')
+    assert fields.source_tags[0] == "EXIF:Model"
+    assert "XMP:Creator" in fields.source_tags
+    assert "EXIF:Copyright" in fields.source_tags
+    assert build_extra_fields(notice="(c)", preserve=False).source_tags == ()
+
+
+def test_preview_dates_every_template_by_the_year_given() -> None:
+    """The dialog shows the notice for a year, even on a photo that already has one."""
+    fields = build_extra_fields(notice="(c) {EXIF:CreateDate%Y}", rights="© {year}")
+    payload = fields.preview(2020)
+    assert payload[TAG_EXIF_COPYRIGHT] == "(c) 2020"
+    assert payload[TAG_XMP_RIGHTS] == "© 2020"
+    named = build_extra_fields(notice="(c) {XMP-dc:Creator}").preview(2020)
+    assert named[TAG_XMP_RIGHTS] == "(c) <XMP-dc:Creator>"
 
 
 def test_build_treats_a_blank_artist_as_none() -> None:
@@ -143,7 +249,7 @@ def test_build_treats_a_blank_artist_as_none() -> None:
 def test_build_parses_every_assignment() -> None:
     """Repeated --set options accumulate into one tag map."""
     fields = build_extra_fields(assignments=["A=1", "B=2"])
-    assert fields.resolve(2025) == {"A": "1", "B": "2"}
+    assert fields.resolve(_taken(2025)) == {"A": "1", "B": "2"}
 
 
 def test_shown_tags_covers_every_field_once() -> None:
@@ -160,13 +266,14 @@ def test_shown_fields_report_the_rights_tags() -> None:
 
 def test_non_ascii_tags_names_the_exif_fields_that_carry_more_than_ascii() -> None:
     """EXIF types these two as ASCII before Exif 3.0, so a © in them is a bet on the reader."""
-    payload = ExtraFields(artist="José", notice="Copyright © {year}").resolve(2025)
+    payload = ExtraFields(artist="José", notice="Copyright © {year}").resolve(_taken(2025))
     assert non_ascii_tags(payload) == [TAG_EXIF_ARTIST, TAG_EXIF_COPYRIGHT]
 
 
 def test_non_ascii_tags_is_empty_for_a_plain_notice() -> None:
     """A plain notice raises nothing, and XMP is never flagged: it is UTF-8 by definition."""
-    payload = ExtraFields(artist="Ada", notice="(c) {year}", rights="© {year}").resolve(2025)
+    fields = ExtraFields(artist="Ada", notice="(c) {year}", rights="© {year}")
+    payload = fields.resolve(_taken(2025))
     assert non_ascii_tags(payload) == []
 
 

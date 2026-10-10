@@ -223,7 +223,8 @@ class CopyrightConfig:
             help=(
                 "The copyright notice, written to EXIF:Copyright, IPTC:CopyrightNotice, and "
                 "XMP-dc:Rights. Use {year} for the year the photo was taken and {artist} for the "
-                "name, e.g. 'Copyright (c) {year} {artist}, All rights reserved'"
+                "name, e.g. 'Copyright (c) {year} {artist}, All rights reserved'. A placeholder "
+                'can read any tag and fall back: {EXIF:Artist|XMP-dc:Creator|"Unknown"}'
             ),
         ),
     ] = None
@@ -248,6 +249,16 @@ class CopyrightConfig:
             ),
         ),
     ] = None
+    preserve_copyright: Annotated[
+        bool,
+        Parameter(
+            name=("--preserve-copyright",),
+            help=(
+                "Keep the name and the notice a photo already has. --no-preserve-copyright "
+                "replaces them"
+            ),
+        ),
+    ] = True
     set_tags: Annotated[
         list[str] | None,
         Parameter(
@@ -1178,6 +1189,7 @@ def to_extra_fields(config: CopyrightConfig) -> ExtraFields:
         rights=config.rights,
         marked=config.marked,
         assignments=config.set_tags,
+        preserve=config.preserve_copyright,
     )
 
 
@@ -1312,6 +1324,7 @@ def to_telemetry_settings(  # noqa: PLR0913 - one parameter per option group tag
         copyright_notice=bool(output.copyright_notice),
         rights=bool(output.rights),
         marked=_marked_label(marked=output.marked),
+        overwrite_copyright=not output.preserve_copyright,
         set_tags=len(output.set_tags or []),
         paced=to_pacing_plan(pacing).rests,
         duty=pacing.duty,

@@ -4,7 +4,7 @@ import contextlib
 import html
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import IntEnum
 from itertools import batched, chain
 from pathlib import Path
@@ -775,6 +775,32 @@ def read_metadata_sources(
     return sources
 
 
+@dataclass(frozen=True, slots=True)
+class FieldSources:
+    """
+    What a photo and its sidecar say for the tags a copyright template reads, each file apart.
+
+    A template fills from both, the sidecar first, as every other read does. --preserve-copyright
+    looks only at the files a save writes: a notice in a sidecar that an embedded save leaves alone
+    is no reason to leave the photo without one.
+    """
+
+    image: Mapping[str, str] = field(default_factory=dict)
+    sidecar: Mapping[str, str] = field(default_factory=dict)
+
+    @property
+    def values(self) -> dict[str, str]:
+        """Both files together, the sidecar's answer first."""
+        return {**self.image, **self.sidecar}
+
+    def written(self, targets: Iterable[WriteTarget]) -> dict[str, str]:
+        """Return what the files in *targets* already carry."""
+        found: dict[str, str] = {}
+        for target in targets:
+            found |= self.sidecar if target.use_sidecar else self.image
+        return found
+
+
 @dataclass(slots=True, frozen=True)
 class ImageContext:
     """
@@ -792,6 +818,9 @@ class ImageContext:
     existing_description: str | None = None
     # The copyright notice already on the photo. The GUI shows it next to the one a save writes.
     existing_copyright: str | None = None
+    # What the copyright templates read (see ExtraFields.source_tags), keyed by the spelling asked
+    # for. Read here so a notice dated by the photo's capture date costs no second call.
+    field_sources: FieldSources = field(default_factory=FieldSources)
     location_tags: dict[str, str] = field(default_factory=dict)
     gps_position: str | None = None
     camera_info: dict[str, str] = field(default_factory=dict)
@@ -848,6 +877,7 @@ def read_image_context(
     *,
     et: ExifToolHelper | None = None,
     include_content_hash: bool = False,
+    field_tags: Sequence[str] = (),
 ) -> ImageContext:
     """
     Fetch every read-only tag the pipeline needs in a single exiftool call.
@@ -856,7 +886,8 @@ def read_image_context(
 
     When *include_content_hash* is set, the same call also reads ImageDataHash so callers can key a
     cache on the image content rather than the whole file. It is off by default because hashing the
-    image data is wasted work when no cache is configured.
+    image data is wasted work when no cache is configured. *field_tags* are the tags a copyright
+    template reads (see :attr:`~photo_tagger.fields.ExtraFields.source_tags`).
     """
     targets = metadata_targets(image_path)
     if not targets:
@@ -874,6 +905,7 @@ def read_image_context(
                 *LOCATION_TAGS,
                 *CAMERA_TAGS,
                 _GPS_TAG,
+                *field_tags,
             ],
         ),
     )
@@ -914,6 +946,7 @@ def read_image_context(
         gps_position=gps_position,
         camera_info=camera_info,
         content_hash=_extract_content_hash(blocks) if include_content_hash else None,
+        field_sources=field_values(blocks, field_tags),
     )
 
 
@@ -971,49 +1004,104 @@ def read_capture_times(
     return times
 
 
-def _year_of(image_path: Path, captured: datetime | None) -> int:
+# The family 0 groups a read reports. A tag named with any other group (IFD0, Canon, Keys, System)
+# is looked up by its name alone, since the read reports it under a family 0 group of its own.
+# cspell:disable - ExifTool group names in lower case, not words.
+_READ_FAMILIES = frozenset(
+    {
+        "composite",
+        "exif",
+        "file",
+        "icc_profile",
+        "iptc",
+        "jfif",
+        "makernotes",
+        "photoshop",
+        "png",
+        "quicktime",
+        "riff",
+        "xmp",
+    },
+)
+# cspell:enable - back to checking.
+
+
+def _lookup(lowered: Mapping[str, Any], tag: str) -> Any:  # noqa: ANN401 - a JSON value.
     """
-    Return *captured*'s year, or the file's own mtime year, or this year.
+    Find *tag* in a block whose keys are lower case, as a read reports it.
 
-    A copyright notice needs a year for every photo, so this always answers. The mtime is the honest
-    second choice: for a scan or a photo whose EXIF was stripped, it is usually the day the file was
-    made. The current year is the last resort, for a file we cannot even stat.
+    A read reports the family 0 group, so ``XMP-dc:Creator`` comes back as ``XMP:Creator`` and
+    ``IFD0:Artist`` as ``EXIF:Artist``. A family 1 group with no simple mapping (``Canon:OwnerName``
+    is ``MakerNotes:OwnerName``) matches the first non-blank tag of that name.
     """
-    if captured is not None:
-        return captured.year
-    try:
-        return datetime.fromtimestamp(image_path.stat().st_mtime, tz=UTC).astimezone().year
-    except OSError as exc:
-        logger.warning("capture_year_fell_back_to_today", file=str(image_path), error=str(exc))
-        return datetime.now(tz=UTC).astimezone().year
+    group, _sep, name = tag.rpartition(":")
+    family = _tag_family(tag).lower()
+    if group and family in _READ_FAMILIES:
+        return lowered.get(f"{family}:{name.lower()}")
+    suffix = f":{name.lower()}"
+    return next(
+        (
+            value
+            for key, value in lowered.items()
+            if key.endswith(suffix) and _value_is_present(value)
+        ),
+        None,
+    )
 
 
-def capture_year(image_path: Path, captured: str | None) -> int:
+def _block_values(block: dict[str, Any], tags: Sequence[str]) -> dict[str, str]:
+    """Collect the non-blank value of each of *tags* in one block, keyed as asked for."""
+    lowered = {str(key).lower(): value for key, value in block.items()}
+    return {
+        tag: format_metadata_value(value)
+        for tag in tags
+        if _value_is_present(value := _lookup(lowered, tag))
+    }
+
+
+def field_values(blocks: list[dict[str, Any]], tags: Sequence[str]) -> FieldSources:
     """
-    Return the year a photo was taken, from an already-read ``EXIF:DateTimeOriginal`` string.
+    Collect what the image and its sidecar say for *tags*, keyed by the spelling asked for.
 
-    For the pipeline, which reads that tag as prompt context anyway (see :func:`read_image_context`)
-    and must not pay a second exiftool call per photo to date a copyright notice. Falls back to the
-    file's mtime when the tag is missing or malformed.
+    This is what :meth:`~photo_tagger.fields.ExtraFields.resolve` fills a notice from.
     """
-    parsed = _parse_exif_datetime(captured) if captured else None
-    return _year_of(image_path, parsed)
+    image: dict[str, str] = {}
+    sidecar: dict[str, str] = {}
+    for block in blocks:
+        found = _block_values(block, tags)
+        target = sidecar if _is_sidecar_block(block) else image
+        target |= {tag: value for tag, value in found.items() if tag not in target}
+    return FieldSources(image=image, sidecar=sidecar)
 
 
-def read_capture_years(
+def read_field_sources(
     image_paths: Iterable[Path],
+    tags: Sequence[str],
     *,
     et: ExifToolHelper | None = None,
-) -> dict[Path, int]:
+) -> dict[Path, FieldSources]:
     """
-    Return the year every photo in *image_paths* was taken, in one batched exiftool call.
+    Read *tags* from every photo in *image_paths* and its sidecar, in one batched exiftool call.
 
-    The counterpart to :func:`capture_year` for callers that have read nothing yet, such as the
-    ``set`` command. Every input path gets an answer (see :func:`_year_of`).
+    For the callers that have read nothing yet, such as the ``set`` command and a GUI save. The
+    pipeline reads the same tags with the rest of a photo's context instead (see
+    :func:`read_image_context`). Every input path gets an answer, empty when the read failed.
     """
     paths = list(image_paths)
-    captured = read_capture_times(paths, et=et)
-    return {path: _year_of(path, captured.get(path)) for path in paths}
+    answers = {path: FieldSources() for path in paths}
+    targets, target_to_images = _build_target_index(paths)
+    if not tags or not targets:
+        return answers
+    try:
+        blocks = _batched_get_tags(et, files=targets, tags=list(tags))
+    except _EXIFTOOL_ERRORS as exc:
+        logger.exception("failed_to_read_field_sources", error=str(exc))
+        return answers
+    per_photo: dict[Path, list[dict[str, Any]]] = {path: [] for path in paths}
+    for block in blocks:
+        for path in _images_for_block(block, target_to_images):
+            per_photo[path].append(block)
+    return {path: field_values(found, tags) for path, found in per_photo.items()}
 
 
 def _first_present(values: dict[str, str], *tags: str) -> str | None:
