@@ -37,6 +37,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFormLayout,
     QInputDialog,
     QLineEdit,
@@ -5644,6 +5645,42 @@ def test_starting_and_stopping_a_watch_flips_the_menu_action(
     assert "Stopped watching." in window._status.text()  # noqa: SLF001
 
 
+def test_the_watch_dialog_starts_the_watch_it_describes(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What the dialog holds when Start is pressed is the watch that runs."""
+    started: list[WatchSettings] = []
+    monkeypatch.setattr(window, "_start_watch", started.append)
+    window._extensions.setText("jpg,cr3")  # noqa: SLF001
+    dialog = window._watch_dialog  # noqa: SLF001
+    dialog._folder.setText(str(tmp_path))  # noqa: SLF001
+    dialog._save.setChecked(True)  # noqa: SLF001
+    monkeypatch.setattr(dialog, "exec", lambda: QDialog.DialogCode.Accepted)
+
+    window._toggle_watch()  # noqa: SLF001
+
+    assert len(started) == 1
+    assert started[0].folders == (tmp_path,)
+    assert started[0].extensions == "jpg,cr3"
+    assert started[0].save is True
+
+
+def test_cancelling_the_watch_dialog_starts_nothing(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel means no watch, whatever the dialog holds."""
+    started: list[WatchSettings] = []
+    monkeypatch.setattr(window, "_start_watch", started.append)
+    monkeypatch.setattr(window._watch_dialog, "exec", lambda: QDialog.DialogCode.Rejected)  # noqa: SLF001
+
+    window._toggle_watch()  # noqa: SLF001
+
+    assert started == []
+
+
 def test_starting_a_watch_needs_a_folder(
     window: gui.MainWindow,
     monkeypatch: pytest.MonkeyPatch,
@@ -5655,9 +5692,9 @@ def test_starting_a_watch_needs_a_folder(
         "warning",
         lambda _parent, title, _text: warned.append(title),
     )
-    window._watch_folder.setText("")  # noqa: SLF001
+    window._watch_dialog._folder.setText("")  # noqa: SLF001
 
-    window._start_watch_from_dialog()  # noqa: SLF001
+    window._watch_dialog._on_start()  # noqa: SLF001
 
     assert warned == ["Pick a folder"]
     assert window._watch_settings is None  # noqa: SLF001

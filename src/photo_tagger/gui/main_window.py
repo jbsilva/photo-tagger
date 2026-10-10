@@ -42,7 +42,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -91,7 +90,6 @@ from photo_tagger.diagnostics import run_checks
 from photo_tagger.discovery import load_skip_list, skip_list_matches
 from photo_tagger.errors import ConfigFileError, DiscoveryError, ProviderError
 from photo_tagger.gui.common import (
-    CHOOSE_LABEL,
     CLOSE_LABEL,
     COL_NAME,
     COL_STATUS,
@@ -116,6 +114,7 @@ from photo_tagger.gui.style import app_icon, svg_icon
 from photo_tagger.gui.undo_dialog import UndoDialog
 from photo_tagger.gui.viewer import ImageViewerDialog
 from photo_tagger.gui.vocabulary_builder import VocabularyBuilderDialog
+from photo_tagger.gui.watch_dialog import WatchDialog
 from photo_tagger.gui.widgets import (
     ClickableLabel,
     InputWatcher,
@@ -294,7 +293,6 @@ from photo_tagger.pipeline import FAILURE_OTHER
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
 from photo_tagger.undo import open_journal
-from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 
 
 if TYPE_CHECKING:
@@ -595,7 +593,7 @@ class MainWindow(QMainWindow):
         self._undo_dialog.status.connect(self._status.setText)
         self._undo_dialog.used.connect(self._count)
         self._undo_dialog.undone.connect(self._on_undone)
-        self._watch_dialog = self._build_watch_dialog()
+        self._watch_dialog = WatchDialog(self, recursive=self._recursive.isChecked())
 
     def _init_worker_state(self) -> None:
         """
@@ -4545,129 +4543,14 @@ class MainWindow(QMainWindow):
 
     # --- watching a folder ---------------------------------------------------------------------
 
-    def _build_watch_dialog(self) -> QDialog:
-        """Build the dialog behind Tools > Watch Folder."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle(_("Watch a folder"))
-        dialog.setMinimumWidth(600)
-        box = QVBoxLayout(dialog)
-        intro = QLabel(
-            _(
-                "Point this at the folder your card reader, tethered capture, or sync client "
-                "fills. Photos already there are picked up first, then each new one as it lands.",
-            ),
-        )
-        intro.setWordWrap(True)
-        box.addWidget(intro)
-        box.addLayout(self._build_watch_form())
-
-        self._watch_generate = QCheckBox(_("Generate each new photo"))
-        self._watch_generate.setChecked(True)
-        box.addWidget(self._watch_generate)
-        self._watch_save = QCheckBox(_("Save it too, without reviewing"))
-        self._watch_save.setToolTip(
-            tooltip(
-                "Off by default: the window is built around reviewing before writing. Turn it on "
-                "for an unattended import, where it behaves like the CLI's watch command.",
-            ),
-        )
-        box.addWidget(self._watch_save)
-
-        start = QPushButton(_("Start Watching"))
-        start.setObjectName("primary")
-        start.clicked.connect(self._start_watch_from_dialog)
-        cancel = QPushButton(_("Cancel"))
-        cancel.clicked.connect(dialog.reject)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(cancel)
-        buttons.addWidget(start)
-        box.addLayout(buttons)
-        return dialog
-
-    def _build_watch_form(self) -> QFormLayout:
-        """Build the watch dialog's form: which folder to poll, how often, and how long to wait."""
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self._watch_folder = QLineEdit()
-        self._watch_folder.setPlaceholderText(_("(pick a folder)"))
-        choose = QPushButton(_(CHOOSE_LABEL))
-        choose.clicked.connect(self._choose_watch_folder)
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(self._watch_folder, stretch=1)
-        folder_row.addWidget(choose)
-        form.addRow(_("Folder"), folder_row)
-
-        self._watch_recursive = QCheckBox(_("Include subfolders"))
-        self._watch_recursive.setChecked(self._recursive.isChecked())
-        form.addRow("", self._watch_recursive)
-
-        self._watch_interval = QDoubleSpinBox()
-        self._watch_interval.setRange(1.0, 3600.0)
-        self._watch_interval.setDecimals(0)
-        self._watch_interval.setValue(DEFAULT_INTERVAL_SECONDS)
-        self._watch_interval.setSuffix(_(" seconds"))
-        self._watch_interval.setToolTip(
-            tooltip(
-                "How often the folder is listed. Polling behaves the same on every platform and "
-                "over network shares.",
-            ),
-        )
-        form.addRow(_("Check every"), self._watch_interval)
-
-        self._watch_settle = QDoubleSpinBox()
-        self._watch_settle.setRange(0.0, 600.0)
-        self._watch_settle.setDecimals(0)
-        self._watch_settle.setValue(DEFAULT_SETTLE_SECONDS)
-        self._watch_settle.setSuffix(_(" seconds"))
-        self._watch_settle.setToolTip(
-            tooltip(
-                "How long a file must sit unchanged before it is picked up, so a photo still "
-                "being copied is left alone until the copy finishes.",
-            ),
-        )
-        form.addRow(_("Settle for"), self._watch_settle)
-        return form
-
-    def _choose_watch_folder(self) -> None:
-        """Pick the folder to watch."""
-        folder = QFileDialog.getExistingDirectory(
-            self._watch_dialog,
-            _("Choose a folder to watch"),
-            self._watch_folder.text(),
-        )
-        if folder:
-            self._watch_folder.setText(folder)
-
     def _toggle_watch(self) -> None:
         """Stop the running watch, or open the dialog to start one."""
         if self._watch_settings is not None:
             self._stop_watch()
             return
-        self._watch_dialog.exec()
-
-    def _start_watch_from_dialog(self) -> None:
-        """Turn the dialog's choices into a watch and start it."""
-        folder = self._watch_folder.text().strip()
-        if not folder:
-            QMessageBox.warning(
-                self._watch_dialog,
-                _("Pick a folder"),
-                _("Choose the folder to watch first."),
-            )
-            return
-        self._watch_dialog.accept()
-        self._start_watch(
-            WatchSettings(
-                folders=(Path(folder),),
-                extensions=self._extensions.text().strip(),
-                recursive=self._watch_recursive.isChecked(),
-                interval=self._watch_interval.value(),
-                settle=self._watch_settle.value(),
-                generate=self._watch_generate.isChecked(),
-                save=self._watch_save.isChecked(),
-            ),
-        )
+        settings = self._watch_dialog.ask(extensions=self._extensions.text().strip())
+        if settings is not None:
+            self._start_watch(settings)
 
     def _start_watch(self, settings: WatchSettings) -> None:
         """Poll *settings*' folders on a background thread until the watch is stopped."""
