@@ -5471,6 +5471,7 @@ def test_an_unattended_run_retries_what_failed_before_saving(
 
     assert "Retrying 1 photo that failed" in window._status.text()  # noqa: SLF001
     assert saved == []  # the save waits for the retry
+    assert window._pass_timer.isActive()  # noqa: SLF001 - the pause before the pass
     window._run_pending_pass()  # noqa: SLF001 - fire the queued pass without its wait
     assert runs == [[b]]
 
@@ -7648,6 +7649,7 @@ def test_an_extra_pass_follows_the_batch_choice_to_skip_the_cache(
 def test_cancel_during_the_pause_ends_the_chain(window: gui.MainWindow) -> None:
     """Cancel between the chain's steps runs no pass and no save, and frees the buttons."""
     window._pending_pass = "failed"  # noqa: SLF001
+    window._pass_timer.start()  # noqa: SLF001 - the pause the pass waits out
     window._hold_for_chain()  # noqa: SLF001
     assert not window._run_bar.generate_button.isEnabled()  # noqa: SLF001
     assert window._run_bar.cancel_button.isEnabled()  # noqa: SLF001
@@ -7655,6 +7657,8 @@ def test_cancel_during_the_pause_ends_the_chain(window: gui.MainWindow) -> None:
     window._cancel_generation()  # noqa: SLF001
 
     assert window._pending_pass is None  # noqa: SLF001
+    # Stopped, so it cannot start the pass of a run begun within the pause.
+    assert not window._pass_timer.isActive()  # noqa: SLF001
     assert window._busy() is False  # noqa: SLF001
     assert window._run_bar.generate_button.isEnabled()  # noqa: SLF001
     window._run_pending_pass()  # noqa: SLF001 - the timer firing later changes nothing

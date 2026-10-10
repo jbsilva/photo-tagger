@@ -424,6 +424,12 @@ class MainWindow(QMainWindow):
         # the one currently waiting out the pause before it starts.
         self._passes_done: set[str] = set()
         self._pending_pass: str | None = None
+        # One timer for that pause, so ending the chain can stop it: a stray one-shot left from a
+        # cancelled chain would otherwise start the pass of the next run before its own pause.
+        self._pass_timer = QTimer(self)
+        self._pass_timer.setSingleShot(True)
+        self._pass_timer.setInterval(_RETRY_PASS_DELAY_MS)
+        self._pass_timer.timeout.connect(self._run_pending_pass)
         self._batch_uses_cache = True
         # Set by Cancel between the chain's steps, so the next step ends the chain instead.
         self._chain_cancelled = False
@@ -2534,6 +2540,7 @@ class MainWindow(QMainWindow):
         """Close a chain that Cancel stopped between its steps: no pass, and no chained save."""
         self._chain_cancelled = False
         self._pending_pass = None
+        self._pass_timer.stop()
         self._set_running(running=False)
         self._status.setText(_("Cancelled. Nothing else was generated or saved."))
         self._finish_run(telemetry.OUTCOME_CANCELLED)
@@ -2569,7 +2576,7 @@ class MainWindow(QMainWindow):
         self._passes_done.add(name)
         self._pending_pass = name
         self._status.setText(extra_pass_status(name, len(targets)))
-        QTimer.singleShot(_RETRY_PASS_DELAY_MS, self._run_pending_pass)
+        self._pass_timer.start()
         return True
 
     def _run_pending_pass(self) -> None:
