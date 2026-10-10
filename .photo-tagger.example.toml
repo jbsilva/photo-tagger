@@ -36,6 +36,19 @@
 # jpeg_dimensions = 1280      # max edge of the resized JPEG sent to the model
 # jpeg_quality = 80
 
+# --- pacing -------------------------------------------------------------------
+#
+# Rest the run now and then, so a long batch does not flatten the battery, cook
+# the machine, or take it over. Nothing here rests a run until duty or
+# battery_floor asks for it.
+
+[pacing]
+# duty = 100                  # percent of the time the run may work; 100 never rests
+# battery_floor = 0           # rest below this charge (only while plugged in); 0 = never
+# battery_resume = 0          # charge that ends the rest, above the floor; 0 = floor + 15
+# work_minutes = 10.0         # work this long between rests, once one of the two above asks
+# max_pause_minutes = 15.0    # longest a single rest may last; inert until a run rests
+
 # --- output -------------------------------------------------------------------
 
 [output]

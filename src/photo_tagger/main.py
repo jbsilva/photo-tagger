@@ -50,6 +50,7 @@ from photo_tagger.cli_options import (
     InferenceConfig,
     LogConfig,
     OutputConfig,
+    PacingConfig,
     ProviderConfig,
     TelemetryConfig,
     VocabularyBuildConfig,
@@ -57,8 +58,10 @@ from photo_tagger.cli_options import (
     resolve_notify,
     resolve_sidecar_mode,
     to_extra_fields,
+    to_pacing_plan,
     to_processing_options,
     to_trim_rules,
+    validate_pacing,
 )
 from photo_tagger.config import DEFAULT_USER_PROMPT, SidecarMode
 from photo_tagger.config_file import configured_exiftool_path, load_config
@@ -95,6 +98,7 @@ from photo_tagger.metadata import (
 from photo_tagger.models import KeywordSet
 from photo_tagger.notify import APP_NAME, notify
 from photo_tagger.observability import configure_tracing
+from photo_tagger.pacing import Pacer, build_pacer
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
 
@@ -161,6 +165,7 @@ _DEFAULT_DISPLAY = DisplayConfig()
 _DEFAULT_ARTIFACTS = ArtifactConfig()
 _DEFAULT_FILTER = FilterConfig()
 _DEFAULT_TELEMETRY = TelemetryConfig()
+_DEFAULT_PACING = PacingConfig()
 _DEFAULT_WATCH = WatchConfig()
 # The `set` command's own group. `tag` and `watch` get these flags through OutputConfig, which
 # inherits them; only a command that takes them *without* the rest of the output group needs this.
@@ -1169,6 +1174,10 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
     inference: Annotated[InferenceConfig, Parameter(name="*")] = _DEFAULT_INFERENCE,
     log: Annotated[LogConfig, Parameter(name="*")] = _DEFAULT_LOG,
     telemetry_config: Annotated[TelemetryConfig, Parameter(name="*")] = _DEFAULT_TELEMETRY,
+    pacing: Annotated[
+        PacingConfig,
+        Parameter(name="*", validator=validate_pacing),
+    ] = _DEFAULT_PACING,
 ) -> None:
     """
     Tag images with AI and write Lightroom-compatible metadata (sidecar or embedded).
@@ -1206,6 +1215,15 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
     - --workers N: process N photos concurrently using a thread pool. Each worker opens
         its own ExifToolHelper. The model server is the dominant bottleneck.
     - --max-keywords N: cap the number of AI-generated keywords kept before merging.
+
+    Pacing (for long runs on a laptop):
+    - --duty N: work only N percent of the time, resting in between. Keeps the fans down,
+        leaves the machine usable, and holds the average power draw below what the charger
+        supplies. A run rests at a photo boundary, never mid-photo.
+    - --battery-floor N: rest until the battery charges back up whenever it falls to N
+        percent, so a long run on a laptop does not flatten it. Only while plugged in.
+    - --work-minutes / --max-pause-minutes: how long a work window runs, and the longest a
+        single rest may last.
 
     Customization:
     - --prompt-file PATH: replace the default user prompt with the file's contents.
@@ -1280,6 +1298,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
                 inference=inference,
                 log=log,
                 telemetry_config=telemetry_config,
+                pacing=pacing,
             )
         except PhotoTaggerError as exc:
             raise SystemExit(1) from exc
@@ -1315,6 +1334,9 @@ class _RunSetup:
     notify_sound: bool
     cache: InferenceCache | None = None
     csv_writer: CsvReportWriter | None = None
+    # None unless the run was asked to slow down. Shared by every batch a watch processes, so the
+    # work window carries across batches instead of restarting with each one.
+    pacer: Pacer | None = None
     on_image_result: Callable[[ImageOutcome], None] | None = None
     on_success: Callable[[Path], None] | None = None
     journal: UndoJournal | None = None
@@ -1352,9 +1374,10 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
     provider: ProviderConfig,
     output: OutputConfig,
     inference: InferenceConfig,
+    pacing: PacingConfig,
     telemetry_enabled: bool,
 ) -> _RunSetup:
-    """Build the agent, cache, report sinks, and undo journal shared by every batch."""
+    """Build the agent, cache, report sinks, pacer, and undo journal shared by every batch."""
     # Raises VocabularyError (a PhotoTaggerError) on an unusable file, which the commands turn into
     # a clean exit 1. Loading it up front means a typo in the path fails before any model call.
     vocabulary = (
@@ -1418,6 +1441,7 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
             notify_sound=notify_sound,
             cache=cache,
             csv_writer=csv_writer,
+            pacer=build_pacer(to_pacing_plan(pacing)),
             on_image_result=_combine_image_result_callbacks(ndjson_emitter, csv_sink),
             on_success=make_skip_list_appender(artifacts.append_to_skip_file),
             journal=open_journal(datetime.now(tz=UTC), enabled=journal_enabled),
@@ -1571,6 +1595,7 @@ def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
             on_image_result=setup.on_image_result,
             session_plan=plan_sessions(image_files, gap_minutes=setup.session_gap_minutes),
             journal=setup.journal,
+            pacer=setup.pacer,
         )
 
 
@@ -1602,6 +1627,7 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
     inference: InferenceConfig,
     log: LogConfig,
     telemetry_config: TelemetryConfig,
+    pacing: PacingConfig,
 ) -> None:
     """Body of ``tag`` that runs once the optional file lock has been acquired."""
     _maybe_show_telemetry_notice(enabled=telemetry_config.enabled)
@@ -1627,6 +1653,7 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         provider=provider,
         output=output,
         inference=inference,
+        pacing=pacing,
         telemetry_enabled=telemetry_config.enabled,
     )
     _log_startup(
@@ -1666,10 +1693,6 @@ def watch(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group
         bool,
         Parameter(name=("--recursive", "-r"), help="Watch subdirectories too"),
     ] = DEFAULT_RECURSIVE,
-    workers: Annotated[
-        int,
-        Parameter(name=("--workers", "-w"), help="Photos to process concurrently per batch"),
-    ] = DEFAULT_WORKERS,
     watch_config: Annotated[WatchConfig, Parameter(name="*")] = _DEFAULT_WATCH,
     filter_: Annotated[FilterConfig, Parameter(name="*")] = _DEFAULT_FILTER,
     display: Annotated[DisplayConfig, Parameter(name="*")] = _DEFAULT_DISPLAY,
@@ -1679,6 +1702,10 @@ def watch(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group
     inference: Annotated[InferenceConfig, Parameter(name="*")] = _DEFAULT_INFERENCE,
     log: Annotated[LogConfig, Parameter(name="*")] = _DEFAULT_LOG,
     telemetry_config: Annotated[TelemetryConfig, Parameter(name="*")] = _DEFAULT_TELEMETRY,
+    pacing: Annotated[
+        PacingConfig,
+        Parameter(name="*", validator=validate_pacing),
+    ] = _DEFAULT_PACING,
 ) -> None:
     """
     Watch folders and tag photos as they arrive, until you stop it with Ctrl-C.
@@ -1722,7 +1749,7 @@ def watch(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group
             inputs=inputs,
             image_extensions=image_extensions,
             recursive=recursive,
-            workers=workers,
+            workers=watch_config.workers,
             watch_config=watch_config,
             filter_=filter_,
             display=display,
@@ -1731,6 +1758,7 @@ def watch(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group
             output=output,
             inference=inference,
             telemetry_config=telemetry_config,
+            pacing=pacing,
         )
     except PhotoTaggerError as exc:
         raise SystemExit(1) from exc
@@ -1750,6 +1778,7 @@ def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one
     output: OutputConfig,
     inference: InferenceConfig,
     telemetry_config: TelemetryConfig,
+    pacing: PacingConfig,
 ) -> None:
     """Poll for new photos and tag each settled batch until interrupted."""
     _maybe_show_telemetry_notice(enabled=telemetry_config.enabled)
@@ -1762,6 +1791,7 @@ def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one
         provider=provider,
         output=output,
         inference=inference,
+        pacing=pacing,
         telemetry_enabled=telemetry_config.enabled,
     )
     logger.info(

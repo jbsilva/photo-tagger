@@ -64,6 +64,23 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_in_range[N: (int, float)](name: str, value: N, default: N, low: N, high: N) -> N:
+    """
+    Return *value* when it lies in ``low..high``, else warn and return *default*.
+
+    An environment variable becomes a default, and a default never passes the flag's validator, so
+    ``DUTY_PERCENT=0`` would otherwise reach the pacer as a run that may never work.
+    """
+    if low <= value <= high:
+        return value
+    warnings.warn(
+        f"{name}={value!r} is outside {low}..{high}; using default {default}",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+    return default
+
+
 def _env_float(name: str, default: float) -> float:
     """Read *name* from the environment as a float, warning and falling back if malformed."""
     raw = os.getenv(name)
@@ -115,18 +132,32 @@ DEFAULT_TIMEOUT_SECONDS = _env_float("TIMEOUT_SECONDS", 60.0)
 # strongly suppressing pathological loops.
 DEFAULT_FREQUENCY_PENALTY = _env_float("FREQUENCY_PENALTY", 0.5)
 
-# Pacing (see photo_tagger.pacing). All off by default: a run works flat out until the user asks
-# for less. The two window lengths only matter once it does.
-DEFAULT_DUTY_PERCENT = _env_int("DUTY_PERCENT", 100)
-DEFAULT_BATTERY_FLOOR = _env_int("BATTERY_FLOOR", 0)
-DEFAULT_BATTERY_RESUME = _env_int("BATTERY_RESUME", 0)
-# Ten minutes of work between rests. Long enough that a rest is worth taking (a few seconds of
-# idling recharges nothing and only gives a model server time to unload), short enough that the
+# Pacing (see photo_tagger.pacing). Nothing here rests a run on its own: a full duty cycle with no
+# battery floor builds no pacer at all, so an ordinary run works flat out exactly as it did before
+# any of this existed. The two windows below are the shape a rest takes once --duty or
+# --battery-floor asks for one, and change nothing until then.
+DEFAULT_DUTY_PERCENT = _env_in_range("DUTY_PERCENT", _env_int("DUTY_PERCENT", 100), 100, 1, 100)
+DEFAULT_BATTERY_FLOOR = _env_in_range("BATTERY_FLOOR", _env_int("BATTERY_FLOOR", 0), 0, 0, 99)
+DEFAULT_BATTERY_RESUME = _env_in_range("BATTERY_RESUME", _env_int("BATTERY_RESUME", 0), 0, 0, 100)
+# How long a paced run works between rests. Long enough that a rest is worth taking (a few seconds
+# of idling recharges nothing and only gives a model server time to unload), short enough that the
 # battery is looked at often.
-DEFAULT_WORK_MINUTES = _env_float("WORK_MINUTES", 10.0)
-# No single rest lasts longer than this. LM Studio unloads a JIT-loaded model after an hour idle,
+DEFAULT_WORK_MINUTES = _env_in_range(
+    "WORK_MINUTES",
+    _env_float("WORK_MINUTES", 10.0),
+    10.0,
+    0.1,
+    24 * 60.0,
+)
+# The ceiling on one rest in a paced run. LM Studio unloads a JIT-loaded model after an hour idle,
 # and a run that sits still any longer looks hung to whoever is watching it.
-DEFAULT_MAX_PAUSE_MINUTES = _env_float("MAX_PAUSE_MINUTES", 15.0)
+DEFAULT_MAX_PAUSE_MINUTES = _env_in_range(
+    "MAX_PAUSE_MINUTES",
+    _env_float("MAX_PAUSE_MINUTES", 15.0),
+    15.0,
+    0.1,
+    24 * 60.0,
+)
 
 
 def state_dir() -> Path:

@@ -74,6 +74,15 @@ def test_env_int_warns_and_falls_back_on_garbage(monkeypatch: pytest.MonkeyPatch
     assert result == 80  # noqa: PLR2004 - asserting default fallback
 
 
+def test_env_in_range_falls_back_on_a_value_outside_the_range() -> None:
+    """DUTY_PERCENT=0 would be a run that may never work, so it warns and uses the default."""
+    from photo_tagger.config import _env_in_range  # noqa: PLC0415
+
+    with pytest.warns(RuntimeWarning, match="DUTY_PERCENT"):
+        assert _env_in_range("DUTY_PERCENT", 0, 100, 1, 100) == 100  # noqa: PLR2004
+    assert _env_in_range("DUTY_PERCENT", 70, 100, 1, 100) == 70  # noqa: PLR2004
+
+
 def test_env_float_parses_valid_value(monkeypatch: pytest.MonkeyPatch) -> None:
     """A float-shaped string is converted to float."""
     monkeypatch.setenv("PT_TEST_FLOAT", "0.42")

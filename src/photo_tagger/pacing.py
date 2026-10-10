@@ -312,6 +312,11 @@ class Pacer:
         self._waiting_for_battery = False
 
     @property
+    def plan(self) -> PacingPlan:
+        """The plan this pacer follows, for whoever has to report the run's settings."""
+        return self._plan
+
+    @property
     def rested_seconds(self) -> float:
         """Seconds this run has spent resting, for the run summary."""
         return self._rested_seconds
@@ -476,5 +481,25 @@ def build_pacer(
     *,
     on_rest: Callable[[str, float], None] | None = None,
 ) -> Pacer | None:
-    """Return a pacer for *plan*, or None when the plan would never rest anything."""
-    return Pacer(plan, on_rest=on_rest) if plan.rests else None
+    """
+    Return a pacer for *plan*, or None when the plan would never rest anything.
+
+    Logs the plan on the way out, so a run that took longer than expected says why in its own log.
+    """
+    if not plan.rests:
+        return None
+    logger.info(
+        "pacing_enabled",
+        duty=plan.duty_percent,
+        battery_floor=plan.battery_floor,
+        battery_resume=plan.resume_percent,
+        work_seconds=plan.work_seconds,
+        max_pause_seconds=plan.max_pause_seconds,
+    )
+    if plan.battery_floor > CAUTION_BATTERY_FLOOR:
+        logger.warning(
+            "pacing_battery_floor_very_high",
+            battery_floor=plan.battery_floor,
+            hint="a plugged-in laptop is rarely that full: expect a rest after nearly every window",
+        )
+    return Pacer(plan, on_rest=on_rest)

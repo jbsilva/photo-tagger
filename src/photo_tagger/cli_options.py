@@ -31,9 +31,13 @@ from cyclopts.argument import update_argument_collection
 from cyclopts.config import Dict as _CycloptsDictConfig
 
 from photo_tagger.config import (
+    DEFAULT_BATTERY_FLOOR,
+    DEFAULT_BATTERY_RESUME,
     DEFAULT_DIMENSIONS,
+    DEFAULT_DUTY_PERCENT,
     DEFAULT_FREQUENCY_PENALTY,
     DEFAULT_JPEG_QUALITY,
+    DEFAULT_MAX_PAUSE_MINUTES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_NAME,
     DEFAULT_OUTPUT_LANGUAGE,
@@ -41,11 +45,13 @@ from photo_tagger.config import (
     DEFAULT_SIDECAR_MODE,
     DEFAULT_TEMPERATURE,
     DEFAULT_TIMEOUT_SECONDS,
+    DEFAULT_WORK_MINUTES,
     LogLevel,
     SidecarMode,
 )
 from photo_tagger.config_file import apply_overrides, find_config_file, load_config
 from photo_tagger.fields import ExtraFields, build_extra_fields
+from photo_tagger.pacing import MAX_BATTERY_FLOOR, SECONDS_PER_MINUTE, PacingPlan
 from photo_tagger.pipeline import ProcessingOptions
 
 # Runtime import (not type-only): cyclopts evaluates the Annotated[ProviderName, ...] field
@@ -58,6 +64,13 @@ from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 
 if TYPE_CHECKING:
     from photo_tagger.vocabulary import Vocabulary
+
+
+# Built-in defaults for the top-level (non-grouped) flags, shared by `main` and `load_defaults`.
+# They sit above the option groups because `WatchConfig` uses `DEFAULT_WORKERS` as a field default.
+DEFAULT_EXTENSIONS = "cr3,jpg"
+DEFAULT_WORKERS = 1
+DEFAULT_RECURSIVE = False
 
 
 @dataclass
@@ -677,10 +690,13 @@ class ArtifactConfig:
 @dataclass
 class WatchConfig:
     """
-    How often the ``watch`` command looks for photos, and how long it waits for each one.
+    How the ``watch`` command scans for photos, waits for each one, and works through a batch.
 
     Only the ``watch`` command takes these, and like the vocabulary build flags they have no entry
-    in ``_CONFIG_TABLES``: they belong to one command, not to a run.
+    in ``_CONFIG_TABLES``: ``interval`` and ``settle`` belong to one command, not to a run.
+    ``workers`` is the exception. It is the same knob ``tag`` takes, and it still reads its config
+    key from the file's top level, because config keys resolve by CLI option name rather than by
+    which group holds the field. It lives here so ``watch`` stays inside the parameter budget.
     """
 
     interval: Annotated[
@@ -702,6 +718,13 @@ class WatchConfig:
             ),
         ),
     ] = DEFAULT_SETTLE_SECONDS
+    workers: Annotated[
+        int,
+        Parameter(
+            name=("--workers", "-w"),
+            help="Photos to process concurrently per batch",
+        ),
+    ] = DEFAULT_WORKERS
 
 
 @dataclass
@@ -815,10 +838,78 @@ class TelemetryConfig:
     ] = True
 
 
-# Built-in defaults for the top-level (non-grouped) flags, shared by `main` and `load_defaults`.
-DEFAULT_EXTENSIONS = "cr3,jpg"
-DEFAULT_WORKERS = 1
-DEFAULT_RECURSIVE = False
+@dataclass
+class PacingConfig:
+    """
+    How hard a run is allowed to push the machine (see :mod:`photo_tagger.pacing`).
+
+    Everything here is off by default. A run that is not asked to slow down never does.
+    """
+
+    duty: Annotated[
+        int,
+        Parameter(
+            name=("--duty",),
+            validator=validators.Number(gte=1, lte=100),
+            help=(
+                "Percentage of the time the run may work, resting for the remainder. 100 (the "
+                "default) works flat out. Use it to keep the fans quiet, to leave the machine "
+                "usable, or to draw less power on average than the charger supplies"
+            ),
+        ),
+    ] = DEFAULT_DUTY_PERCENT
+    battery_floor: Annotated[
+        int,
+        Parameter(
+            name=("--battery-floor",),
+            validator=validators.Number(gte=0, lte=MAX_BATTERY_FLOOR),
+            help=(
+                "Battery percentage at which the run rests until the charge comes back. 0 never "
+                "watches the battery. Above 90 the run warns and carries on: a plugged-in laptop "
+                "is rarely brim full, so a floor up there rests after nearly every window. Only "
+                "ever rests while a charger is plugged in, since on battery power a rest "
+                "recharges nothing"
+            ),
+        ),
+    ] = DEFAULT_BATTERY_FLOOR
+    battery_resume: Annotated[
+        int,
+        Parameter(
+            name=("--battery-resume",),
+            validator=validators.Number(gte=0, lte=100),
+            help=(
+                "Battery percentage that ends a rest started by --battery-floor. Defaults to 15 "
+                "points above the floor"
+            ),
+        ),
+    ] = DEFAULT_BATTERY_RESUME
+    work_minutes: Annotated[
+        float,
+        Parameter(
+            name=("--work-minutes",),
+            validator=validators.Number(gt=0),
+            help=(
+                "Minutes of work between rests, for a run that --duty or --battery-floor has "
+                "asked to rest; on its own it changes nothing. A rest falls at the first photo "
+                "boundary after the window, never in the middle of a photo, and never after "
+                "every photo: short rests charge nothing and give a model server the chance to "
+                "unload"
+            ),
+        ),
+    ] = DEFAULT_WORK_MINUTES
+    max_pause_minutes: Annotated[
+        float,
+        Parameter(
+            name=("--max-pause-minutes",),
+            validator=validators.Number(gt=0),
+            help=(
+                "Longest a single rest may last, in minutes, for a run that --duty or "
+                "--battery-floor has asked to rest. Bounds the wait for a battery that is "
+                "charging slowly, and keeps the run under the idle timeout that makes a model "
+                "server unload its model"
+            ),
+        ),
+    ] = DEFAULT_MAX_PAUSE_MINUTES
 
 
 # The config-file tables and the option group each one feeds. Also drives the translation of
@@ -836,6 +927,7 @@ _CONFIG_TABLES: dict[str, type] = {
     "artifacts": ArtifactConfig,
     "filter": FilterConfig,
     "telemetry": TelemetryConfig,
+    "pacing": PacingConfig,
 }
 
 # Top-level config keys that are plain flags on `tag` (their config key equals the CLI name).
@@ -1031,6 +1123,22 @@ def to_processing_options(
     )
 
 
+def to_pacing_plan(config: PacingConfig) -> PacingPlan:
+    """
+    Translate the CLI's pacing group into the plan the pacer reads.
+
+    The flags are in minutes because that is how a person thinks about resting a laptop; the plan is
+    in seconds because that is how the code measures one.
+    """
+    return PacingPlan(
+        duty_percent=config.duty,
+        battery_floor=config.battery_floor,
+        battery_resume=config.battery_resume,
+        work_seconds=config.work_minutes * SECONDS_PER_MINUTE,
+        max_pause_seconds=config.max_pause_minutes * SECONDS_PER_MINUTE,
+    )
+
+
 def to_trim_rules(config: VocabularyBuildConfig) -> TrimRules:
     """
     Translate the CLI's vocabulary-build group into the builder's own rules.
@@ -1063,6 +1171,7 @@ class Defaults:
     artifacts: ArtifactConfig
     filter: FilterConfig
     telemetry: TelemetryConfig
+    pacing: PacingConfig
     extensions: str
     workers: int
     recursive: bool
@@ -1091,8 +1200,27 @@ def load_defaults(config: dict[str, Any] | None = None) -> Defaults:
         artifacts=apply_overrides(ArtifactConfig(), file_config.get("artifacts", {})),
         filter=apply_overrides(FilterConfig(), file_config.get("filter", {})),
         telemetry=apply_overrides(TelemetryConfig(), file_config.get("telemetry", {})),
+        pacing=apply_overrides(PacingConfig(), file_config.get("pacing", {})),
         extensions=file_config.get("extensions", DEFAULT_EXTENSIONS),
         workers=file_config.get("workers", DEFAULT_WORKERS),
         recursive=file_config.get("recursive", DEFAULT_RECURSIVE),
         exiftool_path=file_config.get("exiftool_path"),
     )
+
+
+def validate_pacing(_type: type, config: PacingConfig) -> None:
+    """
+    Refuse a resume level at or below the floor, rather than quietly ignoring it.
+
+    The pair only means anything as a band: resuming where the rest began would rest again a photo
+    later, so :class:`~photo_tagger.pacing.PacingPlan` falls back to a level above the floor. That
+    fallback is right for the flag nobody set, and wrong as an answer to two numbers somebody typed
+    on purpose, which is why this is a parse-time error rather than a silent correction.
+    """
+    if 0 < config.battery_resume <= config.battery_floor:
+        msg = (
+            f"--battery-resume {config.battery_resume} must be above --battery-floor "
+            f"{config.battery_floor}, or 0 to sit a margin above it. As written, the run would "
+            f"rest again as soon as it resumed."
+        )
+        raise ValueError(msg)

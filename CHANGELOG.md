@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- `--duty` and `--battery-floor` pace a long run: it works for a window, then rests, so the battery
+  charges back, the fans wind down, and a library of hundreds of thousands of photos no longer needs
+  the machine at full tilt for days. Rests happen at photo boundaries, are capped by
+  `--max-pause-minutes`, and the summary reports what they cost. Also a `[pacing]` config table.
+
 - `--artist` and `--copyright` write your credit and copyright notice alongside the AI fields, into
   EXIF, XMP, and IPTC, with `{year}` taken from each photo's own capture date. Also `--rights`,
   `--marked`, `--set TAG=VALUE`, `--no-write-copyright`, and a `[copyright]` config table.

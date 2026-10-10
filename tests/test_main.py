@@ -22,9 +22,10 @@ from photo_tagger import (
     main as main_module,
     telemetry,
 )
-from photo_tagger.cli_options import load_defaults
+from photo_tagger.cli_options import load_defaults, to_pacing_plan
 from photo_tagger.errors import BatchError, DiscoveryError, ProviderError
 from photo_tagger.metadata import SOURCE_SIDECAR, FieldReading, WriteTarget
+from photo_tagger.pacing import SECONDS_PER_MINUTE
 from photo_tagger.pipeline import BatchTotals, ImageOutcome
 from photo_tagger.undo import UndoError, UndoJournal
 from photo_tagger.vocabulary_build import KeywordCensus, TrimResult
@@ -67,6 +68,7 @@ def _patches(captured: dict[str, Any]) -> Any:  # noqa: ANN401 - context manager
         captured["progress"] = kwargs.get("progress")
         captured["session_plan"] = kwargs.get("session_plan")
         captured["journal"] = kwargs.get("journal")
+        captured["pacer"] = kwargs.get("pacer")
         return None
 
     return (
@@ -2182,6 +2184,20 @@ def test_watch_applies_the_batch_filters(tmp_path: Path) -> None:
     assert calls == []
 
 
+def test_watch_workers_flag_reaches_the_run(tmp_path: Path) -> None:
+    """--workers is read off the watch option group, so the flag must still land on the run."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "_watch_forever") as forever,
+    ):
+        _run_app(["watch", "--input", str(inbox), "--workers", "3"])
+
+    assert forever.call_args.kwargs["workers"] == 3  # noqa: PLR2004 - the value typed above.
+
+
 def test_watch_alerts_once_per_batch(tmp_path: Path) -> None:
     """A watch is the unattended case, so every batch it finishes gets its own notification."""
     inbox = tmp_path / "inbox"
@@ -2590,3 +2606,166 @@ def test_the_copyright_table_wins_over_a_stale_output_key() -> None:
     """The GUI saves [copyright]; an older [output] artist must not undo what it saved."""
     defaults = load_defaults({"output": {"artist": "Old"}, "copyright": {"artist": "Me"}})
     assert defaults.output.artist == "Me"
+
+
+_CONFIG_DUTY = 60
+_CONFIG_FLOOR = 25
+_CLI_DUTY = 80
+
+
+def test_cli_without_pacing_flags_builds_no_pacer(tmp_path: Path) -> None:
+    """An ordinary run is never paced, so nothing new can slow it down."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image)])
+
+    assert captured["pacer"] is None
+
+
+def test_cli_duty_flag_paces_the_run(tmp_path: Path) -> None:
+    """--duty reaches run_batch as a pacer carrying the plan the flags describe."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(
+            [
+                "--input",
+                str(image),
+                "--duty",
+                str(_CLI_DUTY),
+                "--work-minutes",
+                "5",
+                "--max-pause-minutes",
+                "3",
+            ],
+        )
+
+    pacer = captured["pacer"]
+    assert pacer is not None
+    assert pacer.plan.duty_percent == _CLI_DUTY
+    assert pacer.plan.work_seconds == 5 * SECONDS_PER_MINUTE
+    assert pacer.plan.max_pause_seconds == 3 * SECONDS_PER_MINUTE
+
+
+def test_cli_battery_floor_alone_paces_the_run(tmp_path: Path) -> None:
+    """Watching the battery is reason enough to build a pacer, with no duty cycle at all."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--battery-floor", str(_CONFIG_FLOOR)])
+
+    pacer = captured["pacer"]
+    assert pacer is not None
+    assert pacer.plan.battery_floor == _CONFIG_FLOOR
+
+
+def test_pacing_reads_the_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A [pacing] table paces every run without the flags being typed each time."""
+    _point_config_at(
+        tmp_path,
+        monkeypatch,
+        f"[pacing]\nduty = {_CONFIG_DUTY}\nbattery_floor = {_CONFIG_FLOOR}\n",
+    )
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image)])
+
+    pacer = captured["pacer"]
+    assert pacer is not None
+    assert pacer.plan.duty_percent == _CONFIG_DUTY
+    assert pacer.plan.battery_floor == _CONFIG_FLOOR
+
+
+def test_pacing_cli_flag_wins_over_the_config_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typed --duty overrides the configured one, and leaves its siblings alone."""
+    _point_config_at(
+        tmp_path,
+        monkeypatch,
+        f"[pacing]\nduty = {_CONFIG_DUTY}\nbattery_floor = {_CONFIG_FLOOR}\n",
+    )
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--duty", str(_CLI_DUTY)])
+
+    pacer = captured["pacer"]
+    assert pacer is not None
+    assert pacer.plan.duty_percent == _CLI_DUTY
+    assert pacer.plan.battery_floor == _CONFIG_FLOOR
+
+
+def test_pacing_rejects_an_impossible_duty(tmp_path: Path) -> None:
+    """A duty cycle outside 1-100 fails at parse time instead of resting forever."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.app(["--input", str(image), "--duty", "0"])
+
+    assert exit_info.value.code != 0
+
+
+def test_load_defaults_exposes_the_pacing_group() -> None:
+    """The GUI path resolves [pacing] too, since it never parses a command line."""
+    defaults = load_defaults({"pacing": {"duty": _CONFIG_DUTY}})
+    assert to_pacing_plan(defaults.pacing).duty_percent == _CONFIG_DUTY
+
+
+def test_pacing_rejects_a_resume_level_below_the_floor(tmp_path: Path) -> None:
+    """The pair only means something as a band, so a contradictory one fails at parse time."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.app(
+            ["--input", str(image), "--battery-floor", "30", "--battery-resume", "20"],
+        )
+
+    assert exit_info.value.code != 0
+
+
+def test_pacing_accepts_zero_as_a_derived_resume_level(tmp_path: Path) -> None:
+    """Zero is not a contradiction: it asks for a level a margin above the floor."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--battery-floor", "30", "--battery-resume", "0"])
+
+    assert captured["pacer"].plan.resume_percent == 45  # noqa: PLR2004 - floor plus the margin.
+
+
+def test_pacing_keeps_a_floor_near_full_and_says_it_is_a_poor_idea(tmp_path: Path) -> None:
+    """The run is paced as asked; the warning is in the log, not in a refusal."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--battery-floor", "99"])
+
+    assert captured["pacer"].plan.battery_floor == 99  # noqa: PLR2004 - exactly what was asked.
+
+
+def test_pacing_rejects_a_floor_with_no_room_for_a_resume_level(tmp_path: Path) -> None:
+    """A floor at full leaves the resume level nowhere to sit, so it is refused."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.app(["--input", str(image), "--battery-floor", "100"])
+
+    assert exit_info.value.code != 0

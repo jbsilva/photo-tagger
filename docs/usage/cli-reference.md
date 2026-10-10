@@ -282,6 +282,40 @@ $ photo-tagger show -i IMG_0001.jpg
 `show` also takes `-i/--input`, `--ext`, and `-r/--recursive`. With `--json` each photo is one line,
 so the output pipes straight into `jq`.
 
+## Pacing
+
+A vision model at full tilt can draw more power than a laptop charger supplies, so a run over a
+large library discharges the battery even while plugged in. It also runs the machine hot and loud
+and leaves little of it for anything else. Pacing fixes all three by spending part of the time not
+working: the battery charges back, the fans wind down, and the average draw lands under the supply.
+
+Everything here is off unless you ask for it: without `--duty` or `--battery-floor` no pacer is
+built at all and a run works flat out, so `--work-minutes` and `--max-pause-minutes` describe the
+shape of a rest rather than causing one. A rest falls at a photo boundary, after a whole work
+window, never after each photo: a rest between two photos is too short to charge anything and gives
+the model server the chance to unload the model. Every rest is capped for the same reason.
+
+| Flag                        | Default | Env var             | Description                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------- | ------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--duty` N                  | `100`   | `DUTY_PERCENT`      | Percentage of the time the run may work, resting for the remainder. `100` works flat out. `70` rests roughly four minutes per ten-minute window.                                                                                                                                                                                                      |
+| `--battery-floor` N         | `0`     | `BATTERY_FLOOR`     | Rest until the charge recovers whenever the battery falls to N percent. `0` never looks at the battery. Above 90 the run warns and carries on: a plugged-in laptop is rarely brim full, so a floor up there rests after nearly every window. 99 is the ceiling, since the resume level has to fit above it. Only rests while a charger is plugged in. |
+| `--battery-resume` N        | `0`     | `BATTERY_RESUME`    | Charge that ends a rest started by `--battery-floor`, and must be above it. `0` sits 15 points above the floor.                                                                                                                                                                                                                                       |
+| `--work-minutes` FLOAT      | `10.0`  | `WORK_MINUTES`      | Minutes of work between rests, for a run that is already resting. Changes nothing on its own.                                                                                                                                                                                                                                                         |
+| `--max-pause-minutes` FLOAT | `15.0`  | `MAX_PAUSE_MINUTES` | Longest a single rest may last. Bounds the wait for a slow charger. Changes nothing on its own.                                                                                                                                                                                                                                                       |
+
+`--battery-floor` needs no wattage numbers and adapts to screen brightness and whatever else the
+machine is doing. It reads the charge from `pmset` on macOS, from `/sys/class/power_supply` on
+Linux, and from `GetSystemPowerStatus` on Windows. A machine with no battery, or one the reading
+fails on, is paced by `--duty` alone.
+
+A paced run reports what the rests cost: `rests_taken` and `rested_seconds` appear in the summary
+file written by `--summary-file`, and in the log as `pacing_summary`.
+
+```bash
+# Tag a large library overnight without flattening the battery.
+photo-tagger -i ~/Pictures/Archive -r --skip-tagged --battery-floor 30 --duty 70
+```
+
 ## Filter
 
 Filters narrow the resolved batch before any model call. Timestamps use ISO 8601, such as

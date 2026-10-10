@@ -44,6 +44,14 @@ These variables set defaults. Any matching CLI flag still overrides them. See
 | `JPEG_DIMENSIONS`     | `1280`                      | Max dimension (px) of the JPEG sent to the model.                                  |
 | `JPEG_QUALITY`        | `80`                        | JPEG quality (1-100) of the image sent to the model.                               |
 | `RETRIES`             | `5`                         | Retries when model output fails schema validation.                                 |
+| `DUTY_PERCENT`        | `100`                       | Default of `--duty` (1-100).                                                       |
+| `BATTERY_FLOOR`       | `0`                         | Default of `--battery-floor` (0-99).                                               |
+| `BATTERY_RESUME`      | `0`                         | Default of `--battery-resume` (0-100).                                             |
+| `WORK_MINUTES`        | `10`                        | Default of `--work-minutes`.                                                       |
+| `MAX_PAUSE_MINUTES`   | `15`                        | Default of `--max-pause-minutes`.                                                  |
+
+A value that is not a number, or is outside its range, is ignored with a warning, and the built-in
+default applies.
 
 The standard OpenTelemetry variables (`OTEL_EXPORTER_OTLP_ENDPOINT`,
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`) are honored
@@ -136,6 +144,13 @@ notify_sound = false  # Play a sound with it (implies notify).
 skip_tagged = false   # Skip files that already have keywords, a title, or a description.
 # newer_than = "2024-01-01"        # Drop files whose mtime is on/before this timestamp.
 # older_than = "2024-01-01T14:30"  # Drop files whose mtime is on/after this timestamp.
+
+[pacing]
+duty = 100             # Percent of the time the run may work; it rests for the remainder.
+battery_floor = 0      # Rest below this charge, while plugged in; 0 never watches the battery.
+battery_resume = 0     # Charge that ends the rest, above the floor; 0 means floor plus 15.
+work_minutes = 10.0    # Work this long between rests.
+max_pause_minutes = 15.0  # Longest a single rest may last.
 
 [artifacts]
 # prompt_file = "prompt.txt"   # Replace the default user prompt with this file's contents.
