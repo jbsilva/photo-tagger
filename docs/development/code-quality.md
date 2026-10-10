@@ -53,14 +53,15 @@ uv run pycroscope --config-file pyproject.toml
     auto-discover the configuration file. Without this flag, it runs with the wrong configuration. The
     pre-commit hook already passes this flag for you.
 
-!!! note "The GUI module is a static-analysis exception"
+!!! note "The GUI package is a static-analysis exception"
 
-    `src/photo_tagger/gui.py` is the one file excluded from the type checker, the analyzer, and
+    `src/photo_tagger/gui/` is the one package excluded from the type checker, the analyzer, and
     coverage. PySide6 builds its widget attributes at runtime through `shiboken`. As a result, the
     static tools report false `undefined_attribute` errors on every `.addWidget`, `.clicked`, and the
-    like. For this reason, the project excludes the file from `zuban` (with a `# mypy: ignore-errors`
-    header). It also excludes the file from `pycroscope` (with a `[[tool.pycroscope.overrides]]` entry)
-    and from coverage (with `[tool.coverage.run].omit`).
+    like. For this reason, each module in the package starts with two headers. The
+    `# mypy: ignore-errors` header excludes the module from `zuban`, and the `# static analysis: ignore`
+    header excludes it from `pycroscope`. `[tool.coverage.run].omit` excludes the whole package from
+    coverage.
 
     The testable, Qt-free logic lives in `gui_state.py`. The type checker, the analyzer, and coverage
     treat that file normally. This is the documented exception to the "fix, do not silence" rule below.

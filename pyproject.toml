@@ -335,9 +335,9 @@ missing_parameter_annotation = false
 suggested_parameter_type = false
 suggested_return_type = false
 
-# gui.py (the Qt shell) is excluded from pycroscope wholesale via a file-level
-# `# static analysis: ignore` header in the module itself, because the lint job does not install
-# the [gui] extra and pycroscope cannot import PySide6. See the note at the top of gui.py.
+# The gui package (the Qt shell) is excluded from pycroscope wholesale via a file-level
+# `# static analysis: ignore` header in each of its modules, because the lint job does not install
+# the [gui] extra and pycroscope cannot import PySide6. See the note in gui/__init__.py.
 
 [tool.bandit]
 # packaging/ and telemetry/ are dev tooling (like tests/), not shipped app code. packaging/'s only
@@ -377,6 +377,6 @@ filterwarnings = ["error"]
 # The PySide6 desktop window and its Qt event loop cannot run under the headless
 # CI suite (no display, and the [gui] extra is intentionally not installed there).
 # Its testable, Qt-free logic lives in gui_state.py, which is covered normally;
-# gui.py is the widget/event-loop shell, exercised manually and by the
+# the gui package is the widget/event-loop shell, exercised manually and by the
 # offscreen-guarded tests in test_gui.py when PySide6 is present.
-omit = ["src/photo_tagger/gui.py"]
+omit = ["src/photo_tagger/gui/*"]

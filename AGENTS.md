@@ -49,11 +49,13 @@ module owns one part of that pipeline:
   `diagnostics.py`, `programs.py`: small helpers with one purpose each. `programs.py` finds every
   helper program (ExifTool too) by absolute path, never in the current directory. `errors.py`: the
   hierarchy of domain exceptions.
-- `gui.py`: the optional PySide6 desktop frontend (the `photo-tagger gui` command), a thin shell
-  over `run_batch`. `gui_state.py` holds its Qt-free logic, with unit tests. `gui_usage.py` holds
-  its Qt-free usage tracking for telemetry (runs, sessions, busy and idle time, edits before a
-  save). The GUI only adds to the pipeline: no pipeline code knows about Qt. PySide6 is in the
-  `[gui]` extra, and the code imports it lazily.
+- `gui/`: the optional PySide6 desktop frontend (the `photo-tagger gui` command), a thin shell over
+  `run_batch`. `gui/main_window.py` holds the window, `gui/workers.py` holds the background jobs,
+  and `gui/app.py` holds `launch`. The other modules hold the parts the window is built from.
+  `gui_state.py` holds its Qt-free logic, with unit tests. `gui_usage.py` holds its Qt-free usage
+  tracking for telemetry (runs, sessions, busy and idle time, edits before a save). The GUI only
+  adds to the pipeline: no pipeline code knows about Qt. PySide6 is in the `[gui]` extra, and the
+  code imports it lazily.
 - `telemetry/` (outside the package): the collector. It holds the Cloudflare Worker, its D1
   migrations, the marimo dashboard, and the OpenTofu configuration for the Cloudflare resources in
   `telemetry/infra/`. See `telemetry/README.md`.
@@ -90,14 +92,16 @@ people maintain by hand agree with it.
   it as more codes and reports rule S7632. Example: `# noqa: PLR0913 - every kwarg is one knob.`
 
 - GUI code has special rules. Put testable GUI logic in `gui_state.py` (plain Python, with normal
-  coverage). `gui.py` is the Qt shell, and three tools leave it out:
+  coverage). The `gui/` package is the Qt shell, and three tools leave it out:
 
   - Coverage leaves it out through `[tool.coverage.run].omit` and `sonar.coverage.exclusions`. Thus
     SonarQube does not count its lines (untested in CI) against the coverage of new code.
-  - zuban leaves it out through its `# mypy: ignore-errors` header.
-  - pycroscope leaves it out through a `# static analysis: ignore` header at the top of the file.
+  - zuban leaves it out through the `# mypy: ignore-errors` header of each module.
+  - pycroscope leaves it out through a `# static analysis: ignore` header at the top of each module.
     pycroscope cannot import PySide6 in the lint job, which does not install the `[gui]` extra.
     Also, shiboken makes Qt attributes at runtime, so static tools misread the Qt shell in any case.
+
+  A new module in `gui/` needs both headers. Copy them from an existing module.
 
   `tests/test_gui.py` has the same `# mypy: ignore-errors` header. It imports PySide6, which has no
   stubs and is not installed in the lint job. Without the header, zuban reports only an unresolved

@@ -9,8 +9,9 @@
 # ///
 # mypy: ignore-errors
 # The dependencies above live only in marimo's --sandbox venv, never in the project venv, so zuban
-# cannot resolve them here (same escape hatch as gui.py). Altair 6 is required: 5.x fails to import
-# on Python 3.14 (it declares `closed=True` TypedDicts that 3.14's stdlib typing does not accept).
+# cannot resolve them here (same escape hatch as the gui package). Altair 6 is required: 5.x fails
+# to import on Python 3.14 (it declares `closed=True` TypedDicts that 3.14's stdlib typing does not
+# accept).
 """
 Marimo dashboard over the photo-tagger telemetry events.
 

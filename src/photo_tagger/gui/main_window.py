@@ -1,61 +1,27 @@
 # mypy: ignore-errors
-# The lint/pycroscope environment does not install the [gui] extra, so pycroscope cannot import
-# this Qt shell (PySide6 is absent) and would also misread shiboken's runtime-generated attributes.
-# Exclude the whole module from pycroscope, the same way it is excluded from coverage and zuban;
-# the Qt-free logic that is worth analyzing lives in gui_state.py.
 # static analysis: ignore
+# The two lines above keep zuban and pycroscope out; see the note in gui/__init__.py.
 """
-PySide6 desktop frontend for photo-tagger.
+The main window, laid out along the add -> generate -> review -> save workflow.
 
-A review-before-write workflow over the same pipeline the CLI uses:
-
-1. Drag photos or folders onto the window (or use *Add files/folder*). They appear in a
-   checkable, nested tree on the left; uncheck or remove anything you do not want.
-2. *Generate* runs the vision model on the checked photos on a background thread,
-   streaming each proposal back through Qt signals (no pipeline code is Qt-aware).
-3. Click a photo to see its preview, its existing title/description/keywords, and the
-   proposed values in editable fields, then *Save* writes them with ExifTool.
-
-Requires the optional ``[gui]`` extra (``pip install 'photo-tagger[gui]'``). The ``photo-tagger
-gui`` command imports this module lazily, so the base CLI never depends on Qt. The Qt-free logic
-lives in :mod:`photo_tagger.gui_state`; this file is the widget and event-loop shell and is excluded
-from coverage and the static analyzers.
+It owns the photo list and wires the widgets, the dialogs, and the background workers together.
 """
 
-import os
 import subprocess  # nosec B404 - only used to reveal a photo in the OS file browser
 import sys
 import time
 from datetime import UTC, datetime
 from functools import partial
-from itertools import islice
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from loguru import logger
 from PySide6 import __version__ as pyside_version
-from PySide6.QtCore import (
-    QEvent,
-    QLibraryInfo,
-    QLocale,
-    QObject,
-    QPoint,
-    QRect,
-    QSignalBlocker,
-    QSize,
-    Qt,
-    QThread,
-    QTimer,
-    QTranslator,
-    QUrl,
-    Signal,
-    qVersion,
-)
+from PySide6.QtCore import QRect, QSignalBlocker, QSize, Qt, QThread, QTimer, QUrl, qVersion
 
 # QCloseEvent, QDragEnterEvent and QDropEvent are used only in annotations, but they are imported
 # here at runtime on purpose: see the note above closeEvent. Moving them into the TYPE_CHECKING
-# block below reopens a PySide crash. The viewer's QKeyEvent and QMouseEvent are here for the same
-# reason: they annotate Qt overrides Qt itself calls.
+# block below reopens a PySide crash.
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -66,9 +32,7 @@ from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
     QIcon,
-    QKeyEvent,
     QKeySequence,
-    QMouseEvent,
     QPainter,
     QPixmap,
     QShortcut,
@@ -112,14 +76,6 @@ from PySide6.QtWidgets import (
 )
 
 from photo_tagger import __version__, i18n, telemetry
-from photo_tagger.ai import analyze_image_with_ai, create_agent
-from photo_tagger.cache import (
-    InferenceCache,
-    content_cache_key,
-    open_cache,
-    safe_cache_get,
-    safe_cache_put,
-)
 from photo_tagger.cli_options import (
     OutputConfig,
     known_config_keys,
@@ -128,13 +84,7 @@ from photo_tagger.cli_options import (
     resolve_sidecar_mode,
     to_pacing_plan,
 )
-from photo_tagger.config import (
-    DEFAULT_OUTPUT_LANGUAGE,
-    DEFAULT_SIDECAR_MODE,
-    DEFAULT_USER_PROMPT,
-    SidecarMode,
-    build_repair_prompt,
-)
+from photo_tagger.config import DEFAULT_OUTPUT_LANGUAGE, DEFAULT_SIDECAR_MODE, SidecarMode
 from photo_tagger.config_file import (
     config_file_kind,
     find_config_file,
@@ -144,12 +94,46 @@ from photo_tagger.config_file import (
 from photo_tagger.csv_report import write_report
 from photo_tagger.diagnostics import run_checks
 from photo_tagger.discovery import load_skip_list, skip_list_matches
-from photo_tagger.errors import (
-    ConfigFileError,
-    DiscoveryError,
-    ObservabilityError,
-    PhotoTaggerError,
-    ProviderError,
+from photo_tagger.errors import ConfigFileError, DiscoveryError, ProviderError
+from photo_tagger.gui.common import (
+    CHOOSE_LABEL,
+    CLOSE_LABEL,
+    COL_NAME,
+    COL_STATUS,
+    COL_TAGGED,
+    COL_TYPE,
+    CONFIG_SAVE_ERROR_TITLE,
+    DEFAULT_CACHE_FILE,
+    DEFAULT_VOCABULARY_FILE,
+    DIR_MARK,
+    DOCS_URL,
+    IS_DIR_ROLE,
+    LOG_FOLDER,
+    NONE_LABEL,
+    PATH_ROLE,
+    PICK_A_FIELD,
+    STATUS_RANK_ROLE,
+)
+from photo_tagger.gui.style import app_icon, svg_icon
+from photo_tagger.gui.viewer import ImageViewerDialog
+from photo_tagger.gui.widgets import (
+    ClickableLabel,
+    InputWatcher,
+    SortableTreeItem,
+    check_state,
+    fit_combo,
+    fit_text_height,
+    readonly_box,
+    selection_modifiers_active,
+)
+from photo_tagger.gui.workers import (
+    GenerateWorker,
+    HarmonizeWorker,
+    MetadataScanWorker,
+    SaveWorker,
+    ThumbnailWorker,
+    VocabularyBuildWorker,
+    WatchWorker,
 )
 from photo_tagger.gui_state import (
     ADDED,
@@ -202,10 +186,8 @@ from photo_tagger.gui_state import (
     SelectionChange,
     TaggedCriterion,
     WatchSettings,
-    anchored_scroll,
     apply_proposal,
     apply_selection,
-    apply_vocabulary,
     apply_write_result,
     ascii_warning,
     build_copyright_fields,
@@ -214,13 +196,11 @@ from photo_tagger.gui_state import (
     caption_source_note,
     capture_year,
     check_results_html,
-    clamp_zoom,
     config_text_with_language,
     config_text_with_output_language,
     config_toml_text,
     copyright_summary,
     deselect_paths,
-    ensure_path_dirs,
     expand_inputs,
     extension_counts,
     extra_pass_status,
@@ -229,12 +209,9 @@ from photo_tagger.gui_state import (
     file_dialog_name_filters,
     file_type_label,
     filter_photos,
-    fit_zoom,
     flat_labels,
     foreign_terms_note,
     format_existing_keywords,
-    gui_cache_namespace,
-    harmonize_sessions,
     harmonize_summary,
     hierarchy_preview,
     journal_label,
@@ -247,14 +224,12 @@ from photo_tagger.gui_state import (
     load_sidecar_overrides,
     load_vocabulary_file,
     location_crumb,
-    login_shell_path,
     mark_mixed_script,
     matches_extension,
     matches_name_pattern,
     merged_config_text,
     navigation_shortcuts,
     new_paths,
-    pacing_status_text,
     pacing_summary,
     parse_keyword_lines,
     paths_under,
@@ -280,7 +255,6 @@ from photo_tagger.gui_state import (
     source_label,
     status_sort_rank,
     status_summary,
-    step_zoom,
     tagged_legend,
     tagged_summary,
     tagged_tooltip,
@@ -294,11 +268,9 @@ from photo_tagger.gui_state import (
     watch_status_text,
     wrap_tooltip,
     writes_nothing,
-    zoom_label,
 )
 from photo_tagger.gui_usage import (
     GUI_BASELINE,
-    GUI_GENERATE_RETRIES,
     JOB_GENERATE,
     JOB_SAVE,
     TRIGGER_BATCH,
@@ -316,17 +288,11 @@ from photo_tagger.gui_usage import (
 )
 from photo_tagger.i18n import _, gettext_noop, ngettext
 from photo_tagger.image_io import prepare_image_for_agent
-from photo_tagger.logging_setup import setup_logging
 from photo_tagger.metadata import (
     FIELD_DESCRIPTION,
     FIELD_KEYWORDS,
     FIELD_TITLE,
-    build_contextual_prompt,
     first_caption,
-    iter_field_presence,
-    managed_helper,
-    prompt_with_hint,
-    read_caption,
     read_caption_values,
     read_field_sources,
     read_image_context,
@@ -334,117 +300,48 @@ from photo_tagger.metadata import (
     write_metadata_everywhere,
 )
 from photo_tagger.notify import APP_NAME, notify
-from photo_tagger.observability import configure_tracing
-from photo_tagger.pacing import (
-    MAX_BATTERY_FLOOR,
-    SECONDS_PER_MINUTE,
-    Pacer,
-    PacingPlan,
-    build_pacer,
-)
-from photo_tagger.pipeline import FAILURE_OTHER, classify_failure, failure_type
+from photo_tagger.pacing import MAX_BATTERY_FLOOR, SECONDS_PER_MINUTE, PacingPlan
+from photo_tagger.pipeline import FAILURE_OTHER
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
-from photo_tagger.script_guard import find_in_result
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
-from photo_tagger.undo import (
-    UndoError,
-    list_journals,
-    open_journal,
-    read_journal,
-    undo_run,
-)
-from photo_tagger.vocabulary import folds_plurals, prompt_with_vocabulary
-from photo_tagger.vocabulary_build import (
-    KeywordCensus,
-    TrimRules,
-    census_from_export,
-    census_from_photos,
-    render_drop_report,
-    render_vocabulary,
-    trim,
-    vocabulary_header,
-)
-from photo_tagger.vocabulary_organize import organize
-from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS, watch_batches
+from photo_tagger.undo import UndoError, list_journals, open_journal, read_journal, undo_run
+from photo_tagger.vocabulary import folds_plurals
+from photo_tagger.vocabulary_build import TrimRules
+from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 
 
 if TYPE_CHECKING:
     # Annotation-only on Python 3.14 (lazy), so no runtime import is needed.
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable
 
-    from exiftool import ExifToolHelper
-    from pydantic_ai import BinaryContent
-
-    from photo_tagger.models import InferenceResult
     from photo_tagger.undo import UndoJournal, UndoResult, WriteRecord
     from photo_tagger.vocabulary import Vocabulary
-    from photo_tagger.vocabulary_build import TrimResult
-    from photo_tagger.vocabulary_organize import OrganizeStats
 
 
-_RESOURCES = Path(__file__).parent / "resources"
-# The folder for everything the window writes for itself: the logs, the result cache, and the
-# vocabulary file the builder offers to create.
-_APP_DIR = Path.home() / ".photo-tagger"
-# A stable, cwd-independent place for the GUI's logs. The CLI defaults to ./logs, but a windowed
-# app has no meaningful working directory (it may be launched from Finder with cwd "/"), so the
-# logs live under the user's home where the "Open logs" button can always find them.
-_LOG_FOLDER = _APP_DIR / "logs"
 # The on-screen preview in the detail pane. Not what the model sees: that is
 # [inference] jpeg_dimensions, read into MainWindow._model_image_size.
 _PREVIEW_MAX = 640
 # What the full-size viewer decodes to. Large enough that zooming in shows real detail (more than
 # a 5K display can put up at once), small enough that a RAW file still opens in about a second.
 _VIEWER_MAX = 3200
-_THUMB_MAX = 200  # pixels for the grid thumbnails the model never sees
 _THUMB_SIZE = 160  # icon box in the grid
+
 # How long a run that writes by itself waits before re-running the photos it failed on. The CLI
 # pauses before its own retry pass for the same reason (`_RETRY_PASS_DELAY_SECONDS` in pipeline):
 # a first-pass failure usually means the model server is overloaded or mid-restart, and asking
 # again straight away just retries into the same outage.
 _RETRY_PASS_DELAY_MS = 5000
+
 # How often the elapsed/remaining readout is repainted during a run. Half a second reads as a live
 # clock without being busywork.
 _TIMING_TICK_MS = 500
-_PATH_ROLE = Qt.ItemDataRole.UserRole
-_IS_DIR_ROLE = Qt.ItemDataRole.UserRole + 1
-_STATUS_RANK_ROLE = Qt.ItemDataRole.UserRole + 2  # lifecycle rank for sorting the Status column
-
-# Tree columns, in display order.
-_COL_NAME = 0
-_COL_TYPE = 1
-_COL_STATUS = 2
-_COL_TAGGED = 3
 
 # Status colors: failures pop red, saved photos settle green; other states use the palette.
 _STATUS_COLOR = {FAILED: QColor("#f85149"), SAVED: QColor("#3fb950")}
 
-# The GUI cache lives next to the GUI logs unless the config names a cache_file. Sharing the
-# CLI's default would be wrong: the CLI has no default cache, it only caches when asked.
-_DEFAULT_CACHE_FILE = _APP_DIR / "cache.sqlite"
-# Where the vocabulary builder offers to write, next to the logs and the cache. It is only the
-# pre-filled suggestion; the dialog's Choose button puts the file wherever the user keeps theirs.
-_DEFAULT_VOCABULARY_FILE = _APP_DIR / "vocabulary.txt"
-
-_DOCS_URL = "https://jbsilva.github.io/photo-tagger/"
 _PAGE_EMPTY = 0  # right-pane stack index for the idle "add or pick a photo" placeholder
 _PAGE_DETAIL = 1  # right-pane stack index for one photo's detail
 _PAGE_GRID = 2  # right-pane stack index for a folder's thumbnail grid
-_DIR_MARK = "dir"  # truthy sentinel stored on folder tree items; files leave the role unset
-# Placeholder shown when a photo has no existing title/description/keywords. Module-level strings
-# use gettext_noop (extraction marker); their use sites translate with _() at display time.
-_NONE = gettext_noop("(none)")
-
-# Title of the warning box shown when persisting a setting to the config file fails.
-_CONFIG_SAVE_ERROR_TITLE = gettext_noop("Could not save the config file")
-
-# Shown when a save is asked for while the save options would write nothing at all.
-_PICK_A_FIELD = gettext_noop("Pick at least one field to write (Title, Description, or Keywords).")
-
-# Button labels every dialog uses. Named once so the catalogs hold one entry each and the dialogs
-# cannot drift apart; the use sites translate them with _() like the other module-level strings.
-_CHOOSE = gettext_noop("Choose...")
-_CLOSE = gettext_noop("Close")
 
 # Right-pane placeholder copy. It adapts to the list: a getting-started nudge while empty, and a
 # "pick a photo" nudge once photos are loaded but none is open. This is what fills the right pane
@@ -527,6 +424,7 @@ _SEARCH_DEBOUNCE_MS = 150
 # inventing our own.
 VIEW_TREE = "tree"
 VIEW_LIST = "list"
+
 _VIEW_MODES: tuple[tuple[str, str, str], ...] = (
     (
         VIEW_TREE,
@@ -674,618 +572,6 @@ _WRITE_TO_SUMMARIES: dict[SidecarMode, Callable[[], str]] = {
     "both": lambda: _("into the image file and an XMP sidecar"),
 }
 
-# Theme-agnostic polish: only spacing/rounding plus the brand accent on primary actions and
-# the preview area. Colors for text and input backgrounds are left to the OS palette, so the
-# window stays readable in both light and dark mode (hardcoding a light background would put
-# the palette's light text on white in dark mode).
-_STYLESHEET = """
-QWidget { font-size: 13px; }
-QPushButton {
-    padding: 6px 12px; border-radius: 6px;
-    border: 1px solid rgba(130, 130, 140, 60%);
-    background: rgba(130, 130, 140, 14%);
-}
-QPushButton:hover { background: rgba(130, 130, 140, 26%); }
-QPushButton:pressed { background: rgba(130, 130, 140, 36%); }
-QPushButton:disabled { color: rgba(130, 130, 140, 70%); border-color: rgba(130, 130, 140, 25%); }
-QPushButton#primary {
-    background: #6366f1; color: white; border: 1px solid #6366f1; font-weight: 600;
-}
-QPushButton#primary:hover { background: #4f46e5; border-color: #4f46e5; }
-QPushButton#primary:disabled {
-    background: #9aa0e8; border-color: #9aa0e8; color: #eaeaff;
-}
-QLineEdit, QPlainTextEdit, QComboBox { padding: 4px 6px; border-radius: 5px; }
-/* Scroll-area edits keep their native square frame unless given an explicit border, which is
-   why only the QLineEdit fields looked rounded. */
-QPlainTextEdit, QTextEdit {
-    border: 1px solid rgba(130, 130, 140, 35%); border-radius: 5px; padding: 4px 6px;
-}
-QPlainTextEdit#tree { font-family: "SF Mono", Menlo, Consolas, monospace; }
-QComboBox::drop-down {
-    subcontrol-origin: padding; subcontrol-position: center right;
-    width: 22px; border: none; background: transparent;
-}
-QComboBox::down-arrow { image: url("@CHEVRON@"); width: 10px; height: 6px; }
-QPushButton::menu-indicator {
-    image: url("@CHEVRON@"); width: 10px; height: 6px;
-    subcontrol-origin: padding; subcontrol-position: center right; right: 10px;
-}
-QPushButton#menubutton { padding-right: 28px; }
-QTreeWidget::item { padding: 2px; }
-QToolButton { border: none; background: transparent; padding: 4px; font-weight: 600; }
-QToolButton:hover { color: #6366f1; }
-QToolButton#sortdir {
-    border: 1px solid rgba(130, 130, 140, 60%); border-radius: 6px; padding: 4px 10px;
-}
-QToolButton#sortdir:hover { background: rgba(130, 130, 140, 26%); }
-QToolButton#sortdir:checked { background: rgba(99, 102, 241, 22%); border-color: #6366f1; }
-/* The view-mode button: a bare glyph, no frame, so the choice stays quiet next to the labelled
-   buttons it shares the row with. */
-QToolButton#viewmode { font-size: 15px; padding: 4px 8px; color: rgba(130, 130, 140, 90%); }
-QToolButton#viewmode:hover { color: #6366f1; }
-QToolButton#navbtn {
-    border: 1px solid rgba(130, 130, 140, 60%); border-radius: 6px; padding: 2px 10px;
-}
-QToolButton#navbtn:hover { background: rgba(130, 130, 140, 26%); }
-QToolButton#navbtn:disabled {
-    color: rgba(130, 130, 140, 45%); border-color: rgba(130, 130, 140, 25%);
-}
-QToolButton#add, QToolButton#split {
-    padding: 6px 26px 6px 12px; border-radius: 6px; font-weight: 400;
-    border: 1px solid rgba(130, 130, 140, 60%);
-    background: rgba(130, 130, 140, 14%);
-}
-QToolButton#add:hover, QToolButton#split:hover { background: rgba(130, 130, 140, 26%); }
-QToolButton#split:disabled { color: rgba(130, 130, 140, 70%); }
-QToolButton#add::menu-button, QToolButton#split::menu-button {
-    border: none; width: 22px;
-    border-left: 1px solid rgba(130, 130, 140, 45%);
-    margin-top: 6px; margin-bottom: 6px;
-}
-QToolButton#add::menu-arrow, QToolButton#split::menu-arrow {
-    image: url("@CHEVRON@"); width: 10px; height: 6px;
-}
-QToolButton#primarysplit {
-    padding: 6px 26px 6px 12px; border-radius: 6px; font-weight: 600;
-    background: #6366f1; color: white; border: 1px solid #6366f1;
-}
-QToolButton#primarysplit:hover { background: #4f46e5; border-color: #4f46e5; }
-QToolButton#primarysplit:disabled {
-    background: #9aa0e8; border-color: #9aa0e8; color: #eaeaff;
-}
-QToolButton#primarysplit::menu-button {
-    border: none; width: 22px;
-    border-left: 1px solid rgba(255, 255, 255, 40%);
-    margin-top: 6px; margin-bottom: 6px;
-}
-QToolButton#primarysplit::menu-arrow {
-    image: url("@CHEVRONLIGHT@"); width: 10px; height: 6px;
-}
-QProgressBar {
-    border: 1px solid rgba(130, 130, 140, 60%); border-radius: 5px; text-align: center;
-}
-QProgressBar::chunk { background: #6366f1; border-radius: 4px; }
-QLabel#preview { background: #1f1f24; border-radius: 8px; color: #9a9aa5; }
-/* The full-size viewer: a dark, frameless canvas, so nothing competes with the photo. */
-QScrollArea#viewer { background: #1f1f24; border: none; }
-QScrollArea#viewer > QWidget > QWidget { background: #1f1f24; }
-QLabel#hint, QLabel#status, QLabel#timing { color: #8a8a8a; }
-QLabel#crumb { color: #8a8a8a; font-weight: 600; }
-QLabel#empty { color: #8a8a8a; font-size: 15px; }
-QLabel#section { font-weight: 600; }
-QLabel#error {
-    background: rgba(248, 81, 73, 18%); color: #f85149;
-    border: 1px solid rgba(248, 81, 73, 45%); border-radius: 6px; padding: 8px;
-}
-/* Amber, not red: the text is usable, it just deserves a read before it is saved. */
-QLabel#warning { color: #d29922; }
-"""
-
-
-def _stylesheet() -> str:
-    """Resolve the stylesheet's image placeholders to the bundled resource files."""
-    chevron = (_RESOURCES / "chevron-down.svg").as_posix()
-    chevron_light = (_RESOURCES / "chevron-down-light.svg").as_posix()
-    return _STYLESHEET.replace("@CHEVRONLIGHT@", chevron_light).replace("@CHEVRON@", chevron)
-
-
-def _svg_icon(name: str) -> QIcon:
-    """
-    Load one of the bundled SVG icons, or an empty icon when it is missing.
-
-    Drawn rather than typed: a text glyph renders at whatever weight the platform font feels like
-    and cannot be aligned with the rest of a toolbar. The icons share the muted grey the chevron and
-    the hint labels use, which reads on both a light and a dark palette.
-    """
-    path = _RESOURCES / name
-    return QIcon(str(path)) if path.exists() else QIcon()
-
-
-def _app_icon() -> QIcon:
-    """Load the bundled app icon, or an empty icon if it is not present."""
-    return _svg_icon("icon.svg")
-
-
-def _readonly_box(min_height: int) -> QPlainTextEdit:
-    """Return a read-only, scrollable text box for displaying existing metadata."""
-    box = QPlainTextEdit()
-    box.setReadOnly(True)
-    box.setMinimumHeight(min_height)
-    return box
-
-
-def _fit_text_height(box: QPlainTextEdit, *, min_h: int = 44, max_h: int = 140) -> None:
-    """
-    Size *box* to its content, within bounds.
-
-    Short text keeps the box short so the pane's space goes to fields that need it; long text grows
-    the box up to *max_h* and scrolls past that. QPlainTextEdit reports its document height in line
-    counts, hence the line-spacing multiplication.
-    """
-    lines = max(1, int(box.document().size().height()))
-    height = lines * box.fontMetrics().lineSpacing() + 14
-    box.setFixedHeight(max(min_h, min(max_h, height)))
-
-
-def _fit_combo(combo: QComboBox) -> None:
-    """
-    Size a combo box to its widest entry so the drop-down arrow never clips the label.
-
-    The grid toolbar's labels vary in length (and more so once translated), and the default policy
-    sizes to the current item only, which clipped the wider entries behind the arrow. Sizing to the
-    widest entry keeps every option readable in any language.
-    """
-    combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-    combo.setMinimumContentsLength(max(len(combo.itemText(i)) for i in range(combo.count())))
-
-
-class GenerateWorker(QObject):
-    """
-    Generates AI proposals for a list of photos off the UI thread.
-
-    For each photo it reads the existing metadata, builds the same contextual prompt as the CLI,
-    runs the model, and emits a :class:`~photo_tagger.gui_state.Proposal`. All communication with
-    the window is via Qt signals; widgets are never touched here.
-    """
-
-    started = Signal(int)
-    file_done = Signal(object)  # Proposal
-    file_failed = Signal(str, str, str, str)  # path, error message, failure kind, exception type
-    resting = Signal(str)  # status line for a pacing rest
-    finished = Signal()
-
-    def __init__(  # noqa: PLR0913 - the connection inputs plus one options value.
-        self,
-        provider: ProviderName,
-        model: str,
-        api_base_url: str | None,
-        paths: list[Path],
-        *,
-        api_key: str | None = None,
-        cache_file: Path | None = None,
-        options: GenerateOptions | None = None,
-    ) -> None:
-        """
-        Store the run parameters; nothing happens until :meth:`run`.
-
-        *options* says how the run behaves (see :class:`~photo_tagger.gui_state.GenerateOptions`).
-        Its *refresh* reads past the cache and stores what comes back, for a run whose whole point
-        is that the cached answer is the one it is unhappy with. Its *pacing* is followed per run: a
-        window starts with this run and is forgotten when it ends, so a quick Generate on a handful
-        of photos never waits.
-        """
-        super().__init__()
-        options = options or GenerateOptions()
-        self._provider = provider
-        self._model = model
-        self._api_base_url = api_base_url
-        self._paths = paths
-        self._api_key = api_key
-        self._cache_file = cache_file
-        self._output_language = options.output_language
-        self._hints = dict(options.hints)
-        self._vocabulary = options.vocabulary
-        self._vocabulary_strict = options.vocabulary_strict
-        self._repair_language = options.repair_language
-        self._refresh = options.refresh
-        # The longest edge of the JPEG the model is shown. It keys the cache too, so a window that
-        # sends a different size than a CLI run never replays the other one's answers.
-        self._jpeg_dimensions = options.jpeg_dimensions
-        # The vocabulary listing rides in the user prompt (so the model prefers those terms in the
-        # first place), which also puts it in the cache namespace below: swapping vocabularies
-        # starts a fresh slice instead of replaying keywords chosen under the old one.
-        self._prompt = prompt_with_vocabulary(DEFAULT_USER_PROMPT, options.vocabulary)
-        self._pacing = options.pacing
-        self._pacer: Pacer | None = None
-        self._rest_announced = False
-        self._stop = False
-
-    def rest_totals(self) -> tuple[float, int]:
-        """Return the seconds this run rested and how many rests it took."""
-        if self._pacer is None:
-            return 0.0, 0
-        return self._pacer.rested_seconds, self._pacer.rests_taken
-
-    def stop(self) -> None:
-        """
-        Ask the loop to stop before starting the next photo.
-
-        The model call for the photo already in flight runs to completion (there is no way to
-        interrupt a blocking request), so cancellation takes effect at the next photo boundary. A
-        run that is resting wakes up instead of waiting the rest out.
-        """
-        self._stop = True
-        if self._pacer is not None:
-            self._pacer.cancel()
-
-    def _announce_rest(self, reason: str, seconds: float) -> None:
-        """Tell the window a rest has started, so it can say so instead of looking wedged."""
-        plan = self._pacing or PacingPlan()
-        self._rest_announced = True
-        self.resting.emit(
-            pacing_status_text(
-                reason,
-                seconds,
-                duty_percent=plan.duty_percent,
-                resume_percent=plan.resume_percent,
-            ),
-        )
-
-    def _may_start_next(self) -> bool:
-        """
-        Let a paced run rest before the next photo; False means the run is stopping.
-
-        The blank line at the end is how the window learns the rest is over and puts its own status
-        text back.
-        """
-        if self._pacer is None:
-            return True
-        self._rest_announced = False
-        proceed = self._pacer.wait_before_next()
-        if self._rest_announced:  # NOSONAR - wait_before_next sets this via the on_rest callback.
-            self.resting.emit("")
-        return proceed
-
-    def run(self) -> None:
-        """Build the agent once, then generate a proposal per photo."""
-        try:
-            agent = create_agent(
-                self._provider,
-                self._model,
-                api_base_url=self._api_base_url,
-                api_key=self._api_key,
-                retries=GUI_GENERATE_RETRIES,
-                output_language=self._output_language,
-            )
-        except Exception as exc:  # noqa: BLE001
-            # Not just PhotoTaggerError: an exception escaping this slot on the worker thread
-            # means `finished` never fires, so the window stays in the "running" state (buttons
-            # disabled, photos stuck at "working...") for the rest of the session.
-            logger.exception("gui_agent_construction_failed", error=str(exc))
-            for path in self._paths:
-                self.file_failed.emit(str(path), str(exc), classify_failure(exc), failure_type(exc))
-            self.finished.emit()
-            return
-
-        cache: InferenceCache | None = None
-        if self._pacing is not None:
-            self._pacer = build_pacer(self._pacing, on_rest=self._announce_rest)
-        try:
-            cache = self._open_cache()
-            self.started.emit(len(self._paths))
-            for path in self._paths:
-                if self._stop:
-                    break
-                if not self._may_start_next():
-                    break
-                try:
-                    proposal = self._generate_one(agent, path, cache)
-                except Exception as exc:  # noqa: BLE001
-                    # One photo's failure must not stop the rest of the batch.
-                    logger.exception("gui_generate_failed", file=path.name, error=str(exc))
-                    self.file_failed.emit(
-                        str(path),
-                        str(exc),
-                        classify_failure(exc),
-                        failure_type(exc),
-                    )
-                else:
-                    self.file_done.emit(proposal)
-        finally:
-            if cache is not None:
-                cache.close()
-            # Unconditional, for the reason given above: whatever went wrong, the window has to
-            # hear that the run is over, or it stays in the "running" state (buttons disabled,
-            # photos stuck at "working...") for the rest of the session. Opening the cache and
-            # emitting `started` used to sit outside this, so a failure in either left it stuck.
-            self.finished.emit()
-
-    def _open_cache(self) -> InferenceCache | None:
-        """Open the result cache for this run, degrading to no cache on any failure."""
-        return open_cache(
-            self._cache_file,
-            namespace=gui_cache_namespace(
-                self._model,
-                self._output_language,
-                user_prompt=self._prompt,
-                jpeg_dimensions=self._jpeg_dimensions,
-            ),
-        )
-
-    def _repair_one(
-        self,
-        inference: InferenceResult,
-        agent: object,
-        jpeg: BinaryContent,
-        *,
-        file_name: str,
-    ) -> tuple[InferenceResult, bool]:
-        """
-        Ask the model once more when its answer mixed writing systems, if the setting is on.
-
-        The GUI's counterpart to the pipeline's ``--repair-language``, kept here rather than shared
-        because the two call the agent differently (no sampling knobs here, and no batch usage to
-        fold into). A failed repair keeps the original answer: the note over the fields still marks
-        it, and a proposal you can edit beats no proposal. So does a repair that comes back mixed
-        again. The flag says whether a repair ran.
-        """
-        if not self._repair_language:
-            return inference, False
-        finding = find_in_result(inference)
-        if finding is None:
-            return inference, False
-        logger.info("gui_foreign_script_repair_started", file=file_name, terms=finding.terms)
-        prompt = build_repair_prompt(
-            title=inference.title,
-            description=inference.description,
-            keywords=inference.keywords,
-            terms=finding.terms,
-            output_language=self._output_language,
-        )
-        try:
-            repaired = analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
-        except Exception as exc:  # noqa: BLE001 - a failed repair must not cost the photo its proposal.
-            logger.warning("gui_foreign_script_repair_failed", file=file_name, error=str(exc))
-            return inference, False
-        # Mixed again: the original stays, as in the CLI, and the proposal counts both calls.
-        if find_in_result(repaired) is not None:
-            return inference.with_cost_of(repaired), True
-        return repaired.with_cost_of(inference), True
-
-    def _generate_one(self, agent: object, path: Path, cache: InferenceCache | None) -> Proposal:
-        """Read existing metadata, run the model (or hit the cache), and assemble a proposal."""
-        # The content hash rides along in the context read (one exiftool call), so the cache
-        # key covers the image stream only: embedding metadata does not invalidate the entry.
-        context = read_image_context(path, include_content_hash=cache is not None)
-        existing_title, existing_description = read_caption(path)
-        gps_info = {"position": context.gps_position} if context.gps_position else {}
-        hint = self._hints.get(str(path), "").strip()
-        prompt = build_contextual_prompt(
-            # The hint goes in before the vocabulary listing, as it does on the CLI, so the two
-            # never reorder the prompt between runs and split the cache.
-            prompt_with_vocabulary(
-                prompt_with_hint(DEFAULT_USER_PROMPT, hint),
-                self._vocabulary,
-            ),
-            context.existing_keywords.subject,
-            context.location_tags,
-            gps_info,
-            camera_info=context.camera_info,
-        )
-        # Keying and I/O go through the same swallow-and-degrade helpers as the CLI pipeline,
-        # so a broken cache entry (or unhashable format) costs a model call, never the photo.
-        content_key = content_cache_key(path, context.content_hash) if cache is not None else None
-        # The cache key is keyed on image content only, not on the hint text, and the CLI's
-        # equivalent --hint folds into the run's cache *namespace* instead (one hint for the whole
-        # run). Neither applies here: a GUI hint is per-photo and one-off. Skip both the lookup
-        # and the write when hinted, or a hint-biased answer would be stored under the same key a
-        # later hint-less regeneration of this photo reads from, silently replaying someone else's
-        # correction (or last week's) as if it were the model's generic read.
-        skip_cache = cache is None or content_key is None or hint
-        # A refresh run reads past the entry but still writes: the mixed-script pass asks again
-        # precisely because the stored answer is the unusable one, and replaying it would not be
-        # asking at all. What comes back is a plain generic answer for this photo, so it belongs
-        # under the same key, and a later run of this folder stops resurrecting the old one.
-        cached = (
-            None
-            if skip_cache or self._refresh
-            else safe_cache_get(cache, content_key, file_name=path.name)
-        )
-        inference = cached
-        repaired = False
-        if inference is None:
-            jpeg = prepare_image_for_agent(path, max_size=self._jpeg_dimensions)
-            inference = analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
-            # Before the cache write, as in the CLI pipeline, so what a rerun replays is the
-            # repaired answer and the extra call is paid once.
-            inference, repaired = self._repair_one(inference, agent, jpeg, file_name=path.name)
-            if not skip_cache:
-                safe_cache_put(cache, content_key, inference, file_name=path.name)
-        else:
-            logger.info("gui_cache_hit", file=path.name)
-        # After the cache, not before it: a cached answer is the model's raw output, so a
-        # vocabulary chosen (or made stricter) since it was stored still applies to it.
-        snapped = apply_vocabulary(
-            inference.keywords,
-            self._vocabulary,
-            strict=self._vocabulary_strict,
-        )
-        if snapped.mapped or snapped.dropped:
-            logger.info(
-                "gui_vocabulary_applied",
-                file=path.name,
-                mapped=snapped.mapped,
-                dropped=snapped.dropped,
-            )
-        # Re-checked on a cache hit too: the check is pure, so the flag never has to be stored.
-        finding = find_in_result(inference)
-        if finding is not None:
-            logger.warning(
-                "gui_foreign_script_in_output",
-                file=path.name,
-                dominant=finding.dominant,
-                terms=finding.terms,
-            )
-        return Proposal(
-            path=path,
-            existing_title=existing_title,
-            existing_description=existing_description,
-            existing_keywords=context.existing_keywords,
-            title=inference.title,
-            description=inference.description,
-            keywords=snapped.keywords,
-            camera_info=dict(context.camera_info),
-            location_tags=dict(context.location_tags),
-            gps_position=context.gps_position,
-            existing_copyright=context.existing_copyright,
-            from_cache=cached is not None,
-            input_tokens=inference.input_tokens,
-            output_tokens=inference.output_tokens,
-            total_tokens=inference.total_tokens,
-            seconds=inference.seconds,
-            vocabulary_mapped=snapped.mapped,
-            vocabulary_dropped=snapped.dropped,
-            foreign_terms=list(finding.terms) if finding is not None else [],
-            hinted=bool(hint),
-            repaired=repaired,
-        )
-
-
-class SaveWorker(QObject):
-    """
-    Writes the resolved metadata for a list of photos off the UI thread.
-
-    Saving a large batch is minutes of ExifTool work: doing it in the click handler froze the window
-    (the OS "busy" cursor and nothing else), which reads as a crash. Here each write reports back by
-    signal so the window can tick its progress bar and stay responsive.
-
-    One ExifTool process serves the whole batch, the same way the CLI's batch reads do, instead of
-    spawning one per photo.
-    """
-
-    file_done = Signal(str, bool)  # path, write succeeded
-    finished = Signal()
-
-    def __init__(
-        self,
-        jobs: list[SaveJob],
-        *,
-        options: SaveOptions,
-        journal: UndoJournal | None = None,
-    ) -> None:
-        """Store the resolved write jobs and the save options; nothing runs until run."""
-        super().__init__()
-        self._jobs = jobs
-        self._options = options
-        self._journal = journal
-        self._emitted = 0
-        self._stop = False
-        # The photos with nothing to write, because they keep the notice they have. Filled before
-        # file_done is sent, so the window's slot can tell such a save from a stamp.
-        self.kept: set[str] = set()
-
-    def stop(self) -> None:
-        """Ask the loop to stop before the next photo; the write in flight finishes."""
-        self._stop = True
-
-    def run(self) -> None:
-        """Write every job through one shared ExifTool, then report the batch as finished."""
-        try:
-            with managed_helper(None) as helper:
-                self._write_all(helper)
-        except Exception as exc:  # noqa: BLE001
-            # Per-photo failures are handled in the loop, so this is ExifTool itself failing to
-            # start or shut down. Report whatever never got a result as failed, or the window would
-            # wait forever for photos that can no longer be written.
-            logger.exception("gui_save_batch_failed", error=str(exc))
-            for job in self._jobs[self._emitted :]:
-                self.file_done.emit(str(job.path), False)  # noqa: FBT003 - Qt signal argument
-        self.finished.emit()
-
-    def _field_sources(self, helper: ExifToolHelper) -> dict[Path, dict[str, str]]:
-        """
-        Read the tags the copyright templates need for the whole batch, in one call.
-
-        Skipped entirely when no copyright is configured, so the usual save still costs exactly one
-        ExifTool write per photo and nothing else.
-        """
-        fields = self._options.extra_fields
-        if fields is None or fields.is_empty:
-            return {}
-        return read_field_sources([job.path for job in self._jobs], fields.source_tags, et=helper)
-
-    def _write_all(self, helper: ExifToolHelper) -> None:
-        """Write each job in turn, one photo's failure never stopping the rest."""
-        sources = self._field_sources(helper)
-        for job in self._jobs:
-            if self._stop:
-                return
-            try:
-                extra = resolve_extra_tags(self._options, job.path, sources)
-                if writes_nothing(job, extra):
-                    self.kept.add(str(job.path))
-                ok, targets = (
-                    (True, [])
-                    if writes_nothing(job, extra)
-                    else write_metadata_everywhere(
-                        job.path,
-                        job.keywords,
-                        description=job.description,
-                        title=job.title,
-                        extra=extra,
-                        backup=self._options.backup,
-                        sidecar_mode=self._options.sidecar_mode,
-                        sidecar_overrides=self._options.sidecar_overrides,
-                        et=helper,
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("gui_save_failed", file=job.path.name, error=str(exc))
-                ok, targets = False, []
-            if self._journal is not None:
-                self._journal.record_writes(job.path, targets, backup=self._options.backup)
-            self._emitted += 1
-            self.file_done.emit(str(job.path), ok)
-
-
-class ThumbnailWorker(QObject):
-    """
-    Decodes grid thumbnails off the UI thread.
-
-    Each thumbnail is a small JPEG (the same RAW-aware loader the model uses, at a tiny size). The
-    bytes are emitted back to the main thread, which builds the QPixmap there (QPixmap must not be
-    created off the GUI thread). :meth:`stop` lets the window abandon a folder's load when the user
-    navigates away.
-    """
-
-    ready = Signal(str, bytes)  # path, JPEG bytes
-    finished = Signal()
-
-    def __init__(self, paths: list[Path]) -> None:
-        """Store the paths to decode; nothing runs until :meth:`run`."""
-        super().__init__()
-        self._paths = paths
-        self._stop = False
-
-    def stop(self) -> None:
-        """Ask the loop to stop before the next thumbnail."""
-        self._stop = True
-
-    def run(self) -> None:
-        """Decode each thumbnail and emit its bytes, until done or stopped."""
-        for path in self._paths:
-            if self._stop:
-                break
-            try:
-                content = prepare_image_for_agent(path, max_size=_THUMB_MAX)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("gui_thumbnail_failed", file=path.name, error=str(exc))
-                continue
-            self.ready.emit(str(path), bytes(content.data))
-        self.finished.emit()
-
-
 # Grace period _stop_scan gives an in-flight batched exiftool call to finish on its own before
 # detaching rather than blocking the caller. Comfortably above a normal scan's duration.
 _SCAN_STOP_TIMEOUT_MS = 3000
@@ -1303,569 +589,6 @@ _HARMONIZE_STOP_TIMEOUT_MS = 3000
 # the window may sit still when the user clicks away from a folder that is still loading. One
 # decode is uninterruptible, and a big RAW takes seconds, so the wait usually times out.
 _THUMB_STOP_TIMEOUT_MS = 250
-
-
-class MetadataScanWorker(QObject):
-    """
-    Reads which metadata fields each photo already carries, off the UI thread.
-
-    The read is chunked, so each small batch of photos lands in the tree's Tagged column as it is
-    read rather than all at once at the end, and the scan can be stopped between batches. That is
-    what makes a few thousand photos on a network share bearable: the read runs for minutes there,
-    and it is also what "Uncheck Already Tagged" waits on. Failures degrade to a partial report.
-    """
-
-    done = Signal(object)  # dict[str, set[str]]: path -> present fields, one batch at a time
-    progress = Signal(int, int)  # photos read so far, photos in this scan
-    finished = Signal()
-
-    def __init__(self, paths: list[Path]) -> None:
-        """Store the paths to scan; nothing runs until :meth:`run`."""
-        super().__init__()
-        self._paths = paths
-        self._dropped: frozenset[Path] = frozenset()
-        self._position = 0  # how far _live_paths has walked the list
-        self._skipped = 0  # of those, how many had been removed from the list
-        self._stop = False
-
-    def stop(self) -> None:
-        """
-        Ask the scan to stop after the batch it is on.
-
-        One batched exiftool call cannot be interrupted mid-flight, so stopping takes effect at the
-        next batch boundary rather than immediately.
-        """
-        self._stop = True
-
-    def drop(self, paths: Iterable[Path]) -> None:
-        """
-        Leave these photos unread: they left the list after the scan started.
-
-        The scan works from the list it was handed, so removing a folder of 19000 photos used to
-        read all of them anyway. Rebinding the set instead of mutating it is what makes this safe to
-        call from the UI thread while the scan thread reads it.
-        """
-        self._dropped = self._dropped | frozenset(paths)
-
-    def _live_paths(self) -> Iterator[Path]:
-        """Yield the paths still in the list, re-reading :meth:`drop` between photos."""
-        for position, path in enumerate(self._paths, start=1):
-            self._position = position
-            if path in self._dropped:
-                self._skipped += 1
-            else:
-                yield path
-
-    def _total(self) -> int:
-        """
-        Count the photos this scan will read in all, removals taken out.
-
-        Ahead of the cursor the removed photos have not been walked past yet, so they have to be
-        counted here; otherwise a folder removed early would keep padding the progress bar for the
-        rest of the scan.
-        """
-        if not self._dropped:
-            return len(self._paths)
-        ahead = islice(self._paths, self._position, None)
-        return len(self._paths) - self._skipped - sum(1 for path in ahead if path in self._dropped)
-
-    def run(self) -> None:
-        """Emit each batch of per-path field sets as it is read, until done or stopped."""
-        scanned = 0
-        self.progress.emit(scanned, len(self._paths))
-        try:
-            for batch in iter_field_presence(self._live_paths()):
-                scanned += batch.scanned
-                if batch.presence:
-                    self.done.emit({str(p): set(f) for p, f in batch.presence.items()})
-                self.progress.emit(scanned, self._total())
-                if self._stop:
-                    break
-        except Exception as exc:  # noqa: BLE001
-            # The scan is a convenience; a broken exiftool must not take the window down.
-            logger.warning("gui_metadata_scan_failed", error=str(exc))
-        self.finished.emit()
-
-
-class HarmonizeWorker(QObject):
-    """
-    Groups the finished proposals into shoots and harmonizes each one, off the UI thread.
-
-    Grouping reads every photo's capture time through exiftool, which is a batched read but not an
-    instant one, so it does not belong in a click handler. The window applies the returned keywords
-    to its items when the result arrives.
-    """
-
-    done = Signal(object)  # HarmonizeResult
-    finished = Signal()
-
-    def __init__(
-        self,
-        keywords_by_path: dict[Path, list[str]],
-        *,
-        gap_minutes: float,
-        output_language: str,
-    ) -> None:
-        """Store the generated keywords to harmonize; nothing runs until :meth:`run`."""
-        super().__init__()
-        self._keywords = keywords_by_path
-        self._gap_minutes = gap_minutes
-        self._output_language = output_language
-
-    def run(self) -> None:
-        """Harmonize every session and emit the result, degrading to no change on failure."""
-        try:
-            result = harmonize_sessions(
-                self._keywords,
-                gap_minutes=self._gap_minutes,
-                output_language=self._output_language,
-            )
-        except Exception as exc:  # noqa: BLE001
-            # Harmonization is a refinement of proposals that are already usable; a broken
-            # exiftool must not cost the user the run they just waited for.
-            logger.exception("gui_harmonize_failed", error=str(exc))
-            result = HarmonizeResult()
-        self.done.emit(result)
-        self.finished.emit()
-
-
-class VocabularyBuildWorker(QObject):
-    """
-    Builds a controlled vocabulary out of a library's own keywords, off the UI thread.
-
-    The same three steps as ``photo-tagger vocabulary``: count what the photos (or a Lightroom
-    export) carry, trim the count with deterministic rules, and optionally ask the model to fold
-    synonyms and give the list a hierarchy. Only the result file is written; no photo is touched.
-    """
-
-    progress = Signal(str)
-    done = Signal(str, int)  # status message, keywords kept
-    failed = Signal(str)
-    finished = Signal()
-
-    def __init__(  # noqa: PLR0913  # the source, the rules, the output, and the model are distinct
-        self,
-        paths: list[Path],
-        export_file: Path | None,
-        output: Path,
-        *,
-        rules: TrimRules,
-        flat: bool = False,
-        report_file: Path | None = None,
-        organize_workers: int = 1,
-        provider: ProviderName | None = None,
-        model: str = "",
-        api_base_url: str | None = None,
-        api_key: str | None = None,
-    ) -> None:
-        """Store what to read, how to trim it, and where to write it; nothing runs until run."""
-        super().__init__()
-        self._paths = paths
-        self._export_file = export_file
-        self._output = output
-        self._rules = rules
-        self._flat = flat
-        self._report_file = report_file
-        self._organize_workers = organize_workers
-        self._provider = provider
-        self._model = model
-        self._api_base_url = api_base_url
-        self._api_key = api_key
-
-    def run(self) -> None:
-        """Count, trim, optionally organize, and write the file, reporting either way."""
-        try:
-            census, source = self._census()
-            if not census.uses:
-                self.failed.emit(
-                    _("No keywords found: there is nothing to build a vocabulary from."),
-                )
-                self.finished.emit()
-                return
-            result = trim(census, self._rules)
-            stats: OrganizeStats | None = None
-            if self._provider is not None:
-                result, stats = self._organize(result)
-            header = vocabulary_header(
-                source,
-                len(result.kept),
-                len(result.dropped),
-                self._rules,
-                stats,
-            )
-            self._output.write_text(
-                render_vocabulary(result, header=header, flat=self._flat),
-                encoding="utf-8",
-            )
-            if self._report_file is not None:
-                self._report_file.write_text(render_drop_report(result), encoding="utf-8")
-        except PhotoTaggerError as exc:
-            logger.error("gui_vocabulary_build_failed", error=str(exc))
-            self.failed.emit(str(exc))
-        except Exception as exc:  # noqa: BLE001 - a broken exiftool or an unwritable path
-            logger.exception("gui_vocabulary_build_crashed", error=str(exc))
-            self.failed.emit(str(exc))
-        else:
-            self.done.emit(
-                _("Wrote {kept} keyword(s) to {file}, dropped {dropped}.").format(
-                    kept=len(result.kept),
-                    file=self._output.name,
-                    dropped=len(result.dropped),
-                ),
-                len(result.kept),
-            )
-        self.finished.emit()
-
-    def _census(self) -> tuple[KeywordCensus, str]:
-        """Count the keywords on the photos, in the export, or in both; also name the source."""
-        census = KeywordCensus()
-        sources: list[str] = []
-        if self._export_file is not None:
-            self.progress.emit(_("Reading {file}...").format(file=self._export_file.name))
-            census.merge(
-                # utf-8-sig for the same reason load_vocabulary uses it: a BOM would be read as
-                # part of the first keyword.
-                census_from_export(self._export_file.read_text(encoding="utf-8-sig")),
-            )
-            sources.append(f"keyword export {self._export_file.name} (counts are tree occurrences)")
-        if self._paths:
-            self.progress.emit(
-                ngettext(
-                    "Reading the keywords on {n} photo...",
-                    "Reading the keywords on {n} photos...",
-                    len(self._paths),
-                ).format(n=len(self._paths)),
-            )
-            photos = census_from_photos(self._paths)
-            census.merge(photos)
-            sources.append(f"{photos.photos} photo(s)")
-        return census, " and ".join(sources)
-
-    def _organize(self, result: TrimResult) -> tuple[TrimResult, OrganizeStats]:
-        """Ask the model to fold synonyms and give the kept keywords a hierarchy."""
-        self.progress.emit(
-            _("Organizing {n} keyword(s) with {model}...").format(
-                n=len(result.kept),
-                model=self._model,
-            ),
-        )
-        return organize(
-            result,
-            provider_name=self._provider,
-            model_name=self._model,
-            api_base_url=self._api_base_url,
-            api_key=self._api_key,
-            workers=self._organize_workers,
-        )
-
-
-class WatchWorker(QObject):
-    """
-    Polls the watched folders for new photos, off the UI thread.
-
-    The same loop the CLI's ``watch`` command runs: a directory listing every few seconds, and a
-    file only counts once it has stopped changing. :meth:`stop` ends it at the next poll, and cuts
-    the wait short, so a Stop button does not have to sit out an interval.
-    """
-
-    batch = Signal(object)  # list[Path]
-    finished = Signal()
-
-    def __init__(self, settings: WatchSettings) -> None:
-        """Store what to watch; nothing runs until :meth:`run`."""
-        super().__init__()
-        self._settings = settings
-        self._stop = False
-
-    def stop(self) -> None:
-        """Ask the loop to end at the next poll."""
-        self._stop = True
-
-    def run(self) -> None:
-        """Emit each settled batch until the watch is stopped."""
-        settings = self._settings
-        try:
-            for batch in watch_batches(
-                list(settings.folders),
-                settings.extensions,
-                recursive=settings.recursive,
-                interval_seconds=settings.interval,
-                settle_seconds=settings.settle,
-                should_stop=lambda: self._stop,
-            ):
-                self.batch.emit(list(batch))
-        except Exception as exc:  # noqa: BLE001
-            # A watch that dies must not take the window with it; the user can start another.
-            logger.exception("gui_watch_failed", error=str(exc))
-        self.finished.emit()
-
-
-def _status_sort_key(item: QTreeWidgetItem) -> tuple[int, str]:
-    """Sort key for the Status column: lifecycle rank first, then name as a stable tiebreak."""
-    rank = item.data(_COL_STATUS, _STATUS_RANK_ROLE)
-    return (int(rank) if rank is not None else 0, item.text(_COL_NAME).casefold())
-
-
-class _SortableTreeItem(QTreeWidgetItem):  # NOSONAR S8500 - Qt sorts items via __lt__ only
-    """
-    A tree row that sorts sensibly when the user clicks a column header.
-
-    Folders stay grouped above files whichever way the sort runs; the Photos column sorts by name
-    (case-insensitive) and the Status column by lifecycle rank rather than the raw label.
-
-    Only ``__lt__`` is overridden: Qt drives item sorting entirely through it, and the comparison is
-    context-dependent (it follows the active sort column and direction), so a real total ordering or
-    ``functools.total_ordering`` would be wrong here. Hence the S8500 suppression on the class.
-    """
-
-    def __lt__(self, other: QTreeWidgetItem) -> bool:
-        tree = self.treeWidget()
-        column = tree.sortColumn() if tree is not None else 0
-        self_dir = bool(self.data(0, _IS_DIR_ROLE))
-        if self_dir != bool(other.data(0, _IS_DIR_ROLE)):
-            # Keep folders above files in both directions: Qt reverses the result for a
-            # descending sort, so invert there to cancel that out.
-            ascending = (
-                tree is None or tree.header().sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
-            )
-            return self_dir if ascending else not self_dir
-        if column == _COL_STATUS:
-            return _status_sort_key(self) < _status_sort_key(other)
-        if column in (_COL_TYPE, _COL_TAGGED):
-            return self.text(column).casefold() < other.text(column).casefold()
-        return self.text(_COL_NAME).casefold() < other.text(_COL_NAME).casefold()
-
-
-class _ClickableLabel(QLabel):
-    """A label that reports left clicks, so the detail pane's preview can open the full viewer."""
-
-    clicked = Signal()
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override.
-        """Treat a left click as a request to open whatever the label is showing."""
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
-
-
-class ImageViewerDialog(QDialog):
-    """
-    One photo at full window size, with zoom and pan.
-
-    The detail pane's preview shares its panel with the metadata fields, so it is necessarily small:
-    too small to check whether a generated keyword is really in the frame. Clicking it opens this
-    window, which starts at fit-to-window and zooms up to 8:1.
-
-    Zoom is kept as a factor of the decoded image's own pixel size, and every zoom rescales the
-    original pixmap rather than the last scaled one, so repeated zooming in and out does not
-    accumulate resampling blur.
-    """
-
-    def __init__(self, parent: QWidget, path: Path, pixmap: QPixmap) -> None:
-        """Build the viewer around an already-decoded *pixmap* of *path*."""
-        super().__init__(parent)
-        self.setWindowTitle(path.name)
-        self._source = pixmap
-        self._zoom = 1.0
-        # While true, a window resize refits the photo. Any explicit zoom turns it off, so the
-        # user's chosen magnification survives resizing (and entering full screen).
-        self._fit_to_window = True
-        self._pan_from: QPoint | None = None
-
-        box = QVBoxLayout(self)
-        box.setContentsMargins(0, 0, 0, 0)
-        box.setSpacing(0)
-        self._canvas = QLabel()
-        self._canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._scroll = QScrollArea()
-        self._scroll.setObjectName("viewer")
-        # Not widgetResizable: the canvas is resized to the scaled pixmap so the scrollbars
-        # describe the image. The alignment centers it while it is smaller than the viewport.
-        self._scroll.setWidgetResizable(False)
-        self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._scroll.setWidget(self._canvas)
-        self._scroll.viewport().installEventFilter(self)
-        self._scroll.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
-        box.addWidget(self._scroll, stretch=1)
-        box.addWidget(self._build_toolbar())
-        self._install_shortcuts()
-
-    def _build_toolbar(self) -> QWidget:
-        """Build the bottom strip: zoom controls, the current percentage, and Close."""
-        bar = QWidget()
-        row = QHBoxLayout(bar)
-        row.setContentsMargins(10, 6, 10, 6)
-        out = QPushButton(_("Zoom out"))
-        out.clicked.connect(lambda: self._zoom_by(-1))
-        row.addWidget(out)
-        self._zoom_label = QLabel()
-        self._zoom_label.setMinimumWidth(56)
-        self._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        row.addWidget(self._zoom_label)
-        in_ = QPushButton(_("Zoom in"))
-        in_.clicked.connect(lambda: self._zoom_by(1))
-        row.addWidget(in_)
-        fit = QPushButton(_("Fit"))
-        fit.setToolTip(tooltip("Scale the photo to the window (Ctrl+0)."))
-        fit.clicked.connect(self._fit)
-        row.addWidget(fit)
-        actual = QPushButton(_("100%"))
-        actual.setToolTip(tooltip("Show the photo at one screen pixel per image pixel (Ctrl+1)."))
-        actual.clicked.connect(lambda: self._set_zoom(1.0))
-        row.addWidget(actual)
-        row.addStretch(1)
-        hint = QLabel(_("Scroll to pan · Ctrl+scroll or +/- to zoom · double-click to toggle fit"))
-        hint.setObjectName("hint")
-        row.addWidget(hint)
-        row.addStretch(1)
-        full = QPushButton(_("Full screen"))
-        full.setToolTip(tooltip("Fill the whole screen, hiding the window frame (F)."))
-        full.clicked.connect(self._toggle_full_screen)
-        row.addWidget(full)
-        close = QPushButton(_(_CLOSE))
-        close.clicked.connect(self.accept)
-        row.addWidget(close)
-        return bar
-
-    def _install_shortcuts(self) -> None:
-        """
-        Wire the keyboard: the standard zoom keys, plus fit, 1:1, and full screen.
-
-        Ctrl+= and a bare +/- join Qt's standard zoom keys because the standard ones are Ctrl++ and
-        Ctrl+-, which need a shifted key on many layouts.
-        """
-        # Every QShortcut is parented to the dialog, which owns it for as long as it is open.
-        for key in (QKeySequence.StandardKey.ZoomIn, QKeySequence("Ctrl+="), QKeySequence("+")):
-            QShortcut(key, self, lambda: self._zoom_by(1))
-        for key in (QKeySequence.StandardKey.ZoomOut, QKeySequence("-")):
-            QShortcut(key, self, lambda: self._zoom_by(-1))
-        QShortcut(QKeySequence("Ctrl+0"), self, self._fit)
-        QShortcut(QKeySequence("Ctrl+1"), self, lambda: self._set_zoom(1.0))
-        for key in (QKeySequence("F"), QKeySequence("F11")):
-            QShortcut(key, self, self._toggle_full_screen)
-
-    # --- zoom ----------------------------------------------------------------------------------
-
-    def showEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override.
-        """Fit the photo the first time the window has a real size to fit it to."""
-        super().showEvent(event)
-        if self._fit_to_window:
-            self._fit()
-
-    def resizeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override.
-        """Refit on resize, but only while the user has not picked a zoom of their own."""
-        super().resizeEvent(event)
-        if self._fit_to_window:
-            self._fit()
-
-    def _fit(self) -> None:
-        """
-        Scale the photo down to the viewport (never up: a small photo stays its own size).
-
-        Measured against maximumViewportSize, not the viewport itself: while zoomed in there are
-        scrollbars, and fitting to the space they leave would scale the photo to slightly less than
-        the window it is about to have all of.
-        """
-        viewport = self._scroll.maximumViewportSize()
-        zoom = fit_zoom(
-            (self._source.width(), self._source.height()),
-            (viewport.width(), viewport.height()),
-        )
-        self._apply_zoom(zoom)
-        self._fit_to_window = True
-
-    def _set_zoom(self, zoom: float) -> None:
-        """Jump to an exact zoom factor, leaving fit-to-window behind."""
-        self._fit_to_window = False
-        self._apply_zoom(clamp_zoom(zoom))
-
-    def _zoom_by(self, notches: int) -> None:
-        """Zoom one or more notches in (positive) or out (negative) about the viewport center."""
-        self._set_zoom(step_zoom(self._zoom, notches))
-
-    def _apply_zoom(self, zoom: float) -> None:
-        """Rescale the original pixmap to *zoom* and keep the viewport centered where it was."""
-        if self._source.isNull():
-            return
-        factor = zoom / self._zoom if self._zoom else 1.0
-        self._zoom = zoom
-        scaled = self._source.scaled(
-            max(1, round(self._source.width() * zoom)),
-            max(1, round(self._source.height() * zoom)),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._canvas.setPixmap(scaled)
-        self._canvas.resize(scaled.size())
-        self._zoom_label.setText(zoom_label(zoom))
-        for scrollbar in (self._scroll.horizontalScrollBar(), self._scroll.verticalScrollBar()):
-            scrollbar.setValue(
-                anchored_scroll(scrollbar.value(), scrollbar.pageStep(), factor),
-            )
-
-    # --- mouse and keys ------------------------------------------------------------------------
-
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override.
-        """Let the viewport's own handler run only for what the viewer does not claim."""
-        if watched is not self._scroll.viewport() or not self._handle_viewport(event):
-            return super().eventFilter(watched, event)
-        return True
-
-    def _handle_viewport(self, event: QEvent) -> bool:
-        """
-        Turn drags on the image into panning and Ctrl+wheel (or a trackpad pinch) into zooming.
-
-        Returns whether the event was consumed. A plain wheel is left alone so it still scrolls a
-        zoomed-in photo, which is what a scroll area is for.
-        """
-        match event.type():
-            case QEvent.Type.Wheel if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-                self._zoom_by(1 if event.angleDelta().y() > 0 else -1)
-            case QEvent.Type.MouseButtonPress if event.button() == Qt.MouseButton.LeftButton:
-                self._pan_from = event.position().toPoint()
-                self._scroll.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
-            case QEvent.Type.MouseMove if self._pan_from is not None:
-                self._pan(event.position().toPoint())
-            case QEvent.Type.MouseButtonRelease if self._pan_from is not None:
-                self._pan_from = None
-                self._scroll.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
-            case QEvent.Type.MouseButtonDblClick:
-                self._toggle_fit()
-            case _:
-                return False
-        return True
-
-    def _pan(self, position: QPoint) -> None:
-        """Drag the image under the cursor: scroll by however far the pointer moved."""
-        if self._pan_from is None:
-            return
-        delta = position - self._pan_from
-        self._pan_from = position
-        horizontal = self._scroll.horizontalScrollBar()
-        vertical = self._scroll.verticalScrollBar()
-        horizontal.setValue(horizontal.value() - delta.x())
-        vertical.setValue(vertical.value() - delta.y())
-
-    def _toggle_fit(self) -> None:
-        """Double-click shortcut between fit-to-window and 1:1, whichever the view is not on."""
-        if self._fit_to_window:
-            self._set_zoom(1.0)
-        else:
-            self._fit()
-
-    def _toggle_full_screen(self) -> None:
-        """Swap between a normal window and a borderless one filling the screen."""
-        if self.isFullScreen():
-            self.showNormal()
-        else:
-            self.showFullScreen()
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override.
-        """Let Escape leave full screen first, so it takes two presses to lose the viewer."""
-        if event.key() == Qt.Key.Key_Escape and self.isFullScreen():
-            self.showNormal()
-            return
-        super().keyPressEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -1900,7 +623,7 @@ class MainWindow(QMainWindow):
         # The language the model writes titles, descriptions, and keywords in. Distinct from the
         # UI language above; persisted under [inference] output_language, which the CLI shares.
         self._output_language = self._defaults.inference.output_language
-        self._cache_file = self._defaults.artifacts.cache_file or _DEFAULT_CACHE_FILE
+        self._cache_file = self._defaults.artifacts.cache_file or DEFAULT_CACHE_FILE
         # What this window does, for its telemetry: runs, saves, features, busy and idle time.
         self._usage = GuiUsage(time.monotonic())
         # The photos of the run in flight, kept apart from _generated_keys, which a chained save
@@ -1925,7 +648,7 @@ class MainWindow(QMainWindow):
         self._init_keyword_rules()
 
         self.setWindowTitle(f"Photo Tagger {__version__}")
-        self.setWindowIcon(_app_icon())
+        self.setWindowIcon(app_icon())
         self.resize(1180, 760)
         self.setAcceptDrops(True)
         self._placeholder_pixmap = _make_placeholder()
@@ -2179,7 +902,7 @@ class MainWindow(QMainWindow):
         help_menu = self._help_menu = menubar.addMenu(_("Help"))
         help_menu.addAction(
             _("Documentation"),
-            lambda: (self._count("docs"), QDesktopServices.openUrl(QUrl(_DOCS_URL))),
+            lambda: (self._count("docs"), QDesktopServices.openUrl(QUrl(DOCS_URL))),
         )
         help_menu.addSeparator()
         help_menu.addAction(_("Test Connection"), self._test_connection)
@@ -2424,7 +1147,7 @@ class MainWindow(QMainWindow):
         except (OSError, ConfigFileError) as exc:
             # ConfigFileError: the file on disk is not TOML we can rewrite in place. Reporting it
             # is the whole point of the dialog; letting it out of a Qt slot crashed the window.
-            QMessageBox.warning(self, _(_CONFIG_SAVE_ERROR_TITLE), str(exc))
+            QMessageBox.warning(self, _(CONFIG_SAVE_ERROR_TITLE), str(exc))
             return
         self._status.setText(_("Language saved. Restart Photo Tagger to apply it."))
 
@@ -2517,7 +1240,7 @@ class MainWindow(QMainWindow):
         except (OSError, ConfigFileError) as exc:
             # ConfigFileError: the file on disk is not TOML we can rewrite in place. Reporting it
             # is the whole point of the dialog; letting it out of a Qt slot crashed the window.
-            QMessageBox.warning(self, _(_CONFIG_SAVE_ERROR_TITLE), str(exc))
+            QMessageBox.warning(self, _(CONFIG_SAVE_ERROR_TITLE), str(exc))
             return
         if self._vocabulary_path is not None:
             # The language decides whether plurals fold onto their singular, and that shapes the
@@ -2629,7 +1352,7 @@ class MainWindow(QMainWindow):
         except (OSError, ConfigFileError) as exc:
             # ConfigFileError: the file on disk is not TOML we can rewrite in place. Reporting it
             # is the whole point of the dialog; letting it out of a Qt slot crashed the window.
-            QMessageBox.warning(self, _(_CONFIG_SAVE_ERROR_TITLE), str(exc))
+            QMessageBox.warning(self, _(CONFIG_SAVE_ERROR_TITLE), str(exc))
             return
         self._status.setText(note.format(target=target))
 
@@ -2737,7 +1460,7 @@ class MainWindow(QMainWindow):
             tooltip("Check ExifTool and that the provider serves the model."),
         )
         self._test_button.clicked.connect(self._test_connection)
-        close = QPushButton(_(_CLOSE))
+        close = QPushButton(_(CLOSE_LABEL))
         close.setDefault(True)
         close.clicked.connect(dialog.accept)
         buttons = QHBoxLayout()
@@ -2761,16 +1484,16 @@ class MainWindow(QMainWindow):
         header = self._tree.header()
         header.setStretchLastSection(False)
         for column, width in (
-            (_COL_NAME, 250),
-            (_COL_TYPE, 64),
-            (_COL_STATUS, 80),
-            (_COL_TAGGED, 56),
+            (COL_NAME, 250),
+            (COL_TYPE, 64),
+            (COL_STATUS, 80),
+            (COL_TAGGED, 56),
         ):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
             self._tree.setColumnWidth(column, width)
         # Click a header to sort by any column; folders stay grouped above files.
         self._tree.setSortingEnabled(True)
-        self._tree.sortByColumn(_COL_NAME, Qt.SortOrder.AscendingOrder)
+        self._tree.sortByColumn(COL_NAME, Qt.SortOrder.AscendingOrder)
         header.setToolTip(
             tooltip(
                 "Click a column header to sort. Type: file extension, +xmp when a sidecar "
@@ -2897,7 +1620,7 @@ class MainWindow(QMainWindow):
         self._search.setPlaceholderText(_("Search photos"))
         self._search.setClearButtonEnabled(True)
         self._search.addAction(
-            _svg_icon("search.svg"),
+            svg_icon("search.svg"),
             QLineEdit.ActionPosition.LeadingPosition,
         )
         self._search.setToolTip(
@@ -2948,7 +1671,7 @@ class MainWindow(QMainWindow):
         """
         button = self._view_button = QToolButton()
         button.setObjectName("viewmode")
-        button.setIcon(_svg_icon("list-view.svg"))
+        button.setIcon(svg_icon("list-view.svg"))
         button.setIconSize(QSize(_TOOLBAR_ICON, _TOOLBAR_ICON))
         # Flat: without this some styles paint a raised button frame around the icon, which is
         # exactly the weight this control is meant not to have.
@@ -3198,17 +1921,17 @@ class MainWindow(QMainWindow):
         """Build the context menu for *tree_item* (a file leaf or a folder), or None."""
         if tree_item is None:
             return None
-        path = tree_item.data(0, _PATH_ROLE)
+        path = tree_item.data(0, PATH_ROLE)
         if path is None:
             return None
         # A right-click on one of several selected photos acts on the whole selection.
         selected = self._selected_photo_items()
         clicked_in_selection = any(str(item.path) == path for item in selected)
-        if not bool(tree_item.data(0, _IS_DIR_ROLE)) and len(selected) > 1 and clicked_in_selection:
+        if not bool(tree_item.data(0, IS_DIR_ROLE)) and len(selected) > 1 and clicked_in_selection:
             return self._build_bulk_context_menu(selected)
         menu = QMenu(self._tree)
         item = self._items.get(path)
-        if not bool(tree_item.data(0, _IS_DIR_ROLE)) and item is not None:
+        if not bool(tree_item.data(0, IS_DIR_ROLE)) and item is not None:
             label = _("Retry Generation") if item.status == FAILED else _("Generate")
             trigger = TRIGGER_RETRY if item.status == FAILED else TRIGGER_SINGLE
             generate = menu.addAction(
@@ -3237,9 +1960,9 @@ class MainWindow(QMainWindow):
         """Return the photos behind the tree's currently selected file rows."""
         out: list[PhotoItem] = []
         for tree_item in self._tree.selectedItems():
-            if bool(tree_item.data(0, _IS_DIR_ROLE)):
+            if bool(tree_item.data(0, IS_DIR_ROLE)):
                 continue
-            item = self._items.get(tree_item.data(0, _PATH_ROLE))
+            item = self._items.get(tree_item.data(0, PATH_ROLE))
             if item is not None:
                 out.append(item)
         return out
@@ -3301,7 +2024,7 @@ class MainWindow(QMainWindow):
             item.selected = checked
             leaf = self._leaf_for(item.path)
             if leaf is not None:
-                leaf.setCheckState(0, _checked(checked))
+                leaf.setCheckState(0, check_state(checked))
                 leaves.append(leaf)
         # Folder tristates re-derive after every leaf is set, walking each chain upward.
         for leaf in leaves:
@@ -3314,7 +2037,7 @@ class MainWindow(QMainWindow):
         """Mirror a thumbnail checkbox change onto the photo and its tree row."""
         if self._syncing:
             return
-        key = grid_item.data(_PATH_ROLE)
+        key = grid_item.data(PATH_ROLE)
         item = self._items.get(key)
         if item is None:
             return
@@ -3334,7 +2057,7 @@ class MainWindow(QMainWindow):
         self._syncing = True
         leaf = self._leaf_for(Path(key))
         if leaf is not None:
-            leaf.setCheckState(0, _checked(item.selected))
+            leaf.setCheckState(0, check_state(item.selected))
             self._sync_ancestors(leaf)
         self._syncing = False
         self._update_status()
@@ -3348,19 +2071,19 @@ class MainWindow(QMainWindow):
         for key, grid_item in self._grid_items.items():
             item = self._items.get(key)
             if item is not None:
-                grid_item.setCheckState(_checked(item.selected))
+                grid_item.setCheckState(check_state(item.selected))
 
     def _on_grid_context_menu(self, pos: object) -> None:
         """Offer a thumbnail the same right-click actions as its row in the tree."""
         grid_item = self._grid.itemAt(pos)
         if grid_item is None:
             return
-        selected_keys = [gi.data(_PATH_ROLE) for gi in self._grid.selectedItems()]
-        if len(selected_keys) > 1 and grid_item.data(_PATH_ROLE) in selected_keys:
+        selected_keys = [gi.data(PATH_ROLE) for gi in self._grid.selectedItems()]
+        if len(selected_keys) > 1 and grid_item.data(PATH_ROLE) in selected_keys:
             items = [self._items[key] for key in selected_keys if key in self._items]
             menu: QMenu | None = self._build_bulk_context_menu(items)
         else:
-            menu = self._build_tree_context_menu(self._leaf_for(Path(grid_item.data(_PATH_ROLE))))
+            menu = self._build_tree_context_menu(self._leaf_for(Path(grid_item.data(PATH_ROLE))))
         if menu is not None:
             menu.exec(self._grid.viewport().mapToGlobal(pos))
 
@@ -3551,7 +2274,7 @@ class MainWindow(QMainWindow):
         box.addStretch(1)
         icon = QLabel()
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pixmap = _app_icon().pixmap(96, 96)
+        pixmap = app_icon().pixmap(96, 96)
         if not pixmap.isNull():
             icon.setPixmap(pixmap)
         box.addWidget(icon)
@@ -3614,7 +2337,7 @@ class MainWindow(QMainWindow):
         ):
             self._grid_filter_combo.addItem(label, criterion)
         self._grid_filter_combo.setToolTip(tooltip("Show only the photos in the chosen state."))
-        _fit_combo(self._grid_filter_combo)
+        fit_combo(self._grid_filter_combo)
         row.addWidget(self._grid_filter_combo)
         row.addSpacing(16)
 
@@ -3630,7 +2353,7 @@ class MainWindow(QMainWindow):
         self._grid_sort_combo.setToolTip(
             tooltip("Order the thumbnails by name, file type, status, or existing metadata."),
         )
-        _fit_combo(self._grid_sort_combo)
+        fit_combo(self._grid_sort_combo)
         row.addWidget(self._grid_sort_combo)
 
         self._grid_sort_dir = QToolButton()
@@ -3686,7 +2409,7 @@ class MainWindow(QMainWindow):
         self._error_banner.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._error_banner.hide()
         box.addWidget(self._error_banner)
-        self._preview = _ClickableLabel(_("Select a photo to preview it."))
+        self._preview = ClickableLabel(_("Select a photo to preview it."))
         self._preview.setObjectName("preview")
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview.setMinimumHeight(240)
@@ -3759,20 +2482,20 @@ class MainWindow(QMainWindow):
         grid.addWidget(self._title_source, 2, 1)
 
         top = Qt.AlignmentFlag.AlignTop
-        self._existing_description = _readonly_box(44)
+        self._existing_description = readonly_box(44)
         self._description = QPlainTextEdit()
         self._description.setToolTip(tooltip("The description to write."))
         # Descriptions are usually a sentence or two; grow the boxes with the text instead of
         # reserving a fixed block of the pane (textChanged also fires on programmatic fills).
-        self._description.textChanged.connect(lambda: _fit_text_height(self._description))
-        _fit_text_height(self._description)
+        self._description.textChanged.connect(lambda: fit_text_height(self._description))
+        fit_text_height(self._description)
         grid.addWidget(QLabel(_("Description")), 3, 0, top)
         grid.addWidget(self._existing_description, 3, 1)
         grid.addWidget(self._description, 3, 2)
         self._description_source = self._source_note()
         grid.addWidget(self._description_source, 4, 1)
 
-        self._existing_keywords = _readonly_box(150)
+        self._existing_keywords = readonly_box(150)
         self._keywords = QPlainTextEdit()
         self._keywords.setMinimumHeight(150)
         self._keywords.setPlaceholderText(_("One per line. Use < for hierarchy (Duck<Bird<Animal)"))
@@ -3850,7 +2573,7 @@ class MainWindow(QMainWindow):
         self._diff.setToolTip(
             tooltip("Keyword changes a save will make: green added, red removed."),
         )
-        self._hierarchy = _readonly_box(60)
+        self._hierarchy = readonly_box(60)
         self._hierarchy.setObjectName("tree")  # monospace, so the branch guides line up
         self._hierarchy.setToolTip(
             tooltip(
@@ -4099,7 +2822,7 @@ class MainWindow(QMainWindow):
         self._count("autosave")
         self._refresh_generate_labels()
         if enabled and not self._write_fields_chosen():
-            self._status.setText(_(_PICK_A_FIELD))
+            self._status.setText(_(PICK_A_FIELD))
 
     def _refresh_generate_labels(self) -> None:
         """Keep both Generate buttons saying whether the run writes when it is done, and what."""
@@ -4324,10 +3047,10 @@ class MainWindow(QMainWindow):
         self._count("remove")
         removed: list[str] = []
         for tree_item in self._tree.selectedItems():
-            path = tree_item.data(0, _PATH_ROLE)
+            path = tree_item.data(0, PATH_ROLE)
             if path is None:
                 continue
-            if bool(tree_item.data(0, _IS_DIR_ROLE)):
+            if bool(tree_item.data(0, IS_DIR_ROLE)):
                 prefix = Path(path)
                 removed += [k for k in self._items if Path(k).is_relative_to(prefix)]
             else:
@@ -4615,12 +3338,12 @@ class MainWindow(QMainWindow):
             leaf = self._add_leaf(self._tree, path, labels[path])
             # The label is relative to the folder the photos share, so the full path is worth
             # a tooltip here in a way it is not under a folder row that already names it.
-            leaf.setToolTip(_COL_NAME, str(path))
+            leaf.setToolTip(COL_NAME, str(path))
 
     def _add_folder_node(self, parent: object, node: FolderNode) -> None:
-        folder_item = _SortableTreeItem(parent, [node.label, ""])
-        folder_item.setData(0, _PATH_ROLE, str(node.path))
-        folder_item.setData(0, _IS_DIR_ROLE, _DIR_MARK)
+        folder_item = SortableTreeItem(parent, [node.label, ""])
+        folder_item.setData(0, PATH_ROLE, str(node.path))
+        folder_item.setData(0, IS_DIR_ROLE, DIR_MARK)
         folder_item.setFlags(folder_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         folder_item.setExpanded(True)
         self._folder_rows[str(node.path)] = folder_item
@@ -4630,14 +3353,14 @@ class MainWindow(QMainWindow):
             self._add_leaf(folder_item, path, path.name)
         self._sync_folder_check(folder_item)
 
-    def _add_leaf(self, parent: object, path: Path, label: str) -> _SortableTreeItem:
+    def _add_leaf(self, parent: object, path: Path, label: str) -> SortableTreeItem:
         """Add one photo's row under *parent*, showing it as *label*."""
         item = self._items[str(path)]
-        leaf = _SortableTreeItem(parent, [label, file_type_label(path), "", ""])
-        leaf.setData(0, _PATH_ROLE, str(path))
-        # Files leave _IS_DIR_ROLE unset (None), which reads as "not a folder".
+        leaf = SortableTreeItem(parent, [label, file_type_label(path), "", ""])
+        leaf.setData(0, PATH_ROLE, str(path))
+        # Files leave IS_DIR_ROLE unset (None), which reads as "not a folder".
         leaf.setFlags(leaf.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        leaf.setCheckState(0, _checked(item.selected))
+        leaf.setCheckState(0, check_state(item.selected))
         self._leaf_rows[str(path)] = leaf
         self._render_status_cells(leaf, item)
         return leaf
@@ -4648,10 +3371,10 @@ class MainWindow(QMainWindow):
         if self._syncing or column != 0:
             return
         self._syncing = True
-        if bool(item.data(0, _IS_DIR_ROLE)):
+        if bool(item.data(0, IS_DIR_ROLE)):
             self._set_descendants_checked(item, item.checkState(0))
         else:
-            path = item.data(0, _PATH_ROLE)
+            path = item.data(0, PATH_ROLE)
             if path is not None:
                 self._items[path].selected = item.checkState(0) == Qt.CheckState.Checked
         # Whichever kind of row was toggled, every folder above it may have gone mixed.
@@ -4664,10 +3387,10 @@ class MainWindow(QMainWindow):
         for index in range(folder_item.childCount()):
             child = folder_item.child(index)
             child.setCheckState(0, state)
-            if bool(child.data(0, _IS_DIR_ROLE)):
+            if bool(child.data(0, IS_DIR_ROLE)):
                 self._set_descendants_checked(child, state)
             else:
-                path = child.data(0, _PATH_ROLE)
+                path = child.data(0, PATH_ROLE)
                 if path is not None:
                     self._items[path].selected = state == Qt.CheckState.Checked
 
@@ -4692,13 +3415,13 @@ class MainWindow(QMainWindow):
             # A programmatic rebuild (tree.clear() emits currentItemChanged(None)) is not the
             # user navigating; reacting would blank the pane they are working in.
             return
-        path = current.data(0, _PATH_ROLE) if current is not None else None
+        path = current.data(0, PATH_ROLE) if current is not None else None
         if current is None or path is None:
             self._commit_current()
             self._stop_thumbs()
             self._show_empty()
             return
-        self._open_location(Location(path=Path(path), is_dir=bool(current.data(0, _IS_DIR_ROLE))))
+        self._open_location(Location(path=Path(path), is_dir=bool(current.data(0, IS_DIR_ROLE))))
 
     def _open_location(self, location: Location) -> None:
         """
@@ -4872,7 +3595,7 @@ class MainWindow(QMainWindow):
         for item in items:
             key = str(item.path)
             grid_item = QListWidgetItem(item.path.name)
-            grid_item.setData(_PATH_ROLE, key)
+            grid_item.setData(PATH_ROLE, key)
             grid_item.setFlags(grid_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             self._grid.addItem(grid_item)
             self._grid_items[key] = grid_item
@@ -4912,7 +3635,7 @@ class MainWindow(QMainWindow):
         was_syncing = self._syncing
         self._syncing = True
         try:
-            grid_item.setCheckState(_checked(item.selected))
+            grid_item.setCheckState(check_state(item.selected))
             key = str(item.path)
             base = self._thumb_cache.get(key, self._placeholder_pixmap)
             badges = thumb_badges(item, has_sidecar=item.path.with_suffix(".xmp").exists())
@@ -4930,10 +3653,10 @@ class MainWindow(QMainWindow):
             # the detail page would yank the user out of the grid they are working in.
             self._grid_check_toggled = False
             return
-        if _selection_modifiers_active():
+        if selection_modifiers_active():
             # Shift/Cmd clicks are building a multi-selection; navigating away would kill it.
             return
-        key = item.data(_PATH_ROLE)
+        key = item.data(PATH_ROLE)
         leaf = self._leaf_for(Path(key))
         if leaf is not None:
             self._tree.setCurrentItem(leaf)  # routes to the detail page
@@ -5008,13 +3731,13 @@ class MainWindow(QMainWindow):
         self._existing_source.setText(
             _("(from {sources})").format(sources=sources) if sources else _("(no metadata found)"),
         )
-        self._existing_title.setText(item.existing_title or _(_NONE))
-        self._existing_description.setPlainText(item.existing_description or _(_NONE))
-        _fit_text_height(self._existing_description)
+        self._existing_title.setText(item.existing_title or _(NONE_LABEL))
+        self._existing_description.setPlainText(item.existing_description or _(NONE_LABEL))
+        fit_text_height(self._existing_description)
         self._fill_source_notes(item)
         existing_kw = format_existing_keywords(item.existing_keywords)
-        self._existing_keywords.setPlainText(existing_kw or _(_NONE))
-        self._existing_copyright.setText(item.existing_copyright or _(_NONE))
+        self._existing_keywords.setPlainText(existing_kw or _(NONE_LABEL))
+        self._existing_copyright.setText(item.existing_copyright or _(NONE_LABEL))
         self._refresh_planned_copyright()
         self._title.setText(item.title)
         self._description.setPlainText(item.description)
@@ -5170,7 +3893,7 @@ class MainWindow(QMainWindow):
         if not self._write_keywords.isChecked():
             # Keywords are not being written, so the diff and hierarchy do not apply.
             self._diff.setHtml(_("(keywords will not be written)"))
-            self._hierarchy.setPlainText(_(_NONE))
+            self._hierarchy.setPlainText(_(NONE_LABEL))
             self._details_toggle.setText(_("Keyword changes (not written)"))
             return
         edited = parse_keyword_lines(self._keywords.toPlainText())
@@ -5178,7 +3901,7 @@ class MainWindow(QMainWindow):
         existing = self._current.existing_keywords
         verbatim = self._verbatim_spellings()
         paths = hierarchy_preview(existing, edited, overwrite=overwrite, verbatim=verbatim)
-        self._hierarchy.setPlainText(paths or _(_NONE))
+        self._hierarchy.setPlainText(paths or _(NONE_LABEL))
         diff = keyword_diff(existing, edited, overwrite=overwrite, verbatim=verbatim)
         self._diff.setHtml(keyword_diff_html(diff))
         # A collapsed section still tells the user whether saving changes anything.
@@ -5341,7 +4064,7 @@ class MainWindow(QMainWindow):
         if self._current is None or self._busy():
             return
         if not self._write_fields_chosen():
-            self._status.setText(_(_PICK_A_FIELD))
+            self._status.setText(_(PICK_A_FIELD))
             return
         self._commit_current()
         ok = self._write_item(self._current)
@@ -5358,7 +4081,7 @@ class MainWindow(QMainWindow):
     def _save_selected(self) -> None:
         self._count("save")
         if not self._write_fields_chosen():
-            self._status.setText(_(_PICK_A_FIELD))
+            self._status.setText(_(PICK_A_FIELD))
             return
         self._commit_current()
         options = self._save_options()
@@ -5843,7 +4566,7 @@ class MainWindow(QMainWindow):
             return
         if self._wants_chained_save() and not self._write_fields_chosen():
             # Silence here would mean coming back to an unattended run that wrote nothing.
-            self._status.setText(_(_PICK_A_FIELD))
+            self._status.setText(_(PICK_A_FIELD))
         # Nothing more is chained, so whatever the run was, it is over.
         self._set_running(running=False)
         self._finish_run()
@@ -5976,7 +4699,7 @@ class MainWindow(QMainWindow):
         note.setObjectName("hint")
         note.setWordWrap(True)
         box.addWidget(note)
-        close = QPushButton(_(_CLOSE))
+        close = QPushButton(_(CLOSE_LABEL))
         close.setDefault(True)
         close.clicked.connect(dialog.accept)
         buttons = QHBoxLayout()
@@ -6002,7 +4725,7 @@ class MainWindow(QMainWindow):
         self._vocabulary_field = QLineEdit(str(self._vocabulary_path or ""))
         self._vocabulary_field.setReadOnly(True)
         self._vocabulary_field.setPlaceholderText(_("(no vocabulary file)"))
-        choose = QPushButton(_(_CHOOSE))
+        choose = QPushButton(_(CHOOSE_LABEL))
         choose.clicked.connect(self._choose_vocabulary)
         clear = QPushButton(_("Clear"))
         clear.clicked.connect(lambda: self._load_vocabulary(None))
@@ -6117,7 +4840,7 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         box.addWidget(note)
 
-        close = QPushButton(_(_CLOSE))
+        close = QPushButton(_(CLOSE_LABEL))
         close.setDefault(True)
         close.clicked.connect(dialog.accept)
         buttons = QHBoxLayout()
@@ -6277,7 +5000,7 @@ class MainWindow(QMainWindow):
         # A box rather than a label: the preview is one line per tag and grows as fields are filled
         # in, and a label that grows inside a dialog gets squeezed instead, cutting off its last
         # line. This scrolls past _COPYRIGHT_PREVIEW_MAX_HEIGHT, and the lines can be copied out.
-        self._copyright_preview = _readonly_box(_COPYRIGHT_PREVIEW_MIN_HEIGHT)
+        self._copyright_preview = readonly_box(_COPYRIGHT_PREVIEW_MIN_HEIGHT)
         box.addWidget(self._copyright_preview)
 
         self._copyright_warning = QLabel("")
@@ -6295,7 +5018,7 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         box.addWidget(note)
 
-        close = QPushButton(_(_CLOSE))
+        close = QPushButton(_(CLOSE_LABEL))
         close.setDefault(True)
         close.clicked.connect(dialog.accept)
         buttons = QHBoxLayout()
@@ -6407,7 +5130,7 @@ class MainWindow(QMainWindow):
         self._copyright_preview.setPlainText(
             error or copyright_summary(self._copyright_fields, year),
         )
-        _fit_text_height(
+        fit_text_height(
             self._copyright_preview,
             min_h=_COPYRIGHT_PREVIEW_MIN_HEIGHT,
             max_h=_COPYRIGHT_PREVIEW_MAX_HEIGHT,
@@ -6642,7 +5365,7 @@ class MainWindow(QMainWindow):
         self._build_button = QPushButton(_("Build"))
         self._build_button.setObjectName("primary")
         self._build_button.clicked.connect(self._start_vocabulary_build)
-        close = QPushButton(_(_CLOSE))
+        close = QPushButton(_(CLOSE_LABEL))
         close.clicked.connect(dialog.accept)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -6673,7 +5396,7 @@ class MainWindow(QMainWindow):
                 "machine. Its counts are occurrences in the keyword tree, not photos.",
             ),
         )
-        choose = QPushButton(_(_CHOOSE))
+        choose = QPushButton(_(CHOOSE_LABEL))
         choose.clicked.connect(self._choose_keyword_export)
         row = QHBoxLayout()
         row.addWidget(self._build_export, stretch=1)
@@ -6753,8 +5476,8 @@ class MainWindow(QMainWindow):
         group = QGroupBox(_("Write to"))
         form = QFormLayout(group)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self._build_output = QLineEdit(str(_DEFAULT_VOCABULARY_FILE))
-        output_choose = QPushButton(_(_CHOOSE))
+        self._build_output = QLineEdit(str(DEFAULT_VOCABULARY_FILE))
+        output_choose = QPushButton(_(CHOOSE_LABEL))
         output_choose.clicked.connect(self._choose_vocabulary_output)
         output_row = QHBoxLayout()
         output_row.addWidget(self._build_output, stretch=1)
@@ -6769,7 +5492,7 @@ class MainWindow(QMainWindow):
                 "what makes the thresholds tunable rather than a guess.",
             ),
         )
-        report_choose = QPushButton(_(_CHOOSE))
+        report_choose = QPushButton(_(CHOOSE_LABEL))
         report_choose.clicked.connect(self._choose_drop_report)
         report_row = QHBoxLayout()
         report_row.addWidget(self._build_report, stretch=1)
@@ -6804,7 +5527,7 @@ class MainWindow(QMainWindow):
         chosen, _filter = QFileDialog.getSaveFileName(
             self._builder_dialog,
             _("Write the vocabulary to"),
-            self._build_output.text() or str(_DEFAULT_VOCABULARY_FILE),
+            self._build_output.text() or str(DEFAULT_VOCABULARY_FILE),
             _("Keyword files (*.txt);;All files (*)"),
         )
         if chosen:
@@ -6837,7 +5560,7 @@ class MainWindow(QMainWindow):
                 _("Pick a source: the photos in the list, a keyword export, or both."),
             )
             return
-        output = Path(self._build_output.text().strip() or str(_DEFAULT_VOCABULARY_FILE))
+        output = Path(self._build_output.text().strip() or str(DEFAULT_VOCABULARY_FILE))
         try:
             output.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -6961,7 +5684,7 @@ class MainWindow(QMainWindow):
         )
         box.addWidget(self._undo_force)
 
-        self._undo_details = _readonly_box(120)
+        self._undo_details = readonly_box(120)
         self._undo_details.setPlaceholderText(_("What happened to each file appears here."))
         box.addWidget(self._undo_details)
 
@@ -6973,7 +5696,7 @@ class MainWindow(QMainWindow):
         self._undo_button = QPushButton(_("Undo"))
         self._undo_button.setObjectName("primary")
         self._undo_button.clicked.connect(lambda: self._run_undo(dry_run=False))
-        close = QPushButton(_(_CLOSE))
+        close = QPushButton(_(CLOSE_LABEL))
         close.clicked.connect(dialog.accept)
         buttons = QHBoxLayout()
         buttons.addWidget(preview)
@@ -6998,7 +5721,7 @@ class MainWindow(QMainWindow):
                 logger.warning("gui_journal_unreadable", file=str(path), error=str(exc))
                 continue
             entry = QListWidgetItem(journal_label(path, entries))
-            entry.setData(_PATH_ROLE, str(path))
+            entry.setData(PATH_ROLE, str(path))
             self._journal_list.addItem(entry)
         listed = self._journal_list.count()
         if listed:
@@ -7019,7 +5742,7 @@ class MainWindow(QMainWindow):
             self._undo_details.setPlainText(_("Pick a run first."))
             return
         try:
-            records = read_journal(Path(entry.data(_PATH_ROLE)))
+            records = read_journal(Path(entry.data(PATH_ROLE)))
         except UndoError as exc:
             QMessageBox.warning(self._undo_dialog, _("Could not read that run"), str(exc))
             return
@@ -7136,7 +5859,7 @@ class MainWindow(QMainWindow):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._watch_folder = QLineEdit()
         self._watch_folder.setPlaceholderText(_("(pick a folder)"))
-        choose = QPushButton(_(_CHOOSE))
+        choose = QPushButton(_(CHOOSE_LABEL))
         choose.clicked.connect(self._choose_watch_folder)
         folder_row = QHBoxLayout()
         folder_row.addWidget(self._watch_folder, stretch=1)
@@ -7366,8 +6089,8 @@ class MainWindow(QMainWindow):
     def _open_logs(self) -> None:
         """Reveal the log folder in the OS file browser so the user can read the run logs."""
         self._count("open_logs")
-        _LOG_FOLDER.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(_LOG_FOLDER)))
+        LOG_FOLDER.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_FOLDER)))
 
     # --- helpers ---------------------------------------------------------------------------
 
@@ -7393,21 +6116,21 @@ class MainWindow(QMainWindow):
         label = _(_STATUS_LABEL[item.status]) if _STATUS_LABEL[item.status] else ""
         if item.status == READY and item.from_cache:
             label = _("ready (cached)")
-        leaf.setText(_COL_STATUS, mark_mixed_script(label, item.foreign_terms))
-        leaf.setData(_COL_STATUS, _STATUS_RANK_ROLE, status_sort_rank(item.status))
+        leaf.setText(COL_STATUS, mark_mixed_script(label, item.foreign_terms))
+        leaf.setData(COL_STATUS, STATUS_RANK_ROLE, status_sort_rank(item.status))
         color = _STATUS_COLOR.get(item.status)
         leaf.setData(
-            _COL_STATUS,
+            COL_STATUS,
             Qt.ItemDataRole.ForegroundRole,
             QBrush(color) if color is not None else None,
         )
         # Surface on hover what the cell only had room to mark: the failure reason, or the words
         # that made the text mixed. Model errors can be a paragraph long, hence the wrap.
         hover = item.error if item.status == FAILED else foreign_terms_note(item.foreign_terms)
-        leaf.setToolTip(_COL_STATUS, wrap_tooltip(hover) if hover else "")
+        leaf.setToolTip(COL_STATUS, wrap_tooltip(hover) if hover else "")
         if item.known_fields is not None:
-            leaf.setText(_COL_TAGGED, tagged_summary(item.known_fields))
-            leaf.setToolTip(_COL_TAGGED, wrap_tooltip(tagged_tooltip(item.known_fields)))
+            leaf.setText(COL_TAGGED, tagged_summary(item.known_fields))
+            leaf.setToolTip(COL_TAGGED, wrap_tooltip(tagged_tooltip(item.known_fields)))
 
     def _resort(self) -> None:
         """Re-apply the active sort so changed statuses settle when sorting by the Status column."""
@@ -7531,7 +6254,7 @@ class MainWindow(QMainWindow):
         A filter on the few widgets a review happens in, plus focus changes anywhere, rather than
         one on the whole application: that would run Python for every event Qt delivers.
         """
-        self._input_watcher = _InputWatcher(self._touch, self)
+        self._input_watcher = InputWatcher(self._touch, self)
         for widget in (
             self._tree,
             self._grid,
@@ -7721,23 +6444,6 @@ class MainWindow(QMainWindow):
 _COLOR_SCHEMES = {Qt.ColorScheme.Dark: "dark", Qt.ColorScheme.Light: "light"}
 
 
-class _InputWatcher(QObject):
-    """Event filter that reports key presses, clicks, and scrolling; it never consumes them."""
-
-    _INPUT = frozenset({QEvent.Type.KeyPress, QEvent.Type.MouseButtonPress, QEvent.Type.Wheel})
-
-    def __init__(self, touch: Callable[[], None], parent: QObject) -> None:
-        """Call *touch* on every input event the watched widgets receive."""
-        super().__init__(parent)
-        self._touch = touch
-
-    def eventFilter(self, _watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override.
-        """Note the input and let the event through untouched."""
-        if event.type() in self._INPUT:
-            self._touch()
-        return False
-
-
 def _make_placeholder() -> QPixmap:
     """Build a neutral grey tile shown in the grid until a thumbnail loads."""
     pixmap = QPixmap(_THUMB_SIZE, _THUMB_SIZE)
@@ -7794,105 +6500,3 @@ def _badged_pixmap(base: QPixmap, badges: list[str]) -> QPixmap:
         painter.drawText(QRect(x, margin, radius, radius), Qt.AlignmentFlag.AlignCenter, glyph)
     painter.end()
     return pixmap
-
-
-def _checked(selected: bool) -> Qt.CheckState:  # noqa: FBT001 - tiny private bool mapper.
-    """Map a selected flag to a Qt check state."""
-    return Qt.CheckState.Checked if selected else Qt.CheckState.Unchecked
-
-
-def _selection_modifiers_active() -> bool:
-    """Report whether a multi-select modifier (Shift or Ctrl/Cmd) is held right now."""
-    modifiers = QApplication.keyboardModifiers()
-    return bool(
-        modifiers & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier),
-    )
-
-
-def launch(argv: list[str] | None = None) -> int:
-    """Create the application, show the main window, and run the event loop."""
-    started = time.monotonic()
-    # A Finder/Dock launch inherits a minimal PATH, so graft on the PATH the user's login shell
-    # would set. That recovers exiftool wherever their package manager put it (Homebrew, Nix,
-    # MacPorts, ...). A no-op for a normal shell launch, where those dirs are already present.
-    os.environ["PATH"] = ensure_path_dirs(os.environ.get("PATH", ""), login_shell_path())
-    # And bridge a config-file exiftool path into the env var metadata reads (an exported var wins).
-    if (exiftool_path := load_defaults().exiftool_path) is not None:
-        os.environ.setdefault("PHOTO_TAGGER_EXIFTOOL", exiftool_path)
-    # File-only logging: the window carries the live status, so the terminal stays quiet, but a
-    # durable log (with full tracebacks for failed photos) is written for the "Open logs" button.
-    setup_logging(file_log_level="DEBUG", console_log_level="OFF", log_folder=_LOG_FOLDER)
-    # The GUI has no command line to pass --otel on, so tracing is configured from the [log] table
-    # of the config file alone. A misconfigured endpoint must not stop the window from opening: the
-    # reason is logged and the app runs untraced, unlike the CLI, where the user asked in this
-    # breath and deserves to be told the run will not be observed.
-    log_defaults = load_defaults().log
-    try:
-        configure_tracing(
-            enabled=log_defaults.otel,
-            endpoint=log_defaults.otel_endpoint,
-            include_content=log_defaults.otel_content,
-        )
-    except ObservabilityError as exc:
-        logger.warning("otel_setup_failed", error=str(exc))
-    app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
-    app.setApplicationName("Photo Tagger")
-    app.setApplicationDisplayName("Photo Tagger")
-    app.setWindowIcon(_app_icon())
-    app.setStyleSheet(_stylesheet())
-    # Resolve the UI language before any widget is built: strings are baked at construction.
-    # Qt's system locale is the hint of last resort; it knows the OS language even when no LANG
-    # is exported (a Finder/Dock launch).
-    configured = load_config().get("language")
-    language = i18n.activate(
-        str(configured) if configured else None,
-        system_hint=QLocale.system().name(),
-    )
-    # A Finder launch has no LANG, but Qt still knows the OS language for the beacons.
-    telemetry.set_locale_hint(QLocale.system().name())
-    if language != "en":
-        # Also translate Qt's own stock strings (file dialogs, standard buttons). Best-effort:
-        # PySide6 wheels may not ship every qtbase catalog.
-        qt_translator = QTranslator(app)
-        translations_dir = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
-        if qt_translator.load(QLocale(language), "qtbase", "_", translations_dir):
-            app.installTranslator(qt_translator)
-
-    def _report_crash(exc: BaseException, *, block: bool) -> None:
-        # The persisted toggle (or the config default) decides, as it does for the window itself;
-        # emit_crash enforces the environment switches on top.
-        enabled, opted_in = telemetry.gui_choice(config_enabled=load_defaults().telemetry.enabled)
-        if telemetry.notice_due(interface="gui"):
-            # The window has not shown its disclosure yet, so nothing may be sent before it has.
-            return
-        telemetry.emit_crash(
-            exc,
-            interface="gui",
-            command="gui",
-            enabled=enabled,
-            opted_in=opted_in,
-            block=block,
-        )
-
-    # Qt swallows exceptions raised inside slots (they reach sys.excepthook and the loop keeps
-    # running), so an unhandled slot crash never propagates out of app.exec(). Chain a hook that
-    # fires an anonymous crash beacon (type and stack trace, never the message) first.
-    previous_hook = sys.excepthook
-
-    def _crash_hook(exc_type: type[BaseException], exc: BaseException, tb: object) -> None:
-        _report_crash(exc, block=False)
-        previous_hook(exc_type, exc, tb)  # type: ignore[arg-type]
-
-    sys.excepthook = _crash_hook
-
-    try:
-        window = MainWindow()
-        window.show()
-        startup_seconds = time.monotonic() - started
-        window.maybe_show_telemetry_notice()
-        window.report_launch(startup_seconds)
-        return app.exec()
-    except Exception as exc:
-        # A crash outside the event loop (startup, teardown) kills the process; flush the beacon.
-        _report_crash(exc, block=True)
-        raise

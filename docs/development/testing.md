@@ -98,11 +98,11 @@ platform:
 uv run poe test-gui
 ```
 
-`gui.py` itself is the Qt event-loop shell. The offscreen GUI tests do drive its widgets and
-workers. But coverage cannot measure the event loop, and the runtime attributes from `shiboken`
+The `gui/` package itself is the Qt event-loop shell. The offscreen GUI tests do drive its widgets
+and workers. But coverage cannot measure the event loop, and the runtime attributes from `shiboken`
 confuse the static tools. For these reasons, `[tool.coverage.run].omit` in `pyproject.toml` excludes
-the whole module from coverage. Keep testable logic in `gui_state.py` (covered), not in `gui.py`
-(omitted). See [Code quality](code-quality.md) for why the project also excludes `gui.py` from the
+the whole package from coverage. Keep testable logic in `gui_state.py` (covered), not in `gui/`
+(omitted). See [Code quality](code-quality.md) for why the project also excludes `gui/` from the
 type checker and static analyzer.
 
 ## Coverage target

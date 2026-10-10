@@ -7,12 +7,15 @@ Skipped entirely when PySide6 is absent (CLI-only setups and CI, which do not in
 server, so the tree, the detail pane, and the generation worker can be exercised for real.
 
 The ``# mypy: ignore-errors`` header opts this file out of the zuban type check, for the same reason
-gui.py does: PySide6 ships no stubs and is not installed in the lint job, so a strict run would only
-see an unresolved-import error here.
+the gui package carries it: PySide6 ships no stubs and is not installed in the lint job, so a strict
+run would only see an unresolved-import error here.
 """
 
+import importlib
 import json
 import os
+import pkgutil
+import subprocess
 import threading
 import time
 from collections.abc import Iterator
@@ -21,7 +24,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import cast
 
 import pytest
@@ -31,21 +34,31 @@ pytest.importorskip("PySide6")
 # Must be set before the first QApplication is created.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import (
     QApplication,
     QFormLayout,
+    QInputDialog,
     QLineEdit,
     QMenu,
+    QMessageBox,
     QPushButton,
     QTreeWidgetItem,
 )
 
-from photo_tagger import gui, metadata, telemetry
+from photo_tagger import gui, i18n, image_io, metadata, telemetry
 from photo_tagger.errors import ProviderError
+from photo_tagger.gui import main_window, viewer, widgets, workers
+from photo_tagger.gui.common import COL_STATUS, COL_TAGGED, IS_DIR_ROLE, PATH_ROLE
 from photo_tagger.gui_state import (
+    DEFAULT_GUI_EXTENSIONS,
     EXTRA_PASSES,
     FAILED,
+    FILTER_FAILED,
+    FILTER_MIXED_SCRIPT,
+    FILTER_NO_COPYRIGHT,
+    FILTER_SAVED,
+    FILTER_UNTAGGED,
     MAX_ZOOM,
     MIXED_SCRIPT_MARK,
     PENDING,
@@ -53,9 +66,13 @@ from photo_tagger.gui_state import (
     RERUN_FAILED,
     RERUN_MIXED_SCRIPT,
     SAVED,
+    SELECT_CHECK,
+    SELECT_UNCHECK,
+    SORT_STATUS,
     TOOLTIP_WIDTH,
     WORKING,
     GenerateOptions,
+    HarmonizeResult,
     Proposal,
     SaveJob,
     SaveOptions,
@@ -63,6 +80,7 @@ from photo_tagger.gui_state import (
     WatchSettings,
     build_copyright_fields,
     gui_cache_namespace,
+    photo_matches_filter,
 )
 from photo_tagger.metadata import (
     FIELD_COPYRIGHT,
@@ -84,6 +102,28 @@ from photo_tagger.vocabulary_build import KeywordCensus, TrimRules
 from photo_tagger.vocabulary_organize import OrganizeStats
 
 
+def _gui_modules() -> list[ModuleType]:
+    """Return every module of the gui package, so a check or a patch can cover them all."""
+    return [
+        importlib.import_module(f"{gui.__name__}.{info.name}")
+        for info in pkgutil.iter_modules(gui.__path__)
+    ]
+
+
+def _patch_gui(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
+    """
+    Replace *name* in every GUI module that imports it.
+
+    A module binds what it imports under its own name, so a patch only takes where it lands in the
+    module that makes the call. Patching every one keeps a test from depending on which module that
+    is, and failing when none has the name catches a patch that would otherwise quietly do nothing.
+    """
+    patched = [module for module in _gui_modules() if hasattr(module, name)]
+    assert patched, f"no GUI module uses {name}"
+    for module in patched:
+        monkeypatch.setattr(module, name, value)
+
+
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
     """One QApplication for the module (Qt allows only a single instance)."""
@@ -100,7 +140,7 @@ def _cache_off_the_users_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     wrote its stub answer into whatever the person running the suite had tagged. Six such rows had
     accumulated in one real cache since July, one per test session.
     """
-    monkeypatch.setattr(gui, "_DEFAULT_CACHE_FILE", tmp_path / "test-cache.sqlite")
+    _patch_gui(monkeypatch, "DEFAULT_CACHE_FILE", tmp_path / "test-cache.sqlite")
 
 
 @pytest.fixture
@@ -114,9 +154,9 @@ def window(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Iterator[gui.
     # proposal behind on purpose and are not testing the close-confirmation dialog itself. Default
     # to "close anyway"; a test that specifically exercises the prompt overrides this again.
     monkeypatch.setattr(
-        gui.QMessageBox,
+        QMessageBox,
         "question",
-        lambda *_a, **_k: gui.QMessageBox.StandardButton.Yes,
+        lambda *_a, **_k: QMessageBox.StandardButton.Yes,
     )
     yield win
     win.close()
@@ -145,14 +185,14 @@ def _stub_reads(
     *captions* overrides the per-field breakdown the detail pane reads, for a test that cares which
     file a value came from or what it shadows; by default both fields come from the sidecar alone.
     """
-    monkeypatch.setattr(gui, "read_caption", lambda _p: ("Old Title", "Old caption."))
+    _patch_gui(monkeypatch, "read_caption", lambda _p: ("Old Title", "Old caption."))
     found = captions or {
         FIELD_TITLE: [CaptionValue("Old Title", SOURCE_SIDECAR)],
         FIELD_DESCRIPTION: [CaptionValue("Old caption.", SOURCE_SIDECAR)],
     }
-    monkeypatch.setattr(gui, "read_caption_values", lambda _p: found)
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(monkeypatch, "read_caption_values", lambda _p: found)
+    _patch_gui(
+        monkeypatch,
         "read_image_context",
         lambda _p, **_kwargs: ImageContext(existing_keywords=KeywordSet(subject=keywords)),
     )
@@ -160,7 +200,7 @@ def _stub_reads(
 
 def _stub_save_helper(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the batch save's shared ExifTool out of the tests; the writes themselves are stubbed."""
-    monkeypatch.setattr(gui, "managed_helper", lambda _et: nullcontext(None))
+    _patch_gui(monkeypatch, "managed_helper", lambda _et: nullcontext(None))
 
 
 def _drain_save(window: gui.MainWindow, timeout: float = 10.0) -> None:
@@ -223,7 +263,7 @@ def test_refresh_models_populates_combo_vision_first(
         resolve_api_key=lambda _k: None,
         list_models=lambda _base, _key: ["llama3", "qwen3-vl-30b"],
     )
-    monkeypatch.setattr(gui, "get_backend", lambda _name: fake)
+    _patch_gui(monkeypatch, "get_backend", lambda _name: fake)
     window._refresh_models()  # noqa: SLF001
     items = [window._model.itemText(i) for i in range(window._model.count())]  # noqa: SLF001
     assert items[0] == "qwen3-vl-30b"
@@ -262,7 +302,7 @@ def test_refresh_models_passes_typed_api_key(
         resolve_api_key=lambda key: seen.setdefault("key", key),
         list_models=lambda _base, _key: ["m"],
     )
-    monkeypatch.setattr(gui, "get_backend", lambda _name: fake)
+    _patch_gui(monkeypatch, "get_backend", lambda _name: fake)
     window._refresh_models()  # noqa: SLF001
     assert seen["key"] == "sk-refresh"
 
@@ -279,8 +319,8 @@ def test_worker_passes_typed_api_key_to_create_agent(
         msg = "stop before per-photo work"
         raise ProviderError(msg)
 
-    monkeypatch.setattr(gui, "create_agent", fake_create_agent)
-    worker = gui.GenerateWorker("openai", "m", None, [Path("/a.jpg")], api_key="sk-worker")
+    _patch_gui(monkeypatch, "create_agent", fake_create_agent)
+    worker = workers.GenerateWorker("openai", "m", None, [Path("/a.jpg")], api_key="sk-worker")
     worker.file_failed.connect(lambda *_a: None)
     worker.run()
     assert captured["api_key"] == "sk-worker"
@@ -298,8 +338,8 @@ def test_worker_passes_output_language_to_create_agent(
         msg = "stop before per-photo work"
         raise ProviderError(msg)
 
-    monkeypatch.setattr(gui, "create_agent", fake_create_agent)
-    worker = gui.GenerateWorker(
+    _patch_gui(monkeypatch, "create_agent", fake_create_agent)
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -385,9 +425,9 @@ def test_add_inputs_builds_a_nested_tree(window: gui.MainWindow, tmp_path: Path)
     assert window._tree.topLevelItemCount() == 1  # noqa: SLF001
     top = window._tree.topLevelItem(0)  # noqa: SLF001
     assert top is not None
-    assert bool(top.data(0, gui._IS_DIR_ROLE))  # noqa: SLF001 - the top node is a folder
+    assert bool(top.data(0, IS_DIR_ROLE))
     # One file leaf and one "sub" folder under the top.
-    kinds = {bool(top.child(i).data(0, gui._IS_DIR_ROLE)) for i in range(top.childCount())}  # noqa: SLF001
+    kinds = {bool(top.child(i).data(0, IS_DIR_ROLE)) for i in range(top.childCount())}
     assert kinds == {True, False}
 
 
@@ -567,8 +607,17 @@ def test_emptying_the_tree_drops_the_rows_and_the_index(
     assert not window._leaf_rows  # noqa: SLF001
 
 
-@pytest.mark.parametrize("name", ["QCloseEvent", "QDragEnterEvent", "QDropEvent"])
-def test_event_types_are_built_at_import_not_during_delivery(name: str) -> None:
+@pytest.mark.parametrize(
+    ("module", "name"),
+    [
+        (main_window, "QCloseEvent"),
+        (main_window, "QDragEnterEvent"),
+        (main_window, "QDropEvent"),
+        (viewer, "QKeyEvent"),
+        (widgets, "QMouseEvent"),
+    ],
+)
+def test_event_types_are_built_at_import_not_during_delivery(module: ModuleType, name: str) -> None:
     """
     The event classes the window annotates must exist before Qt delivers one.
 
@@ -578,7 +627,9 @@ def test_event_types_are_built_at_import_not_during_delivery(name: str) -> None:
     """
     import PySide6.QtGui  # noqa: PLC0415 - only importable with the [gui] extra
 
-    assert getattr(gui, name, None) is not None, f"gui.py must import {name} at runtime"
+    assert getattr(module, name, None) is not None, (
+        f"{module.__name__} must import {name} at runtime"
+    )
     assert name in vars(PySide6.QtGui), f"{name} is still built lazily"
 
 
@@ -590,7 +641,7 @@ def test_gui_does_not_use_the_tree_item_iterator() -> None:
     pointer to whatever row it stopped on. The next teardown frees that row, and the removal after
     it dereferences the dangling pointer inside QTreeModel::beginRemoveItems.
     """
-    assert not hasattr(gui, "QTreeWidgetItemIterator")
+    assert not [m.__name__ for m in _gui_modules() if hasattr(m, "QTreeWidgetItemIterator")]
 
 
 # ---------------------------------------------------------------------------
@@ -652,7 +703,7 @@ def test_tree_keeps_folders_above_files(window: gui.MainWindow, tmp_path: Path) 
     top = window._tree.topLevelItem(0)  # noqa: SLF001
     assert top is not None
     first = top.child(0)
-    assert bool(first.data(0, gui._IS_DIR_ROLE))  # noqa: SLF001 - the folder, not "a.jpg"
+    assert bool(first.data(0, IS_DIR_ROLE))
     assert first.text(0) == "zzz"
 
 
@@ -808,7 +859,7 @@ def test_stopping_the_scan_abandons_the_waiting_uncheck(
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
     monkeypatch.setattr(window, "_start_metadata_scan", lambda: None)
-    window._scan_worker = gui.MetadataScanWorker([])  # noqa: SLF001
+    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
     window._deselect_tagged(  # noqa: SLF001
         _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
     )
@@ -867,7 +918,7 @@ def test_tagged_presets_all_run_without_error(
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
     _scan_reports(window, {})
-    for _label, criterion in gui._TAGGED_PRESETS:  # noqa: SLF001
+    for _label, criterion in main_window._TAGGED_PRESETS:  # noqa: SLF001
         window._deselect_tagged(criterion)  # noqa: SLF001
         assert criterion.phrase in window._status.text()  # noqa: SLF001
 
@@ -886,14 +937,14 @@ def test_already_tagged_menu_actions_route_to_each_preset(
 ) -> None:
     """Each preset in the Select menu triggers _deselect_tagged with it (no late-binding bug)."""
     actions = window._tagged_menu.actions()  # noqa: SLF001
-    assert len(actions) == len(gui._TAGGED_PRESETS)  # noqa: SLF001
+    assert len(actions) == len(main_window._TAGGED_PRESETS)  # noqa: SLF001
 
     captured: list[TaggedCriterion] = []
     monkeypatch.setattr(window, "_deselect_tagged", captured.append)
     for action in actions:
         action.trigger()
 
-    assert captured == [criterion for _label, criterion in gui._TAGGED_PRESETS]  # noqa: SLF001
+    assert captured == [criterion for _label, criterion in main_window._TAGGED_PRESETS]  # noqa: SLF001
 
 
 def test_select_menu_checks_and_unchecks_all(window: gui.MainWindow, tmp_path: Path) -> None:
@@ -982,7 +1033,7 @@ def test_search_narrows_the_flat_list_too(window: gui.MainWindow, tmp_path: Path
     other = tmp_path / "shoot1" / "sunset.jpg"
     _jpeg(other)
     window._add_inputs([other])  # noqa: SLF001
-    window._view_actions[gui.VIEW_LIST].setChecked(True)  # noqa: SLF001
+    window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
 
     _search(window, "DSC")
 
@@ -1028,15 +1079,15 @@ def test_view_button_offers_the_two_layouts_with_tree_active(window: gui.MainWin
     labels = [action.text() for action in window._view_menu.actions()]  # noqa: SLF001
     assert labels == ["View as Tree", "View as List"]
     assert all(action.isCheckable() for action in window._view_menu.actions())  # noqa: SLF001
-    assert window._view_actions[gui.VIEW_TREE].isChecked()  # noqa: SLF001
+    assert window._view_actions[main_window.VIEW_TREE].isChecked()  # noqa: SLF001
     assert window._flat_list() is False  # noqa: SLF001
     # The button says nothing on its face, so the tooltip has to name the active layout.
     assert "View as Tree" in _unwrapped(window._view_button.toolTip())  # noqa: SLF001
 
-    window._view_actions[gui.VIEW_LIST].setChecked(True)  # noqa: SLF001
+    window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
 
     # Picking one mode drops the other: the two are one exclusive group.
-    assert window._view_actions[gui.VIEW_TREE].isChecked() is False  # noqa: SLF001
+    assert window._view_actions[main_window.VIEW_TREE].isChecked() is False  # noqa: SLF001
     assert window._flat_list() is True  # noqa: SLF001
     assert "View as List" in _unwrapped(window._view_button.toolTip())  # noqa: SLF001
 
@@ -1050,10 +1101,10 @@ def test_flat_list_puts_every_photo_at_one_level(window: gui.MainWindow, tmp_pat
     """
     _add_two_shoots(window, tmp_path)
 
-    window._view_actions[gui.VIEW_LIST].setChecked(True)  # noqa: SLF001
+    window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
 
     rows = _top_rows(window)
-    assert all(row.data(0, gui._IS_DIR_ROLE) is None for row in rows)  # noqa: SLF001
+    assert all(row.data(0, IS_DIR_ROLE) is None for row in rows)
     assert window._folder_rows == {}  # noqa: SLF001
     assert sorted(row.text(0) for row in rows) == [
         str(Path("shoot1") / "DSC_0042.jpg"),
@@ -1064,14 +1115,14 @@ def test_flat_list_puts_every_photo_at_one_level(window: gui.MainWindow, tmp_pat
 def test_flat_list_toggles_back_to_the_folder_tree(window: gui.MainWindow, tmp_path: Path) -> None:
     """Switching back restores the grouping, and a checkbox changed while flat survives it."""
     first, _second = _add_two_shoots(window, tmp_path)
-    window._view_actions[gui.VIEW_LIST].setChecked(True)  # noqa: SLF001
+    window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
 
     leaf = window._leaf_for(first)  # noqa: SLF001
     assert leaf is not None
     leaf.setCheckState(0, Qt.CheckState.Unchecked)
     assert window._items[str(first)].selected is False  # noqa: SLF001
 
-    window._view_actions[gui.VIEW_TREE].setChecked(True)  # noqa: SLF001
+    window._view_actions[main_window.VIEW_TREE].setChecked(True)  # noqa: SLF001
 
     assert _check_state(window, first) == Qt.CheckState.Unchecked
     # The folder rows are back, and the one holding the unchecked photo says so.
@@ -1084,7 +1135,7 @@ def test_flat_list_keeps_the_open_photo_selected(window: gui.MainWindow, tmp_pat
     first, _second = _add_two_shoots(window, tmp_path)
     _select(window, window._leaf_for(first))  # noqa: SLF001
 
-    window._view_actions[gui.VIEW_LIST].setChecked(True)  # noqa: SLF001
+    window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
 
     assert window._current is not None  # noqa: SLF001
     assert window._current.path == first  # noqa: SLF001
@@ -1094,13 +1145,13 @@ def test_flat_list_keeps_the_open_photo_selected(window: gui.MainWindow, tmp_pat
 def test_flat_list_still_opens_the_enclosing_folder(window: gui.MainWindow, tmp_path: Path) -> None:
     """With no folder rows to click, Go > Enclosing Folder still reaches the thumbnail grid."""
     first, _second = _add_two_shoots(window, tmp_path)
-    window._view_actions[gui.VIEW_LIST].setChecked(True)  # noqa: SLF001
+    window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
     _select(window, window._leaf_for(first))  # noqa: SLF001
 
     window._go_up()  # noqa: SLF001
 
     assert window._grid_folder == first.parent  # noqa: SLF001
-    assert window._right.currentIndex() == gui._PAGE_GRID  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
 
 
 def test_history_survives_the_switch_to_the_flat_list(
@@ -1112,11 +1163,11 @@ def test_history_survives_the_switch_to_the_flat_list(
     _select(window, window._folder_rows[str(first.parent)])  # noqa: SLF001 - opens the grid
     _select(window, window._leaf_for(first))  # noqa: SLF001
 
-    window._view_actions[gui.VIEW_LIST].setChecked(True)  # noqa: SLF001
+    window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
     window._go_back()  # noqa: SLF001
 
     assert window._grid_folder == first.parent  # noqa: SLF001
-    assert window._right.currentIndex() == gui._PAGE_GRID  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
     # Nothing in the flat list stands for a folder, so no row is left highlighted.
     assert window._tree.currentItem() is None  # noqa: SLF001
 
@@ -1164,7 +1215,7 @@ def test_select_by_status_reuses_the_grid_filters(window: gui.MainWindow, tmp_pa
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
     _add_dir(window, {"a": a, "b": b})
-    window._items[str(a)].status = gui.FAILED  # noqa: SLF001
+    window._items[str(a)].status = FAILED  # noqa: SLF001
 
     status = _select_submenu(window, "Uncheck").actions()[1].menu()
     next(action for action in status.actions() if action.text() == "Failed").trigger()
@@ -1201,9 +1252,9 @@ def test_select_by_name_pattern_asks_and_remembers_the_pattern(
     edit = _jpeg(tmp_path / "sunset_edit.jpg")
     keep = _jpeg(tmp_path / "sunset.jpg")
     _add_dir(window, {"edit": edit, "keep": keep})
-    monkeypatch.setattr(gui.QInputDialog, "getText", lambda *_a, **_k: ("*_edit.jpg", True))
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_k: ("*_edit.jpg", True))
 
-    window._select_by_pattern(gui.SELECT_UNCHECK)  # noqa: SLF001
+    window._select_by_pattern(SELECT_UNCHECK)  # noqa: SLF001
 
     assert window._items[str(edit)].selected is False  # noqa: SLF001
     assert window._items[str(keep)].selected is True  # noqa: SLF001
@@ -1217,13 +1268,13 @@ def test_select_by_name_pattern_that_matches_nothing_says_so(
 ) -> None:
     """A criterion nothing matched reads differently from one that changed nothing."""
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
-    monkeypatch.setattr(gui.QInputDialog, "getText", lambda *_a, **_k: ("IMG", True))
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_k: ("IMG", True))
 
-    window._select_by_pattern(gui.SELECT_CHECK)  # noqa: SLF001
+    window._select_by_pattern(SELECT_CHECK)  # noqa: SLF001
     assert "No photos match IMG." in window._status.text()  # noqa: SLF001
 
-    monkeypatch.setattr(gui.QInputDialog, "getText", lambda *_a, **_k: ("a.jpg", True))
-    window._select_by_pattern(gui.SELECT_CHECK)  # noqa: SLF001
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_k: ("a.jpg", True))
+    window._select_by_pattern(SELECT_CHECK)  # noqa: SLF001
     assert "Nothing to change for a.jpg" in window._status.text()  # noqa: SLF001
 
 
@@ -1236,8 +1287,8 @@ def test_select_by_pattern_cancelled_changes_nothing(
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
     for reply in (("a.jpg", False), ("   ", True)):
-        monkeypatch.setattr(gui.QInputDialog, "getText", lambda *_a, **_k: reply)  # noqa: B023
-        window._select_by_pattern(gui.SELECT_UNCHECK)  # noqa: SLF001
+        monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_k: reply)  # noqa: B023
+        window._select_by_pattern(SELECT_UNCHECK)  # noqa: SLF001
         assert window._items[str(a)].selected is True  # noqa: SLF001
 
 
@@ -1247,7 +1298,7 @@ def test_select_by_criteria_with_no_photos_nags(window: gui.MainWindow) -> None:
     types.aboutToShow.emit()
     assert [action.isEnabled() for action in types.actions()] == [False]
 
-    window._select_by_pattern(gui.SELECT_CHECK)  # noqa: SLF001
+    window._select_by_pattern(SELECT_CHECK)  # noqa: SLF001
     assert "Add photos" in window._status.text()  # noqa: SLF001
 
 
@@ -1310,8 +1361,8 @@ def test_apply_skip_file_warns_on_unreadable_file(
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
     warned: list[str] = []
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "QMessageBox",
         SimpleNamespace(warning=lambda *args, **_k: warned.append(str(args[-1]))),
     )
@@ -1410,10 +1461,10 @@ def test_save_current_writes_and_marks_saved(
     assert captured["title"] == "New Title"
     # The save wrote title, description (seeded from the file), and keywords, so the Tagged
     # column reflects all three without waiting for a rescan.
-    assert item.known_fields == {gui.FIELD_TITLE, gui.FIELD_DESCRIPTION, gui.FIELD_KEYWORDS}
+    assert item.known_fields == {FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS}
     leaf = window._leaf_for(img)  # noqa: SLF001
     assert leaf is not None
-    assert leaf.text(gui._COL_TAGGED) == "TDK"  # noqa: SLF001
+    assert leaf.text(COL_TAGGED) == "TDK"
 
 
 def test_save_writes_both_targets_and_journals_each(
@@ -1570,14 +1621,14 @@ def test_opening_a_photo_seeds_the_new_column_like_the_existing_one(
 ) -> None:
     """A photo opened without generating starts with its own keywords, chains and all."""
     img = _jpeg(tmp_path / "a.jpg")
-    monkeypatch.setattr(gui, "read_caption", lambda _p: (None, None))
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(monkeypatch, "read_caption", lambda _p: (None, None))
+    _patch_gui(
+        monkeypatch,
         "read_caption_values",
         lambda _p: {FIELD_TITLE: [], FIELD_DESCRIPTION: []},
     )
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "read_image_context",
         lambda _p, **_kwargs: ImageContext(
             existing_keywords=KeywordSet(
@@ -1602,7 +1653,7 @@ def test_selecting_shows_metadata_source(
     """The Source field reports where the existing metadata was read from."""
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=["Beach"])
-    monkeypatch.setattr(gui, "read_metadata_sources", lambda _p: ["XMP sidecar"])
+    _patch_gui(monkeypatch, "read_metadata_sources", lambda _p: ["XMP sidecar"])
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     assert window._existing_source.text() == "(from XMP sidecar)"  # noqa: SLF001
@@ -1615,7 +1666,7 @@ def test_selecting_shows_metadata_source(
 
 def test_empty_state_is_shown_at_startup(window: gui.MainWindow) -> None:
     """A fresh window shows the placeholder page, not an empty detail form."""
-    assert window._right.currentIndex() == gui._PAGE_EMPTY  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_EMPTY  # noqa: SLF001
     assert "Add photos" in window._empty_message.text()  # noqa: SLF001
 
 
@@ -1627,7 +1678,7 @@ def test_empty_state_nudges_to_pick_a_photo_once_loaded(
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
     window._on_current_changed(None, None)  # noqa: SLF001 - selection cleared, no photo open
 
-    assert window._right.currentIndex() == gui._PAGE_EMPTY  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_EMPTY  # noqa: SLF001
     assert "Select a photo" in window._empty_message.text()  # noqa: SLF001
 
 
@@ -1636,7 +1687,7 @@ def test_clear_returns_to_the_empty_state(window: gui.MainWindow, tmp_path: Path
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
     window._clear()  # noqa: SLF001
 
-    assert window._right.currentIndex() == gui._PAGE_EMPTY  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_EMPTY  # noqa: SLF001
     assert "Add photos" in window._empty_message.text()  # noqa: SLF001
 
 
@@ -1650,13 +1701,13 @@ def test_removing_the_open_photo_returns_to_the_empty_state(
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001 - open it -> detail page
-    assert window._right.currentIndex() == gui._PAGE_DETAIL  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_DETAIL  # noqa: SLF001
 
     window._tree.setCurrentItem(window._leaf_for(img))  # noqa: SLF001
     window._remove_selected()  # noqa: SLF001
 
     assert window._current is None  # noqa: SLF001
-    assert window._right.currentIndex() == gui._PAGE_EMPTY  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_EMPTY  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -1666,8 +1717,8 @@ def test_removing_the_open_photo_returns_to_the_empty_state(
 
 def _patch_save_dialog(monkeypatch: pytest.MonkeyPatch, path: Path | str) -> None:
     """Replace the save-file dialog so it returns *path* without opening a real dialog."""
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "QFileDialog",
         SimpleNamespace(getSaveFileName=lambda *_a, **_k: (str(path), "CSV files (*.csv)")),
     )
@@ -1752,10 +1803,10 @@ def test_export_csv_reports_write_error(
         msg = "disk full"
         raise OSError(msg)
 
-    monkeypatch.setattr(gui, "write_report", boom)
+    _patch_gui(monkeypatch, "write_report", boom)
     messages: list[str] = []
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "QMessageBox",
         SimpleNamespace(warning=lambda _parent, _title, text, *_a, **_k: messages.append(text)),
     )
@@ -1967,7 +2018,7 @@ def test_save_worker_shares_one_exiftool_across_the_batch(
         opened += 1
         yield helper
 
-    monkeypatch.setattr(gui, "managed_helper", fake_helper)
+    _patch_gui(monkeypatch, "managed_helper", fake_helper)
     seen: list[object] = []
     monkeypatch.setattr(
         metadata,
@@ -1983,7 +2034,7 @@ def test_save_worker_shares_one_exiftool_across_the_batch(
         )
         for name in ("a.jpg", "b.jpg")
     ]
-    worker = gui.SaveWorker(jobs, options=SaveOptions(backup=True, sidecar_mode="all"))
+    worker = workers.SaveWorker(jobs, options=SaveOptions(backup=True, sidecar_mode="all"))
     results: list[tuple[str, bool]] = []
     worker.file_done.connect(lambda path, ok: results.append((Path(path).name, ok)))
 
@@ -2004,9 +2055,9 @@ def test_save_worker_reports_failures_when_exiftool_cannot_start(
         message = "exiftool missing"
         raise OSError(message)
 
-    monkeypatch.setattr(gui, "managed_helper", boom)
+    _patch_gui(monkeypatch, "managed_helper", boom)
     jobs = [SaveJob(path=tmp_path / "a.jpg", keywords=KeywordSet(), title="T", description=None)]
-    worker = gui.SaveWorker(jobs, options=SaveOptions(backup=True, sidecar_mode="all"))
+    worker = workers.SaveWorker(jobs, options=SaveOptions(backup=True, sidecar_mode="all"))
     results: list[bool] = []
     finished: list[bool] = []
     worker.file_done.connect(lambda _path, ok: results.append(ok))
@@ -2023,7 +2074,7 @@ def test_save_worker_stops_before_the_next_photo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A stop request takes effect at the next photo; the write in flight still completes."""
-    monkeypatch.setattr(gui, "managed_helper", lambda _et: nullcontext(None))
+    _patch_gui(monkeypatch, "managed_helper", lambda _et: nullcontext(None))
     jobs = [
         SaveJob(
             path=tmp_path / name,
@@ -2033,7 +2084,7 @@ def test_save_worker_stops_before_the_next_photo(
         )
         for name in ("a.jpg", "b.jpg", "c.jpg")
     ]
-    worker = gui.SaveWorker(jobs, options=SaveOptions(backup=True, sidecar_mode="all"))
+    worker = workers.SaveWorker(jobs, options=SaveOptions(backup=True, sidecar_mode="all"))
     written: list[str] = []
 
     def fake_write(path: Path, *_a: object, **_k: object) -> bool:
@@ -2289,10 +2340,10 @@ def test_open_logs_creates_the_folder_and_reveals_it(
 ) -> None:
     """Open logs makes sure the folder exists and hands it to the OS file browser."""
     folder = tmp_path / "logs"
-    monkeypatch.setattr(gui, "_LOG_FOLDER", folder)
+    _patch_gui(monkeypatch, "LOG_FOLDER", folder)
     opened: list[str] = []
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "QDesktopServices",
         SimpleNamespace(openUrl=lambda url: opened.append(url.toLocalFile()) or True),
     )
@@ -2315,14 +2366,14 @@ def test_reveal_falls_back_to_the_folder_when_the_browser_will_not_start(
     """A file browser that fails to spawn opens the folder instead of crashing the window."""
     photo = _jpeg(tmp_path / "a.jpg")
     opened: list[str] = []
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "QDesktopServices",
         SimpleNamespace(openUrl=lambda url: opened.append(url.toLocalFile()) or True),
     )
-    monkeypatch.setattr(gui, "reveal_command", lambda _path, _platform: ["/bin/nope"])
+    _patch_gui(monkeypatch, "reveal_command", lambda _path, _platform: ["/bin/nope"])
     monkeypatch.setattr(
-        gui.subprocess,
+        subprocess,
         "Popen",
         _raise_oserror,
     )
@@ -2349,7 +2400,7 @@ def test_selecting_a_folder_shows_the_thumbnail_grid(
     _add_dir(window, {"a": a, "b": b})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - the folder node
 
-    assert window._right.currentIndex() == gui._PAGE_GRID  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
     assert window._grid.count() == 2  # noqa: SLF001, PLR2004 - two photos in the folder
 
 
@@ -2368,19 +2419,19 @@ def test_clicking_a_thumbnail_opens_the_detail(
 
     window._on_thumb_activated(grid_item)  # noqa: SLF001
 
-    assert window._right.currentIndex() == gui._PAGE_DETAIL  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_DETAIL  # noqa: SLF001
     assert window._current is window._items[str(a)]  # noqa: SLF001
 
 
 def test_thumbnail_worker_emits_bytes(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
     """The worker decodes each path to bytes and stops when asked."""
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "prepare_image_for_agent",
         lambda *_a, **_k: SimpleNamespace(data=b"jpeg-bytes"),
     )
     emitted: list[tuple[str, bytes]] = []
-    worker = gui.ThumbnailWorker([Path("/a.jpg"), Path("/b.jpg")])
+    worker = workers.ThumbnailWorker([Path("/a.jpg"), Path("/b.jpg")])
     worker.ready.connect(lambda path, data: emitted.append((path, data)))
     worker.run()
     assert emitted == [("/a.jpg", b"jpeg-bytes"), ("/b.jpg", b"jpeg-bytes")]
@@ -2440,7 +2491,7 @@ def test_stopping_thumbnails_does_not_block_on_a_slow_decode(
         release.wait(10.0)
         return SimpleNamespace(data=b"")
 
-    monkeypatch.setattr(gui, "prepare_image_for_agent", slow_decode)
+    _patch_gui(monkeypatch, "prepare_image_for_agent", slow_decode)
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - opens the grid, starts the job
     assert window._thumb_thread is not None  # noqa: SLF001
@@ -2512,7 +2563,7 @@ def test_grid_sort_by_status_uses_lifecycle_rank(
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
     combo = window._grid_sort_combo  # noqa: SLF001
-    combo.setCurrentIndex(combo.findData(gui.SORT_STATUS))
+    combo.setCurrentIndex(combo.findData(SORT_STATUS))
 
     # Ascending lifecycle: pending(b) < ready(c) < failed(a), not the alphabetical file order.
     assert _grid_order(window) == ["b.jpg", "c.jpg", "a.jpg"]
@@ -2558,7 +2609,7 @@ def test_grid_filter_shows_only_matching_photos(
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
     combo = window._grid_filter_combo  # noqa: SLF001
-    combo.setCurrentIndex(combo.findData(gui.FILTER_SAVED))
+    combo.setCurrentIndex(combo.findData(FILTER_SAVED))
 
     assert _grid_order(window) == ["a.jpg", "b.jpg"]
     assert len(window._items) == 3  # noqa: SLF001, PLR2004 - filtered from the grid, not removed
@@ -2578,7 +2629,7 @@ def test_grid_filter_status_message_reports_hidden_count(
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
     combo = window._grid_filter_combo  # noqa: SLF001
-    combo.setCurrentIndex(combo.findData(gui.FILTER_FAILED))
+    combo.setCurrentIndex(combo.findData(FILTER_FAILED))
 
     text = window._status.text()  # noqa: SLF001
     assert "1" in text
@@ -2597,7 +2648,7 @@ def test_grid_filter_untagged_refreshes_after_metadata_scan(
     _add_dir(window, {"a": a, "b": b})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
     combo = window._grid_filter_combo  # noqa: SLF001
-    combo.setCurrentIndex(combo.findData(gui.FILTER_UNTAGGED))
+    combo.setCurrentIndex(combo.findData(FILTER_UNTAGGED))
     # Nothing is scanned yet (known_fields is None), so no photo is hidden or shown as untagged.
     assert _grid_order(window) == []
 
@@ -2618,7 +2669,7 @@ def test_grid_filter_no_copyright_refreshes_after_metadata_scan(
     _add_dir(window, {"a": a, "b": b})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
     combo = window._grid_filter_combo  # noqa: SLF001
-    combo.setCurrentIndex(combo.findData(gui.FILTER_NO_COPYRIGHT))
+    combo.setCurrentIndex(combo.findData(FILTER_NO_COPYRIGHT))
     assert _grid_order(window) == []
 
     window._on_scan_done({str(a): {FIELD_TITLE}, str(b): {FIELD_COPYRIGHT}})  # noqa: SLF001
@@ -2678,15 +2729,15 @@ def test_back_returns_from_a_photo_to_the_grid_it_was_opened_from(
     files = _open_grid(window, tmp_path, monkeypatch)
 
     window._on_thumb_activated(window._grid_items[str(files["a.jpg"])])  # noqa: SLF001
-    assert window._right.currentIndex() == gui._PAGE_DETAIL  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_DETAIL  # noqa: SLF001
 
     window._go_back()  # noqa: SLF001
 
-    assert window._right.currentIndex() == gui._PAGE_GRID  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
     assert window._grid_folder == tmp_path  # noqa: SLF001
     current = window._tree.currentItem()  # noqa: SLF001
     assert current is not None
-    assert current.data(0, gui._PATH_ROLE) == str(tmp_path)  # noqa: SLF001
+    assert current.data(0, PATH_ROLE) == str(tmp_path)
 
 
 def test_back_and_forward_walk_between_two_photos(
@@ -2786,11 +2837,11 @@ def test_removing_the_open_photo_leaves_back_pointing_at_it_no_more(
     _select(window, window._leaf_for(files["a.jpg"]))  # noqa: SLF001
 
     window._remove_items([str(files["a.jpg"])])  # noqa: SLF001
-    assert window._right.currentIndex() == gui._PAGE_EMPTY  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_EMPTY  # noqa: SLF001
 
     window._go_back()  # noqa: SLF001
 
-    assert window._right.currentIndex() == gui._PAGE_GRID  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
 
 
 def test_clearing_the_list_empties_the_trail(
@@ -2814,7 +2865,7 @@ def test_back_on_an_empty_trail_does_nothing(window: gui.MainWindow) -> None:
     window._go_back()  # noqa: SLF001
     window._go_forward()  # noqa: SLF001
 
-    assert window._right.currentIndex() == gui._PAGE_EMPTY  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_EMPTY  # noqa: SLF001
 
 
 def test_enclosing_folder_opens_the_grid_of_the_open_photo(
@@ -2828,7 +2879,7 @@ def test_enclosing_folder_opens_the_grid_of_the_open_photo(
 
     window._go_up()  # noqa: SLF001
 
-    assert window._right.currentIndex() == gui._PAGE_GRID  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
     assert window._grid_folder == tmp_path  # noqa: SLF001
 
 
@@ -2842,7 +2893,7 @@ def test_enclosing_folder_at_the_top_says_so(
 
     window._go_up()  # noqa: SLF001
 
-    assert window._right.currentIndex() == gui._PAGE_GRID  # noqa: SLF001 - stayed put
+    assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001 - stayed put
     assert window._status.text() != ""  # noqa: SLF001
 
 
@@ -2850,7 +2901,7 @@ def test_enclosing_folder_with_nothing_open_is_a_no_op(window: gui.MainWindow) -
     """Nothing is open, so there is no enclosing folder to show."""
     window._go_up()  # noqa: SLF001
 
-    assert window._right.currentIndex() == gui._PAGE_EMPTY  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_EMPTY  # noqa: SLF001
 
 
 def test_go_menu_holds_the_navigation_actions(window: gui.MainWindow) -> None:
@@ -2870,20 +2921,20 @@ def test_go_menu_holds_the_navigation_actions(window: gui.MainWindow) -> None:
 
 
 def _stub_generation(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(gui, "create_agent", lambda *_a, **_k: object())
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(monkeypatch, "create_agent", lambda *_a, **_k: object())
+    _patch_gui(
+        monkeypatch,
         "read_image_context",
         lambda _p, **_kwargs: ImageContext(existing_keywords=KeywordSet(subject=["Beach"])),
     )
-    monkeypatch.setattr(gui, "read_caption", lambda _p: ("Old", "Old caption."))
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(monkeypatch, "read_caption", lambda _p: ("Old", "Old caption."))
+    _patch_gui(
+        monkeypatch,
         "prepare_image_for_agent",
         lambda *_a, **_k: SimpleNamespace(data=b"x"),
     )
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "analyze_image_with_ai",
         lambda **_k: InferenceResult(title="T", description="D", keywords=["Eagle"]),
     )
@@ -2897,7 +2948,7 @@ def test_worker_emits_a_proposal_per_photo(
     _stub_generation(monkeypatch)
     proposals: list[Proposal] = []
     finished: list[bool] = []
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")])
+    worker = workers.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")])
     worker.file_done.connect(proposals.append)
     worker.finished.connect(lambda: finished.append(True))
 
@@ -2919,9 +2970,9 @@ def test_worker_marks_all_failed_when_agent_cannot_build(
         msg = "unreachable"
         raise ProviderError(msg)
 
-    monkeypatch.setattr(gui, "create_agent", boom)
+    _patch_gui(monkeypatch, "create_agent", boom)
     failed: list[str] = []
-    worker = gui.GenerateWorker("openai", "m", None, [Path("/a.jpg"), Path("/b.jpg")])
+    worker = workers.GenerateWorker("openai", "m", None, [Path("/a.jpg"), Path("/b.jpg")])
     worker.file_failed.connect(lambda path, _msg: failed.append(path))
 
     worker.run()
@@ -2946,9 +2997,9 @@ def test_worker_reports_finished_even_when_opening_the_cache_raises(
         msg = "namespace blew up"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(gui.GenerateWorker, "_open_cache", boom)
+    monkeypatch.setattr(workers.GenerateWorker, "_open_cache", boom)
     done: list[bool] = []
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")])
+    worker = workers.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")])
     worker.finished.connect(lambda: done.append(True))
 
     with pytest.raises(RuntimeError, match="namespace blew up"):
@@ -2968,9 +3019,9 @@ def test_worker_reports_a_single_file_failure(
         msg = "decode failed"
         raise ValueError(msg)
 
-    monkeypatch.setattr(gui, "prepare_image_for_agent", boom)
+    _patch_gui(monkeypatch, "prepare_image_for_agent", boom)
     failed: list[str] = []
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")])
+    worker = workers.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")])
     worker.file_failed.connect(lambda path, _msg: failed.append(path))
 
     worker.run()
@@ -3037,7 +3088,7 @@ def test_worker_stops_after_current_photo_when_cancelled(
     """Calling stop() halts the batch at the next photo boundary, not mid-photo."""
     _stub_generation(monkeypatch)
     proposals: list[Proposal] = []
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg"), Path("/b.jpg")])
+    worker = workers.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg"), Path("/b.jpg")])
 
     def record_then_cancel(proposal: Proposal) -> None:
         # Cancel as soon as the first photo's proposal lands; the second photo must not run.
@@ -3215,8 +3266,8 @@ def test_finished_generation_alerts_with_the_status_line(
 ) -> None:
     """The notification repeats what the window says, so the two never disagree."""
     raised: list[tuple[str, str, bool, bool]] = []
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "notify",
         lambda title, message, **kwargs: raised.append(
             (title, message, kwargs["enabled"], kwargs["sound"]),
@@ -3236,7 +3287,7 @@ def test_cancelled_generation_raises_no_alert(
 ) -> None:
     """Whoever pressed Cancel is already at the keyboard and needs no calling back."""
     raised: list[str] = []
-    monkeypatch.setattr(gui, "notify", lambda _t, message, **_k: raised.append(message))
+    _patch_gui(monkeypatch, "notify", lambda _t, message, **_k: raised.append(message))
     window._notify_action.setChecked(True)  # noqa: SLF001
     window._cancelling = True  # noqa: SLF001
 
@@ -3251,7 +3302,7 @@ def test_finished_save_alerts_with_its_tally(
 ) -> None:
     """A finished write run announces how many photos it wrote."""
     raised: list[str] = []
-    monkeypatch.setattr(gui, "notify", lambda _t, message, **_k: raised.append(message))
+    _patch_gui(monkeypatch, "notify", lambda _t, message, **_k: raised.append(message))
     window._notify_action.setChecked(True)  # noqa: SLF001
 
     window._on_save_finished()  # noqa: SLF001
@@ -3265,7 +3316,7 @@ def test_alert_is_skipped_while_the_toggle_is_off(
 ) -> None:
     """The default window still calls notify, but with enabled=False, which spawns nothing."""
     calls: list[bool] = []
-    monkeypatch.setattr(gui, "notify", lambda _t, _m, **kwargs: calls.append(kwargs["enabled"]))
+    _patch_gui(monkeypatch, "notify", lambda _t, _m, **kwargs: calls.append(kwargs["enabled"]))
 
     window._on_generate_finished()  # noqa: SLF001
 
@@ -3290,7 +3341,7 @@ def test_language_choice_persists_to_the_config_file(
     """Picking a language writes the config key; picking System Default removes it."""
     target = tmp_path / "config.toml"
     target.write_text('# keep me\nextensions = "jpg"\n', encoding="utf-8")
-    monkeypatch.setattr(gui, "find_config_file", lambda: target)
+    _patch_gui(monkeypatch, "find_config_file", lambda: target)
 
     window._set_language("pt_BR")  # noqa: SLF001
     text = target.read_text(encoding="utf-8")
@@ -3326,7 +3377,7 @@ def test_output_language_defaults_to_english_and_persists(
     assert window._output_language == "English"  # noqa: SLF001
     target = tmp_path / "config.toml"
     target.write_text('# keep me\nextensions = "jpg"\n', encoding="utf-8")
-    monkeypatch.setattr(gui, "find_config_file", lambda: target)
+    _patch_gui(monkeypatch, "find_config_file", lambda: target)
 
     window._set_output_language("Brazilian Portuguese")  # noqa: SLF001
     text = target.read_text(encoding="utf-8")
@@ -3352,7 +3403,7 @@ def test_output_language_custom_value_gets_its_own_checked_entry(
     joins the menu as a new checked entry above Other.
     """
     target = tmp_path / "config.toml"
-    monkeypatch.setattr(gui, "find_config_file", lambda: target)
+    _patch_gui(monkeypatch, "find_config_file", lambda: target)
 
     window._set_output_language("Swahili")  # noqa: SLF001
 
@@ -3375,7 +3426,7 @@ def test_output_language_blank_means_the_default(
     entry falls back to English instead of sending an empty language.
     """
     target = tmp_path / "config.toml"
-    monkeypatch.setattr(gui, "find_config_file", lambda: target)
+    _patch_gui(monkeypatch, "find_config_file", lambda: target)
     window._set_output_language("German")  # noqa: SLF001
     window._set_output_language("   ")  # noqa: SLF001
     assert window._output_language == "English"  # noqa: SLF001
@@ -3411,8 +3462,8 @@ def test_close_flushes_telemetry_beacon(
         sent.append(event)
         return f"thread for {type(event).__name__}"
 
-    monkeypatch.setattr(gui.telemetry, "emit", fake_emit)
-    monkeypatch.setattr(gui.telemetry, "flush", lambda threads: flushed.append(list(threads)))
+    monkeypatch.setattr(telemetry, "emit", fake_emit)
+    monkeypatch.setattr(telemetry, "flush", lambda threads: flushed.append(list(threads)))
     window.close()
 
     assert [type(event) for event in sent] == [telemetry.SessionInfo]
@@ -3427,8 +3478,8 @@ def test_close_beacon_reports_session_tagged_count_and_fields(
 ) -> None:
     """The session beacon reports the generated-photo count and both languages."""
     runs: list[telemetry.SessionInfo] = []
-    monkeypatch.setattr(gui.telemetry, "emit", lambda run, **_: runs.append(run))
-    monkeypatch.setattr(gui.i18n, "current_language", lambda: "pt_BR")
+    monkeypatch.setattr(telemetry, "emit", lambda run, **_: runs.append(run))
+    monkeypatch.setattr(i18n, "current_language", lambda: "pt_BR")
 
     img_a = _jpeg(tmp_path / "a.jpg")
     img_b = _jpeg(tmp_path / "b.jpg")
@@ -3474,9 +3525,9 @@ def test_close_asks_for_confirmation_when_proposals_are_unsaved(
 
     asked: list[object] = []
     monkeypatch.setattr(
-        gui.QMessageBox,
+        QMessageBox,
         "question",
-        lambda *args, **_k: asked.append(args) or gui.QMessageBox.StandardButton.No,
+        lambda *args, **_k: asked.append(args) or QMessageBox.StandardButton.No,
     )
 
     assert window.close() is False  # declining keeps the window open
@@ -3495,9 +3546,9 @@ def test_close_proceeds_when_user_confirms_discarding_unsaved_proposals(
     item.has_proposal = True
     item.status = READY
     monkeypatch.setattr(
-        gui.QMessageBox,
+        QMessageBox,
         "question",
-        lambda *_a, **_k: gui.QMessageBox.StandardButton.Yes,
+        lambda *_a, **_k: QMessageBox.StandardButton.Yes,
     )
 
     assert window.close() is True
@@ -3516,9 +3567,9 @@ def test_close_skips_confirmation_when_nothing_unsaved(
     item.status = SAVED
     asked: list[object] = []
     monkeypatch.setattr(
-        gui.QMessageBox,
+        QMessageBox,
         "question",
-        lambda *args, **_k: asked.append(args) or gui.QMessageBox.StandardButton.Yes,
+        lambda *args, **_k: asked.append(args) or QMessageBox.StandardButton.Yes,
     )
 
     assert window.close() is True
@@ -3657,7 +3708,7 @@ def test_file_menu_offers_csv_export(window: gui.MainWindow) -> None:
 
 def test_scan_options_hold_extensions_and_recursion(window: gui.MainWindow) -> None:
     """The Add menu's scan options carry the folder-scan settings with the GUI defaults."""
-    assert window._extensions.text() == gui.DEFAULT_GUI_EXTENSIONS  # noqa: SLF001
+    assert window._extensions.text() == DEFAULT_GUI_EXTENSIONS  # noqa: SLF001
     assert window._recursive.isChecked()  # noqa: SLF001
 
 
@@ -3821,10 +3872,10 @@ def test_grid_checkbox_click_does_not_open_the_photo(
     grid_item.setCheckState(Qt.CheckState.Unchecked)  # the toggle half of the click
     window._on_thumb_activated(grid_item)  # noqa: SLF001 - the click half
 
-    assert window._right.currentIndex() == gui._PAGE_GRID  # noqa: SLF001 - stayed in the grid
+    assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001 - stayed in the grid
 
     window._on_thumb_activated(grid_item)  # noqa: SLF001 - a later plain click
-    assert window._right.currentIndex() == gui._PAGE_DETAIL  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_DETAIL  # noqa: SLF001
 
 
 def test_modifier_click_on_thumbnail_keeps_the_grid(
@@ -3835,13 +3886,13 @@ def test_modifier_click_on_thumbnail_keeps_the_grid(
     """A shift/cmd click is building a selection, so it must not navigate away."""
     img = _jpeg(tmp_path / "a.jpg")
     monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
-    monkeypatch.setattr(gui, "_selection_modifiers_active", lambda: True)
+    _patch_gui(monkeypatch, "selection_modifiers_active", lambda: True)
     _add_dir(window, {"a": img})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
     window._on_thumb_activated(window._grid_items[str(img)])  # noqa: SLF001
 
-    assert window._right.currentIndex() == gui._PAGE_GRID  # noqa: SLF001
+    assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
 
 
 def test_bulk_context_menu_checks_unchecks_and_removes(
@@ -4033,8 +4084,8 @@ def test_metadata_scan_worker_emits_each_batch_with_progress(
     blank until a whole library has been read.
     """
     paths = [Path("/a.jpg"), Path("/b.jpg"), Path("/c.jpg")]
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "iter_field_presence",
         # The middle batch stands in for one exiftool could not read at all.
         lambda scanned: (
@@ -4044,7 +4095,7 @@ def test_metadata_scan_worker_emits_each_batch_with_progress(
     )
     results: list[dict] = []
     ticks: list[tuple[int, int]] = []
-    worker = gui.MetadataScanWorker(paths)
+    worker = workers.MetadataScanWorker(paths)
     worker.done.connect(results.append)
     worker.progress.connect(lambda done, total: ticks.append((done, total)))
 
@@ -4059,14 +4110,14 @@ def test_metadata_scan_worker_stops_after_the_batch_in_flight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Stopping ends the read at the next batch boundary, leaving the rest of the list unread."""
-    worker = gui.MetadataScanWorker([Path("/a.jpg"), Path("/b.jpg"), Path("/c.jpg")])
+    worker = workers.MetadataScanWorker([Path("/a.jpg"), Path("/b.jpg"), Path("/c.jpg")])
 
     def batches(scanned: list[Path]) -> Iterator[metadata.PresenceBatch]:
         for path in scanned:
             worker.stop()  # the UI thread pressing Stop while the read is under way
             yield metadata.PresenceBatch(1, {path: set()})
 
-    monkeypatch.setattr(gui, "iter_field_presence", batches)
+    _patch_gui(monkeypatch, "iter_field_presence", batches)
     results: list[dict] = []
     worker.done.connect(results.append)
 
@@ -4087,7 +4138,7 @@ def test_metadata_scan_worker_skips_photos_dropped_while_it_reads(
     """
     keep = [Path("/keep/0.jpg"), Path("/keep/1.jpg")]
     gone = [Path(f"/gone/{index}.jpg") for index in range(3)]
-    worker = gui.MetadataScanWorker([keep[0], *gone, keep[1]])
+    worker = workers.MetadataScanWorker([keep[0], *gone, keep[1]])
 
     def batches(scanned: Iterator[Path]) -> Iterator[metadata.PresenceBatch]:
         for path in scanned:
@@ -4095,7 +4146,7 @@ def test_metadata_scan_worker_skips_photos_dropped_while_it_reads(
                 worker.drop(gone)  # the UI thread removing that folder from the list
             yield metadata.PresenceBatch(1, {path: set()})
 
-    monkeypatch.setattr(gui, "iter_field_presence", batches)
+    _patch_gui(monkeypatch, "iter_field_presence", batches)
     read: list[str] = []
     ticks: list[tuple[int, int]] = []
     worker.done.connect(read.extend)
@@ -4114,7 +4165,7 @@ def test_remove_items_tells_a_running_scan_to_skip_them(
     """Removing photos hands them to the scan in flight, so it stops reading them."""
     a, b = _jpeg(tmp_path / "a.jpg"), _jpeg(tmp_path / "b.jpg")
     _add_dir(window, {"a": a, "b": b})
-    worker = gui.MetadataScanWorker([a, b])
+    worker = workers.MetadataScanWorker([a, b])
     window._scan_worker = worker  # noqa: SLF001
 
     window._remove_items([str(a)])  # noqa: SLF001
@@ -4153,7 +4204,7 @@ def test_stop_scan_deletes_immediately_when_it_finishes_in_time(
     """The common case (the scan finishes within the grace period) cleans up right away."""
     fake_thread = _FakeScanThread(finishes_in_time=True)
     window._scan_thread = fake_thread  # noqa: SLF001
-    window._scan_worker = gui.MetadataScanWorker([])  # noqa: SLF001
+    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
 
     window._stop_scan()  # noqa: SLF001
 
@@ -4175,7 +4226,7 @@ def test_stop_scan_detaches_instead_of_blocking_when_still_running(
     """
     fake_thread = _FakeScanThread(finishes_in_time=False)
     window._scan_thread = fake_thread  # noqa: SLF001
-    window._scan_worker = gui.MetadataScanWorker([])  # noqa: SLF001
+    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
 
     window._stop_scan()  # noqa: SLF001 - must return promptly, not block for _SCAN_STOP_TIMEOUT_MS
 
@@ -4195,7 +4246,7 @@ def test_a_detached_scan_finishing_leaves_a_newer_scan_alone(
     It keeps running after _stop_scan lets go, and _on_scan_finished tears down whatever scan is
     current when it fires, so a late finish used to quit and discard an unrelated live one.
     """
-    stale = gui.MetadataScanWorker([])
+    stale = workers.MetadataScanWorker([])
     stale.done.connect(window._on_scan_done)  # noqa: SLF001
     stale.finished.connect(window._on_scan_finished)  # noqa: SLF001
     window._scan_thread = _FakeScanThread(finishes_in_time=False)  # noqa: SLF001
@@ -4204,7 +4255,7 @@ def test_a_detached_scan_finishing_leaves_a_newer_scan_alone(
 
     live_thread = _FakeScanThread(finishes_in_time=True)
     window._scan_thread = live_thread  # noqa: SLF001
-    window._scan_worker = gui.MetadataScanWorker([])  # noqa: SLF001
+    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
 
     stale.finished.emit()
 
@@ -4290,7 +4341,7 @@ def test_worker_reuses_cached_results(
     img = _jpeg(tmp_path / "a.jpg")
     cache_file = tmp_path / "cache.sqlite"
 
-    first = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    first = workers.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
     done_first: list[Proposal] = []
     first.file_done.connect(done_first.append)
     first.run()
@@ -4301,8 +4352,8 @@ def test_worker_reuses_cached_results(
         msg = "the model was called despite a cache hit"
         raise AssertionError(msg)
 
-    monkeypatch.setattr(gui, "analyze_image_with_ai", boom)
-    second = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    _patch_gui(monkeypatch, "analyze_image_with_ai", boom)
+    second = workers.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
     done_second: list[Proposal] = []
     second.file_done.connect(done_second.append)
     second.run()
@@ -4323,8 +4374,8 @@ def test_worker_puts_the_hint_in_that_photos_prompt(
         prompts.append(str(kwargs["user_prompt"]))
         return InferenceResult(title="T", description="D", keywords=[])
 
-    monkeypatch.setattr(gui, "analyze_image_with_ai", record)
-    worker = gui.GenerateWorker(
+    _patch_gui(monkeypatch, "analyze_image_with_ai", record)
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -4348,16 +4399,16 @@ def test_hinted_photo_skips_the_cache_lookup(
     img = _jpeg(tmp_path / "a.jpg")
     cache_file = tmp_path / "cache.sqlite"
 
-    first = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    first = workers.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
     first.file_done.connect(lambda _p: None)
     first.run()  # caches the (wrong) title "T"
 
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "analyze_image_with_ai",
         lambda **_k: InferenceResult(title="Deer", description="D", keywords=["Deer"]),
     )
-    second = gui.GenerateWorker(
+    second = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -4388,16 +4439,16 @@ def test_a_refresh_run_replaces_the_answer_it_read_past(
     _stub_generation(monkeypatch)
     img = _jpeg(tmp_path / "a.jpg")
     cache_file = tmp_path / "cache.sqlite"
-    first = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    first = workers.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
     first.file_done.connect(lambda _p: None)
     first.run()  # caches the mixed-script title "T"
 
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "analyze_image_with_ai",
         lambda **_k: InferenceResult(title="Ocarina", description="D", keywords=["Ocarina"]),
     )
-    again = gui.GenerateWorker(
+    again = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -4411,8 +4462,8 @@ def test_a_refresh_run_replaces_the_answer_it_read_past(
     assert fresh[0].title == "Ocarina"
     assert fresh[0].from_cache is False
 
-    monkeypatch.setattr(gui, "analyze_image_with_ai", lambda **_k: pytest.fail("no call expected"))
-    later = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    _patch_gui(monkeypatch, "analyze_image_with_ai", lambda **_k: pytest.fail("no call expected"))
+    later = workers.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
     replayed: list[Proposal] = []
     later.file_done.connect(replayed.append)
     later.run()
@@ -4437,12 +4488,12 @@ def test_hinted_photo_does_not_poison_the_shared_cache(
     img = _jpeg(tmp_path / "a.jpg")
     cache_file = tmp_path / "cache.sqlite"
 
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "analyze_image_with_ai",
         lambda **_k: InferenceResult(title="Deer", description="D", keywords=["Deer"]),
     )
-    first = gui.GenerateWorker(
+    first = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -4455,12 +4506,12 @@ def test_hinted_photo_does_not_poison_the_shared_cache(
     first.run()
     assert corrected[0].title == "Deer"
 
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "analyze_image_with_ai",
         lambda **_k: InferenceResult(title="Generic Animal", description="D", keywords=[]),
     )
-    second = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    second = workers.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
     replayed: list[Proposal] = []
     second.file_done.connect(replayed.append)
     second.run()
@@ -4478,8 +4529,8 @@ def test_worker_cache_survives_metadata_rewrites(
 ) -> None:
     """Embedding metadata rewrites the file, but the content-hash key still hits the cache."""
     _stub_generation(monkeypatch)
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "read_image_context",
         lambda _p, **_kwargs: ImageContext(
             existing_keywords=KeywordSet(),
@@ -4489,7 +4540,7 @@ def test_worker_cache_survives_metadata_rewrites(
     img = _jpeg(tmp_path / "a.jpg")
     cache_file = tmp_path / "cache.sqlite"
 
-    first = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    first = workers.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
     first.file_done.connect(lambda _p: None)
     first.run()
 
@@ -4500,8 +4551,8 @@ def test_worker_cache_survives_metadata_rewrites(
         msg = "the model was called although the pixels did not change"
         raise AssertionError(msg)
 
-    monkeypatch.setattr(gui, "analyze_image_with_ai", boom)
-    second = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    _patch_gui(monkeypatch, "analyze_image_with_ai", boom)
+    second = workers.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
     done: list[Proposal] = []
     second.file_done.connect(done.append)
     second.run()
@@ -4533,8 +4584,8 @@ def test_save_config_writes_the_gui_choices(
 
     target = tmp_path / "config.toml"
     # No config in effect, so the save creates the user config from the template.
-    monkeypatch.setattr(gui, "find_config_file", lambda: None)
-    monkeypatch.setattr(gui, "user_config_path", lambda: target)
+    _patch_gui(monkeypatch, "find_config_file", lambda: None)
+    _patch_gui(monkeypatch, "user_config_path", lambda: target)
     window._model.setCurrentText("qwen/qwen3-vl-30b")  # noqa: SLF001
     window._api_key.setText("sk-secret")  # noqa: SLF001 - must NOT be written
     window._extensions.setText("jpg,cr3")  # noqa: SLF001
@@ -4567,7 +4618,7 @@ def test_save_config_merges_into_the_config_in_effect(
         '# hands off\nextensions = "cr3"\n\n[filter]\nskip_tagged = true\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(gui, "find_config_file", lambda: target)
+    _patch_gui(monkeypatch, "find_config_file", lambda: target)
     window._extensions.setText("jpg")  # noqa: SLF001
 
     window._save_config()  # noqa: SLF001
@@ -4641,14 +4692,14 @@ def test_worker_snaps_keywords_onto_the_vocabulary(
 ) -> None:
     """A generated keyword comes back spelled and filed the way the catalog has it."""
     _stub_generation(monkeypatch)
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "analyze_image_with_ai",
         lambda **_k: InferenceResult(title="T", description="D", keywords=["ospreys", "Tractor"]),
     )
     vocabulary = Vocabulary.from_entries(["Animal|Bird|Osprey"])
     proposals: list[Proposal] = []
-    worker = gui.GenerateWorker(
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -4670,13 +4721,13 @@ def test_worker_strict_vocabulary_drops_what_the_catalog_lacks(
 ) -> None:
     """Strict mode reports the rejects, so the vocabulary can grow on purpose."""
     _stub_generation(monkeypatch)
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "analyze_image_with_ai",
         lambda **_k: InferenceResult(title="T", description="D", keywords=["Osprey", "Tractor"]),
     )
     proposals: list[Proposal] = []
-    worker = gui.GenerateWorker(
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -4706,8 +4757,8 @@ def test_worker_lists_the_vocabulary_in_the_prompt(
         prompts.append(str(kwargs["user_prompt"]))
         return InferenceResult(title="T", description="D", keywords=[])
 
-    monkeypatch.setattr(gui, "analyze_image_with_ai", capture)
-    worker = gui.GenerateWorker(
+    _patch_gui(monkeypatch, "analyze_image_with_ai", capture)
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -4723,8 +4774,8 @@ def test_worker_lists_the_vocabulary_in_the_prompt(
 
 def test_vocabulary_is_part_of_the_cache_namespace(qapp: QApplication) -> None:
     """Swapping vocabularies starts a fresh cache slice instead of replaying the old keywords."""
-    plain = gui.GenerateWorker("lmstudio", "m", None, [])
-    with_vocabulary = gui.GenerateWorker(
+    plain = workers.GenerateWorker("lmstudio", "m", None, [])
+    with_vocabulary = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -4750,7 +4801,7 @@ def test_run_generation_hands_the_vocabulary_to_the_worker(
     _add_dir(window, {"a": photo})
     window._load_vocabulary(_keyword_file(tmp_path))  # noqa: SLF001
     window._strict_box.setChecked(True)  # noqa: SLF001
-    monkeypatch.setattr(gui.QThread, "start", lambda *_a, **_k: None)
+    monkeypatch.setattr(QThread, "start", lambda *_a, **_k: None)
 
     window._run_generation([window._items[str(photo)]])  # noqa: SLF001
 
@@ -5177,7 +5228,7 @@ def test_a_chained_save_raises_one_alert_for_the_whole_job(
     """Generate-and-save is one job to the user, so the finished write is the one alert."""
     _ready_pair_for_autosave(window, tmp_path, monkeypatch)
     raised: list[str] = []
-    monkeypatch.setattr(gui, "notify", lambda _t, message, **_k: raised.append(message))
+    _patch_gui(monkeypatch, "notify", lambda _t, message, **_k: raised.append(message))
     monkeypatch.setattr(window, "_run_save", lambda _items: None)
     window._notify_action.setChecked(True)  # noqa: SLF001
 
@@ -5372,7 +5423,7 @@ def test_a_window_built_from_that_config_comes_up_ready_to_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The saved choice is back before the first click, button label and all."""
-    monkeypatch.setattr(gui, "load_config", lambda: {"gui": {"save_after_generating": True}})
+    _patch_gui(monkeypatch, "load_config", lambda: {"gui": {"save_after_generating": True}})
     win = gui.MainWindow()
     try:
         assert win._autosave_action.isChecked() is True  # noqa: SLF001
@@ -5386,8 +5437,8 @@ def test_a_window_follows_the_config_file_sidecar_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A save writes into each DNG as the CLI would, and the tooltip says so."""
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "load_config",
         lambda: {"output": {"sidecar_overrides": ["dng=photo"]}},
     )
@@ -5404,8 +5455,8 @@ def test_a_window_opens_despite_a_bad_sidecar_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A typo the CLI refuses leaves the window usable, following the Write To mode alone."""
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "load_config",
         lambda: {"output": {"sidecar_overrides": ["dng=embed"]}},
     )
@@ -5432,7 +5483,7 @@ def _settled(path: Path) -> Path:
 def test_watch_worker_emits_a_batch_and_stops(qapp: QApplication, tmp_path: Path) -> None:
     """The worker hands finished photos to the window and ends when it is told to."""
     photo = _settled(tmp_path / "a.jpg")
-    worker = gui.WatchWorker(
+    worker = workers.WatchWorker(
         WatchSettings(folders=(tmp_path,), extensions="jpg", interval=0.0, settle=0.0),
     )
     batches: list[list[Path]] = []
@@ -5581,7 +5632,7 @@ def test_starting_a_watch_needs_a_folder(
     """An empty folder field is a mistake worth naming, not an empty watch."""
     warned: list[str] = []
     monkeypatch.setattr(
-        gui.QMessageBox,
+        QMessageBox,
         "warning",
         lambda _parent, title, _text: warned.append(title),
     )
@@ -5613,10 +5664,10 @@ def test_vocabulary_build_worker_writes_a_file_and_a_report(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The build keeps what earns its place and says what it dropped, without touching a photo."""
-    monkeypatch.setattr(gui, "census_from_photos", lambda *_a, **_k: _census())
+    _patch_gui(monkeypatch, "census_from_photos", lambda *_a, **_k: _census())
     output = tmp_path / "vocabulary.txt"
     report = tmp_path / "dropped.csv"
-    worker = gui.VocabularyBuildWorker(
+    worker = workers.VocabularyBuildWorker(
         [Path("/a.jpg")],
         None,
         output,
@@ -5642,9 +5693,9 @@ def test_vocabulary_build_worker_reports_an_empty_library(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A library with no keywords cannot seed a vocabulary, and no file is written."""
-    monkeypatch.setattr(gui, "census_from_photos", lambda *_a, **_k: KeywordCensus())
+    _patch_gui(monkeypatch, "census_from_photos", lambda *_a, **_k: KeywordCensus())
     output = tmp_path / "vocabulary.txt"
-    worker = gui.VocabularyBuildWorker([Path("/a.jpg")], None, output, rules=TrimRules())
+    worker = workers.VocabularyBuildWorker([Path("/a.jpg")], None, output, rules=TrimRules())
     failures: list[str] = []
     worker.failed.connect(failures.append)
 
@@ -5660,16 +5711,16 @@ def test_vocabulary_build_worker_organizes_when_asked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The optional model pass runs with the chosen provider, and says so in the file."""
-    monkeypatch.setattr(gui, "census_from_photos", lambda *_a, **_k: _census())
+    _patch_gui(monkeypatch, "census_from_photos", lambda *_a, **_k: _census())
     passed: dict[str, object] = {}
 
     def fake_organize(result: object, **kwargs: object) -> tuple[object, OrganizeStats]:
         passed.update(kwargs)
         return result, OrganizeStats(model_name="qwen-vl", categories=["Animal"], grouped=1)
 
-    monkeypatch.setattr(gui, "organize", fake_organize)
+    _patch_gui(monkeypatch, "organize", fake_organize)
     output = tmp_path / "vocabulary.txt"
-    worker = gui.VocabularyBuildWorker(
+    worker = workers.VocabularyBuildWorker(
         [Path("/a.jpg")],
         None,
         output,
@@ -5692,11 +5743,11 @@ def test_vocabulary_build_worker_reads_an_export_too(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A catalog that is not on this machine is still a source, through its keyword export."""
-    monkeypatch.setattr(gui, "census_from_photos", lambda *_a, **_k: _census())
+    _patch_gui(monkeypatch, "census_from_photos", lambda *_a, **_k: _census())
     export = tmp_path / "export.txt"
     export.write_text("Osprey\nOsprey\n", encoding="utf-8")
     output = tmp_path / "vocabulary.txt"
-    worker = gui.VocabularyBuildWorker(
+    worker = workers.VocabularyBuildWorker(
         [Path("/a.jpg")],
         export,
         output,
@@ -5731,7 +5782,7 @@ def test_starting_a_build_uses_the_dialog_settings(
     photo = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": photo})
-    monkeypatch.setattr(gui.QThread, "start", lambda *_a, **_k: None)
+    monkeypatch.setattr(QThread, "start", lambda *_a, **_k: None)
     window._build_output.setText(str(tmp_path / "v.txt"))  # noqa: SLF001
     window._build_min_uses.setValue(5)  # noqa: SLF001
     window._build_max_terms.setValue(0)  # noqa: SLF001 - "no cap"
@@ -5876,13 +5927,13 @@ def test_a_batch_save_gets_its_own_journal(
     assert len(list_journals()) == 2  # noqa: PLR2004 - the session's single saves, and the batch
 
 
-def _viewer(qapp: QApplication, size: tuple[int, int] = (400, 300)) -> gui.ImageViewerDialog:
+def _viewer(qapp: QApplication, size: tuple[int, int] = (400, 300)) -> viewer.ImageViewerDialog:
     """Build a viewer over a solid-color pixmap of *size*, laid out but never shown modally."""
     from PySide6.QtGui import QColor, QPixmap  # noqa: PLC0415
 
     pixmap = QPixmap(*size)
     pixmap.fill(QColor("red"))
-    dialog = gui.ImageViewerDialog(None, Path("/photos/a.jpg"), pixmap)
+    dialog = viewer.ImageViewerDialog(None, Path("/photos/a.jpg"), pixmap)
     dialog.resize(200, 200)
     dialog.show()
     QApplication.processEvents()
@@ -5952,7 +6003,7 @@ def test_preview_click_opens_the_viewer(
 
     opened: list[Path] = []
     monkeypatch.setattr(
-        gui.ImageViewerDialog,
+        viewer.ImageViewerDialog,
         "exec",
         lambda self: opened.append(self.windowTitle()),
     )
@@ -5967,7 +6018,7 @@ def test_preview_click_without_an_open_photo_does_nothing(
 ) -> None:
     """The placeholder preview is clickable but has nothing to open."""
     opened: list[str] = []
-    monkeypatch.setattr(gui.ImageViewerDialog, "exec", lambda _self: opened.append("opened"))
+    monkeypatch.setattr(viewer.ImageViewerDialog, "exec", lambda _self: opened.append("opened"))
     window._preview.clicked.emit()  # noqa: SLF001
     assert opened == []
 
@@ -5984,13 +6035,13 @@ def test_viewer_falls_back_to_the_preview_when_the_full_decode_fails(
     item = window._items[str(a)]  # noqa: SLF001
 
     def _fail_big(path: Path, max_size: int = 0, **_kwargs: object) -> object:
-        if max_size == gui._VIEWER_MAX:  # noqa: SLF001
+        if max_size == main_window._VIEWER_MAX:  # noqa: SLF001
             msg = "no decoder"
             raise OSError(msg)
         return _real_prepare(path, max_size=max_size)
 
-    _real_prepare = gui.prepare_image_for_agent
-    monkeypatch.setattr(gui, "prepare_image_for_agent", _fail_big)
+    _real_prepare = image_io.prepare_image_for_agent
+    _patch_gui(monkeypatch, "prepare_image_for_agent", _fail_big)
 
     pixmap = window._viewer_pixmap(item)  # noqa: SLF001
 
@@ -6044,8 +6095,8 @@ def test_worker_marks_a_proposal_that_mixes_writing_systems(
 ) -> None:
     """The flag reaches the window with the proposal, naming the word to look at."""
     _stub_generation(monkeypatch)
-    monkeypatch.setattr(gui, "analyze_image_with_ai", lambda **_k: _GUI_MIXED)
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")])
+    _patch_gui(monkeypatch, "analyze_image_with_ai", lambda **_k: _GUI_MIXED)
+    worker = workers.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")])
     done: list[Proposal] = []
     worker.file_done.connect(done.append)
     worker.run()
@@ -6066,8 +6117,8 @@ def test_worker_repairs_mixed_output_when_the_setting_is_on(
         prompts.append(str(kwargs["user_prompt"]))
         return next(answers)
 
-    monkeypatch.setattr(gui, "analyze_image_with_ai", record)
-    worker = gui.GenerateWorker(
+    _patch_gui(monkeypatch, "analyze_image_with_ai", record)
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -6098,8 +6149,8 @@ def test_worker_keeps_the_answer_when_the_repair_call_fails(
             msg = "the model server died on the follow-up"
             raise RuntimeError(msg) from None
 
-    monkeypatch.setattr(gui, "analyze_image_with_ai", flaky)
-    worker = gui.GenerateWorker(
+    _patch_gui(monkeypatch, "analyze_image_with_ai", flaky)
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -6123,8 +6174,8 @@ def test_worker_keeps_the_original_when_the_repair_mixes_scripts_again(
     first = replace(_GUI_MIXED, total_tokens=100)
     second = replace(_GUI_MIXED, title="Painted陶器", total_tokens=40)
     answers = iter([first, second])
-    monkeypatch.setattr(gui, "analyze_image_with_ai", lambda **_k: next(answers))
-    worker = gui.GenerateWorker(
+    _patch_gui(monkeypatch, "analyze_image_with_ai", lambda **_k: next(answers))
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -6234,8 +6285,8 @@ def test_save_writes_the_copyright_dated_by_the_photo(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "read_field_sources",
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011)),
     )
@@ -6262,7 +6313,7 @@ def test_the_copyright_row_compares_the_file_with_what_a_save_writes(
         existing_copyright="(c) 2019 Someone Else",
         field_sources=_taken(2011, XMP_Rights="(c) 2019 Someone Else"),
     )
-    monkeypatch.setattr(gui, "read_image_context", lambda _p, **_k: context)
+    _patch_gui(monkeypatch, "read_image_context", lambda _p, **_k: context)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
 
@@ -6302,8 +6353,8 @@ def test_a_saved_notice_takes_the_photo_out_of_no_copyright(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _capture_write(monkeypatch)
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "read_field_sources",
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011)),
     )
@@ -6314,7 +6365,7 @@ def test_a_saved_notice_takes_the_photo_out_of_no_copyright(
 
     window._save_current()  # noqa: SLF001
 
-    assert not gui.photo_matches_filter(window._items[str(img)], gui.FILTER_NO_COPYRIGHT)  # noqa: SLF001
+    assert not photo_matches_filter(window._items[str(img)], FILTER_NO_COPYRIGHT)  # noqa: SLF001
 
 
 def test_save_reads_the_photo_right_before_the_write(
@@ -6332,7 +6383,7 @@ def test_save_reads_the_photo_right_before_the_write(
         asked.append(tags)
         return dict.fromkeys(paths, _taken(2019, EXIF_Copyright="(c) 2011 Grace"))
 
-    monkeypatch.setattr(gui, "read_field_sources", fake_read)
+    _patch_gui(monkeypatch, "read_field_sources", fake_read)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
@@ -6371,8 +6422,8 @@ def test_a_copyright_alone_is_enough_to_save(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "read_field_sources",
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2025)),
     )
@@ -6398,8 +6449,8 @@ def test_save_selected_stamps_a_copyright_on_photos_never_generated(
     tagged = _jpeg(tmp_path / "b.jpg")
     _stub_reads(monkeypatch, keywords=["Old"])
     _stub_save_helper(monkeypatch)
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "read_field_sources",
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011)),
     )
@@ -6452,7 +6503,7 @@ def test_save_worker_dates_each_photo_in_the_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The batch save reads every capture year once, then stamps each photo with its own."""
-    monkeypatch.setattr(gui, "managed_helper", lambda _et: nullcontext(None))
+    _patch_gui(monkeypatch, "managed_helper", lambda _et: nullcontext(None))
     old, new = tmp_path / "old.jpg", tmp_path / "new.jpg"
     reads: list[list[Path]] = []
 
@@ -6460,7 +6511,7 @@ def test_save_worker_dates_each_photo_in_the_batch(
         reads.append(list(paths))
         return {old: _taken(2011), new: _taken(2025)}
 
-    monkeypatch.setattr(gui, "read_field_sources", fake_sources)
+    _patch_gui(monkeypatch, "read_field_sources", fake_sources)
     written: dict[str, object] = {}
 
     def fake_write(path: Path, _keywords: object, **kwargs: object) -> bool:
@@ -6479,7 +6530,7 @@ def test_save_worker_dates_each_photo_in_the_batch(
         for path in (old, new)
     ]
 
-    gui.SaveWorker(jobs, options=SaveOptions(extra_fields=fields)).run()
+    workers.SaveWorker(jobs, options=SaveOptions(extra_fields=fields)).run()
 
     assert reads == [[old, new]]  # one batched read for the whole save
     assert written["old.jpg"]["EXIF:Copyright"] == "(c) 2011 Ada"  # type: ignore[index]
@@ -6491,10 +6542,10 @@ def test_save_worker_counts_a_photo_that_keeps_its_notice_as_done(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A copyright-only save of a photo that has one writes nothing, and reports success."""
-    monkeypatch.setattr(gui, "managed_helper", lambda _et: nullcontext(None))
+    _patch_gui(monkeypatch, "managed_helper", lambda _et: nullcontext(None))
     image = tmp_path / "a.jpg"
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "read_field_sources",
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011, EXIF_Copyright="(c) 2011")),
     )
@@ -6506,7 +6557,7 @@ def test_save_worker_counts_a_photo_that_keeps_its_notice_as_done(
     monkeypatch.setattr(metadata, "write_metadata", _refuse)
     fields, _error = build_copyright_fields(artist="", notice="(c) {year}", rights="", marked=None)
     job = SaveJob(path=image, keywords=KeywordSet(), title=None, description=None)
-    worker = gui.SaveWorker([job], options=SaveOptions(extra_fields=fields))
+    worker = workers.SaveWorker([job], options=SaveOptions(extra_fields=fields))
     done: list[tuple[str, bool]] = []
     worker.file_done.connect(lambda path, ok: done.append((path, ok)))
 
@@ -6520,17 +6571,17 @@ def test_save_worker_skips_the_capture_read_without_a_copyright(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A save that writes no copyright costs exactly what it always did."""
-    monkeypatch.setattr(gui, "managed_helper", lambda _et: nullcontext(None))
+    _patch_gui(monkeypatch, "managed_helper", lambda _et: nullcontext(None))
 
     def _refuse(*_a: object, **_k: object) -> dict[Path, int]:
         message = "no copyright, no capture-date read"
         raise AssertionError(message)
 
-    monkeypatch.setattr(gui, "read_field_sources", _refuse)
+    _patch_gui(monkeypatch, "read_field_sources", _refuse)
     monkeypatch.setattr(metadata, "write_metadata", lambda *_a, **_k: True)
     jobs = [SaveJob(path=tmp_path / "a.jpg", keywords=KeywordSet(), title="T", description=None)]
 
-    gui.SaveWorker(jobs, options=SaveOptions()).run()
+    workers.SaveWorker(jobs, options=SaveOptions()).run()
 
 
 def test_saving_settings_persists_the_copyright(
@@ -6540,8 +6591,8 @@ def test_saving_settings_persists_the_copyright(
 ) -> None:
     """Save Settings as Defaults writes the [copyright] table CLI runs read too."""
     config = tmp_path / "config.toml"
-    monkeypatch.setattr(gui, "user_config_path", lambda: config)
-    monkeypatch.setattr(gui, "find_config_file", lambda: None)
+    _patch_gui(monkeypatch, "user_config_path", lambda: config)
+    _patch_gui(monkeypatch, "find_config_file", lambda: None)
     _fill_copyright(window, rights="© {year} {artist}")
     window._preserve_copyright_box.setChecked(False)  # noqa: SLF001
 
@@ -6659,7 +6710,7 @@ def test_the_grid_can_show_only_the_mixed_script_photos(
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
     combo = window._grid_filter_combo  # noqa: SLF001
-    combo.setCurrentIndex(combo.findData(gui.FILTER_MIXED_SCRIPT))
+    combo.setCurrentIndex(combo.findData(FILTER_MIXED_SCRIPT))
 
     assert _grid_order(window) == ["a.jpg"]
 
@@ -6672,14 +6723,14 @@ def test_the_status_column_marks_a_mixed_script_photo(
     flagged = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": flagged})
     item = window._items[str(flagged)]  # noqa: SLF001
-    item.status = gui.READY
+    item.status = READY
     item.foreign_terms = ["陶笛"]
     window._refresh_status_cell(item)  # noqa: SLF001
 
     leaf = window._leaf_for(flagged)  # noqa: SLF001
     assert leaf is not None
-    assert leaf.text(gui._COL_STATUS) == "ready ⚠"  # noqa: SLF001
-    assert "陶笛" in leaf.toolTip(gui._COL_STATUS)  # noqa: SLF001
+    assert leaf.text(COL_STATUS) == "ready ⚠"
+    assert "陶笛" in leaf.toolTip(COL_STATUS)
 
 
 def test_copyright_preview_grows_with_its_content(window: gui.MainWindow) -> None:
@@ -6723,8 +6774,8 @@ def test_write_copyright_toggle_skips_the_block(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     captured = _capture_write(monkeypatch)
-    monkeypatch.setattr(
-        gui,
+    _patch_gui(
+        monkeypatch,
         "read_field_sources",
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2025)),
     )
@@ -6787,7 +6838,7 @@ def test_worker_rests_between_photos_when_paced(
     paths = [Path(f"/photo{i}.jpg") for i in range(_PACED_PHOTOS)]
     # Every window is over as soon as it starts, so each photo boundary earns a rest. The rests
     # themselves are near-instant: half of nothing worked is nothing owed.
-    worker = gui.GenerateWorker(
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -6813,7 +6864,7 @@ def test_worker_stop_wakes_a_run_that_is_resting(
     """Stop ends the rest at once instead of leaving the user to wait it out."""
     _stub_generation(monkeypatch)
     paths = [Path("/a.jpg"), Path("/b.jpg")]
-    worker = gui.GenerateWorker(
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -6839,7 +6890,7 @@ def test_worker_without_pacing_never_rests(
     """A run with no plan never rests, so nothing new sits between two photos."""
     _stub_generation(monkeypatch)
     rests: list[str] = []
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg"), Path("/b.jpg")])
+    worker = workers.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg"), Path("/b.jpg")])
     worker.resting.connect(rests.append)
 
     worker.run()
@@ -7025,8 +7076,8 @@ def test_worker_sends_the_configured_image_size(
         sizes.append(kwargs["max_size"])
         return SimpleNamespace(data=b"x")
 
-    monkeypatch.setattr(gui, "prepare_image_for_agent", record_size)
-    worker = gui.GenerateWorker(
+    _patch_gui(monkeypatch, "prepare_image_for_agent", record_size)
+    worker = workers.GenerateWorker(
         "lmstudio",
         "m",
         None,
@@ -7138,7 +7189,7 @@ def test_remove_waits_for_the_run_in_flight(
 def _capture_beacons(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     """Record every event the window hands to telemetry.emit."""
     sent: list[object] = []
-    monkeypatch.setattr(gui.telemetry, "emit", lambda event, **_k: sent.append(event))
+    monkeypatch.setattr(telemetry, "emit", lambda event, **_k: sent.append(event))
     return sent
 
 
@@ -7219,9 +7270,9 @@ def test_closing_mid_run_reports_the_run_cancelled_and_then_the_session(
 ) -> None:
     """A window closed while a run is open sends that run as cancelled before the session."""
     sent: list[object] = []
-    monkeypatch.setattr(gui.telemetry, "emit", lambda event, **_k: sent.append(event) or event)
+    monkeypatch.setattr(telemetry, "emit", lambda event, **_k: sent.append(event) or event)
     flushed: list[list[object]] = []
-    monkeypatch.setattr(gui.telemetry, "flush", lambda threads: flushed.append(list(threads)))
+    monkeypatch.setattr(telemetry, "flush", lambda threads: flushed.append(list(threads)))
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
     window._start_run("generate", "batch", [window._items[str(a)]])  # noqa: SLF001
@@ -7291,7 +7342,7 @@ def test_harmonized_keywords_do_not_count_as_edits(
         ),
     )
     window._on_harmonize_done(  # noqa: SLF001
-        gui.HarmonizeResult(keywords={str(a): ["Osprey"]}, sessions=1),
+        HarmonizeResult(keywords={str(a): ["Osprey"]}, sessions=1),
     )
     item = window._items[str(a)]  # noqa: SLF001
     assert item.keywords == ["Osprey"]
@@ -7310,7 +7361,7 @@ def test_a_photo_the_scan_could_not_read_is_not_scanned_again_and_again(
     window._stop_scan()  # noqa: SLF001
     window._items[str(img)].known_fields = None  # noqa: SLF001
     window._scan_tried = {str(img)}  # noqa: SLF001 - an earlier scan tried it and read nothing
-    monkeypatch.setattr(gui, "MetadataScanWorker", lambda _paths: pytest.fail("scanned again"))
+    _patch_gui(monkeypatch, "MetadataScanWorker", lambda _paths: pytest.fail("scanned again"))
 
     # The real method: the fixture stubs it out for every other test.
     gui.MainWindow._start_metadata_scan(window)  # noqa: SLF001
@@ -7381,7 +7432,7 @@ def test_uncheck_already_tagged_settles_when_only_unreadable_photos_are_left(
     window._items[str(img)].known_fields = None  # noqa: SLF001
     window._scan_tried = {str(img)}  # noqa: SLF001
 
-    window._deselect_tagged(gui._TAGGED_PRESETS[0][1])  # noqa: SLF001
+    window._deselect_tagged(main_window._TAGGED_PRESETS[0][1])  # noqa: SLF001
 
     assert window._scan_pending is None  # noqa: SLF001
     assert "Reading metadata" not in window._status.text()  # noqa: SLF001

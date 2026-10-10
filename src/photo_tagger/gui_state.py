@@ -4,8 +4,8 @@ Qt-free helpers and per-photo state for the desktop GUI.
 Kept separate from :mod:`photo_tagger.gui` so the GUI's logic (expanding dropped paths, grouping
 files for the tree, parsing the editable keyword field, building the keyword set to write) is plain
 Python the test suite covers normally, with no display server and no dependency on the optional
-PySide6 extra. ``gui.py`` is then just the widget and event-loop shell that wires these helpers to
-Qt.
+PySide6 extra. The ``gui`` package is then just the widget and event-loop shell that wires these
+helpers to Qt.
 """
 
 import fnmatch
