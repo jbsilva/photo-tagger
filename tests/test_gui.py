@@ -51,6 +51,7 @@ from photo_tagger import gui, i18n, image_io, metadata, telemetry
 from photo_tagger.errors import ProviderError
 from photo_tagger.gui import detail_pane, main_window, select_menu, viewer, widgets, workers
 from photo_tagger.gui.common import COL_STATUS, COL_TAGGED, IS_DIR_ROLE, PATH_ROLE
+from photo_tagger.gui.scan_controller import ScanController
 from photo_tagger.gui_state import (
     DEFAULT_GUI_EXTENSIONS,
     EXTRA_PASSES,
@@ -150,8 +151,8 @@ def window(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Iterator[gui.
     """Yield a fresh main window, closing it (and its thread) after each test."""
     win = gui.MainWindow()
     # Adding photos kicks off the background exiftool scan for the Tagged column; keep tests
-    # deterministic (and exiftool-free) by driving _on_scan_done directly where needed.
-    monkeypatch.setattr(win, "_start_metadata_scan", lambda: None)
+    # deterministic (and exiftool-free) by driving the scan's _on_done directly where needed.
+    monkeypatch.setattr(win._scan, "start", lambda: None)  # noqa: SLF001
     # The teardown close() below must never block on a real modal: most tests leave an unsaved
     # proposal behind on purpose and are not testing the close-confirmation dialog itself. Default
     # to "close anyway"; a test that specifically exercises the prompt overrides this again.
@@ -720,7 +721,7 @@ def test_tree_keeps_folders_above_files(window: gui.MainWindow, tmp_path: Path) 
 
 def _scan_reports(window: gui.MainWindow, by_name: dict[str, set[str]]) -> None:
     """Report a finished metadata scan over the whole list, fields keyed by filename."""
-    window._on_scan_done(  # noqa: SLF001
+    window._scan._on_done(  # noqa: SLF001
         {key: set(by_name.get(Path(key).name, set())) for key in window._items},  # noqa: SLF001
     )
 
@@ -814,7 +815,7 @@ def test_deselect_tagged_waits_for_the_metadata_scan(
     b = _jpeg(tmp_path / "b.jpg")
     _add_dir(window, {"a": a, "b": b})
     started: list[int] = []
-    monkeypatch.setattr(window, "_start_metadata_scan", lambda: started.append(1))
+    monkeypatch.setattr(window._scan, "start", lambda: started.append(1))  # noqa: SLF001
 
     window._deselect_tagged(  # noqa: SLF001
         _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
@@ -825,12 +826,12 @@ def test_deselect_tagged_waits_for_the_metadata_scan(
     assert "Reading metadata" in window._status.text()  # noqa: SLF001
 
     _scan_reports(window, {"a.jpg": {FIELD_TITLE}})
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
     assert window._items[str(a)].selected is False  # noqa: SLF001
     assert window._items[str(b)].selected is True  # noqa: SLF001
     assert "Unchecked 1" in window._status.text()  # noqa: SLF001
-    assert window._scan_pending is None  # noqa: SLF001
+    assert window._scan._pending is None  # noqa: SLF001
 
 
 def test_a_second_pick_replaces_the_one_waiting_on_the_scan(
@@ -841,7 +842,7 @@ def test_a_second_pick_replaces_the_one_waiting_on_the_scan(
     """Changing your mind mid-scan applies the last pick, not both."""
     a = _jpeg(tmp_path / "a.jpg")  # keywords only
     _add_dir(window, {"a": a})
-    monkeypatch.setattr(window, "_start_metadata_scan", lambda: None)
+    monkeypatch.setattr(window._scan, "start", lambda: None)  # noqa: SLF001
 
     window._deselect_tagged(  # noqa: SLF001
         _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
@@ -850,7 +851,7 @@ def test_a_second_pick_replaces_the_one_waiting_on_the_scan(
         _criterion({FIELD_KEYWORDS}, match_all=True, phrase="keywords"),
     )
     _scan_reports(window, {"a.jpg": {FIELD_KEYWORDS}})
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
     assert window._items[str(a)].selected is False  # noqa: SLF001
     assert "keywords" in window._status.text()  # noqa: SLF001
@@ -864,42 +865,42 @@ def test_stopping_the_scan_abandons_the_waiting_uncheck(
     """Stop leaves every checkbox alone and says so, rather than acting on a half-read list."""
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
-    monkeypatch.setattr(window, "_start_metadata_scan", lambda: None)
-    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
+    monkeypatch.setattr(window._scan, "start", lambda: None)  # noqa: SLF001
+    window._scan._worker = workers.MetadataScanWorker([])  # noqa: SLF001
     window._deselect_tagged(  # noqa: SLF001
         _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
     )
 
-    window._cancel_scan()  # noqa: SLF001
+    window._scan.cancel()  # noqa: SLF001
     _scan_reports(window, {"a.jpg": {FIELD_TITLE}})  # the batch already in flight still lands
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
     assert window._items[str(a)].selected is True  # noqa: SLF001
     assert "Stopped reading metadata" in window._status.text()  # noqa: SLF001
-    assert window._scan_pending is None  # noqa: SLF001
-    assert window._scan_row.isHidden()  # noqa: SLF001
+    assert window._scan._pending is None  # noqa: SLF001
+    assert window._scan.row.isHidden()  # noqa: SLF001
 
 
 def _stopping_scan(window: gui.MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """
     Put *window* in a scan that Stop is winding down, and record the scans started after it.
 
-    While a scan thread exists, the real _start_metadata_scan runs, which only notes the request.
+    While a scan thread exists, the real ScanController.start runs, which only notes the request.
     Once it is gone, a start is recorded and stands in for a new scan thread.
     """
     started: list[int] = []
 
     def start() -> None:
-        if window._scan_thread is not None:  # noqa: SLF001
-            gui.MainWindow._start_metadata_scan(window)  # noqa: SLF001
+        if window._scan._thread is not None:  # noqa: SLF001
+            ScanController.start(window._scan)  # noqa: SLF001
             return
         started.append(1)
-        window._scan_thread = _FakeScanThread(finishes_in_time=True)  # noqa: SLF001
+        window._scan._thread = _FakeScanThread(finishes_in_time=True)  # noqa: SLF001
 
-    monkeypatch.setattr(window, "_start_metadata_scan", start)
-    window._scan_thread = _FakeScanThread(finishes_in_time=True)  # noqa: SLF001
-    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
-    window._cancel_scan()  # noqa: SLF001
+    monkeypatch.setattr(window._scan, "start", start)  # noqa: SLF001
+    window._scan._thread = _FakeScanThread(finishes_in_time=True)  # noqa: SLF001
+    window._scan._worker = workers.MetadataScanWorker([])  # noqa: SLF001
+    window._scan.cancel()  # noqa: SLF001
     return started
 
 
@@ -915,10 +916,10 @@ def test_an_uncheck_picked_while_the_scan_stops_waits_for_a_new_scan(
     criterion = _criterion({FIELD_TITLE}, match_all=True, phrase="a title")
 
     window._deselect_tagged(criterion)  # noqa: SLF001
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
     assert started == [1]
-    assert window._scan_pending is criterion  # noqa: SLF001
+    assert window._scan._pending is criterion  # noqa: SLF001
     assert "Stopped reading metadata" not in window._status.text()  # noqa: SLF001
 
 
@@ -931,7 +932,7 @@ def test_a_photo_added_while_the_scan_stops_is_scanned(
     started = _stopping_scan(window, monkeypatch)
 
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
     assert started == [1]
 
@@ -944,7 +945,7 @@ def test_an_uncheck_stopped_stays_dropped_when_a_photo_restarts_the_scan(
     """A photo added after Stop restarts the scan, but not the uncheck Stop was pressed on."""
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
     started: list[int] = []
-    monkeypatch.setattr(window, "_start_metadata_scan", lambda: started.append(1))
+    monkeypatch.setattr(window._scan, "start", lambda: started.append(1))  # noqa: SLF001
     window._deselect_tagged(  # noqa: SLF001
         _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
     )
@@ -954,10 +955,10 @@ def test_an_uncheck_stopped_stays_dropped_when_a_photo_restarts_the_scan(
     other = tmp_path / "more"
     other.mkdir()
     _add_dir(window, {"b": _jpeg(other / "b.jpg")})
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
     assert started == [1]
-    assert window._scan_pending is None  # noqa: SLF001
+    assert window._scan._pending is None  # noqa: SLF001
     assert "Stopped reading metadata" in window._status.text()  # noqa: SLF001
 
 
@@ -968,7 +969,7 @@ def test_a_stopped_scan_with_nothing_asked_after_it_stays_stopped(
     """Without a new request, Stop means stop: no scan starts again by itself."""
     started = _stopping_scan(window, monkeypatch)
 
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
     assert started == []
 
@@ -982,8 +983,8 @@ def test_removing_the_unscanned_photos_settles_a_waiting_uncheck(
     a = _jpeg(tmp_path / "a.jpg")  # scanned, has a title
     b = _jpeg(tmp_path / "b.jpg")  # the one the scan had not reached
     _add_dir(window, {"a": a, "b": b})
-    window._on_scan_done({str(a): {FIELD_TITLE}})  # noqa: SLF001 - only a was read
-    monkeypatch.setattr(window, "_start_metadata_scan", lambda: None)
+    window._scan._on_done({str(a): {FIELD_TITLE}})  # noqa: SLF001 - only a was read
+    monkeypatch.setattr(window._scan, "start", lambda: None)  # noqa: SLF001
     window._deselect_tagged(  # noqa: SLF001
         _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
     )
@@ -991,22 +992,22 @@ def test_removing_the_unscanned_photos_settles_a_waiting_uncheck(
     window._remove_items([str(b)])  # noqa: SLF001
 
     assert window._items[str(a)].selected is False  # noqa: SLF001
-    assert window._scan_pending is None  # noqa: SLF001
+    assert window._scan._pending is None  # noqa: SLF001
     assert "Unchecked 1" in window._status.text()  # noqa: SLF001
 
 
 def test_the_scan_row_only_shows_while_a_scan_runs(window: gui.MainWindow) -> None:
     """The delayed reveal must not pop a progress bar up after the scan it reports has ended."""
-    window._show_scan_row()  # noqa: SLF001 - the timer firing with no scan left
-    assert window._scan_row.isHidden()  # noqa: SLF001
+    window._scan.show_row()  # noqa: SLF001 - the timer firing with no scan left
+    assert window._scan.row.isHidden()  # noqa: SLF001
 
-    window._scan_thread = _FakeScanThread(finishes_in_time=True)  # noqa: SLF001
-    window._show_scan_row()  # noqa: SLF001
-    assert not window._scan_row.isHidden()  # noqa: SLF001
+    window._scan._thread = _FakeScanThread(finishes_in_time=True)  # noqa: SLF001
+    window._scan.show_row()  # noqa: SLF001
+    assert not window._scan.row.isHidden()  # noqa: SLF001
 
-    window._hide_scan_row()  # noqa: SLF001
-    window._scan_thread = None  # noqa: SLF001
-    assert window._scan_row.isHidden()  # noqa: SLF001
+    window._scan.hide_row()  # noqa: SLF001
+    window._scan._thread = None  # noqa: SLF001
+    assert window._scan.row.isHidden()  # noqa: SLF001
 
 
 def test_tagged_presets_all_run_without_error(
@@ -1329,7 +1330,7 @@ def test_select_by_status_checks_only_the_photos_without_a_copyright(
     bare = _jpeg(tmp_path / "a.jpg")
     owned = _jpeg(tmp_path / "b.jpg")
     _add_dir(window, {"a": bare, "b": owned})
-    window._on_scan_done({str(bare): {FIELD_TITLE}, str(owned): {FIELD_COPYRIGHT}})  # noqa: SLF001
+    window._scan._on_done({str(bare): {FIELD_TITLE}, str(owned): {FIELD_COPYRIGHT}})  # noqa: SLF001
 
     status = _select_submenu(window, "Check Only").actions()[1].menu()
     next(action for action in status.actions() if action.text() == "No copyright").trigger()
@@ -2750,7 +2751,7 @@ def test_grid_filter_untagged_refreshes_after_metadata_scan(
     # Nothing is scanned yet (known_fields is None), so no photo is hidden or shown as untagged.
     assert _grid_order(window) == []
 
-    window._on_scan_done({str(a): set(), str(b): {FIELD_TITLE}})  # noqa: SLF001
+    window._scan._on_done({str(a): set(), str(b): {FIELD_TITLE}})  # noqa: SLF001
 
     assert _grid_order(window) == ["a.jpg"]  # only the scanned-empty photo
 
@@ -2770,7 +2771,7 @@ def test_grid_filter_no_copyright_refreshes_after_metadata_scan(
     combo.setCurrentIndex(combo.findData(FILTER_NO_COPYRIGHT))
     assert _grid_order(window) == []
 
-    window._on_scan_done({str(a): {FIELD_TITLE}, str(b): {FIELD_COPYRIGHT}})  # noqa: SLF001
+    window._scan._on_done({str(a): {FIELD_TITLE}, str(b): {FIELD_COPYRIGHT}})  # noqa: SLF001
 
     assert _grid_order(window) == ["a.jpg"]
 
@@ -2784,7 +2785,7 @@ def test_a_thumbnail_with_a_notice_gets_the_copyright_badge(
     a = _jpeg(tmp_path / "a.jpg")
     monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a})
-    window._on_scan_done({str(a): {FIELD_TITLE, FIELD_COPYRIGHT}})  # noqa: SLF001
+    window._scan._on_done({str(a): {FIELD_TITLE, FIELD_COPYRIGHT}})  # noqa: SLF001
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
     tip = window._folder_grid._list.item(0).toolTip()  # noqa: SLF001
@@ -4189,7 +4190,7 @@ def test_scan_results_fill_the_tagged_column(window: gui.MainWindow, tmp_path: P
     assert leaf is not None
     assert leaf.text(3) == ""  # unknown until the scan reports
 
-    window._on_scan_done({str(img): {FIELD_TITLE, FIELD_KEYWORDS}})  # noqa: SLF001
+    window._scan._on_done({str(img): {FIELD_TITLE, FIELD_KEYWORDS}})  # noqa: SLF001
 
     assert leaf.text(3) == "TK"
     assert window._items[str(img)].known_fields == {FIELD_TITLE, FIELD_KEYWORDS}  # noqa: SLF001
@@ -4288,7 +4289,7 @@ def test_remove_items_tells_a_running_scan_to_skip_them(
     a, b = _jpeg(tmp_path / "a.jpg"), _jpeg(tmp_path / "b.jpg")
     _add_dir(window, {"a": a, "b": b})
     worker = workers.MetadataScanWorker([a, b])
-    window._scan_worker = worker  # noqa: SLF001
+    window._scan._worker = worker  # noqa: SLF001
 
     window._remove_items([str(a)])  # noqa: SLF001
 
@@ -4299,7 +4300,7 @@ class _FakeScanThread:
     """
     Stands in for a QThread without starting one, so tests stay fast and deterministic.
 
-    Exposes only what MainWindow._stop_scan touches: quit(), wait(ms), deleteLater(), and a finished
+    Exposes only what ScanController.stop touches: quit(), wait(ms), deleteLater(), and a finished
     signal with connect().
     """
 
@@ -4325,13 +4326,13 @@ def test_stop_scan_deletes_immediately_when_it_finishes_in_time(
 ) -> None:
     """The common case (the scan finishes within the grace period) cleans up right away."""
     fake_thread = _FakeScanThread(finishes_in_time=True)
-    window._scan_thread = fake_thread  # noqa: SLF001
-    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
+    window._scan._thread = fake_thread  # noqa: SLF001
+    window._scan._worker = workers.MetadataScanWorker([])  # noqa: SLF001
 
-    window._stop_scan()  # noqa: SLF001
+    window._scan.stop()  # noqa: SLF001
 
-    assert window._scan_thread is None  # noqa: SLF001
-    assert window._scan_worker is None  # noqa: SLF001
+    assert window._scan._thread is None  # noqa: SLF001
+    assert window._scan._worker is None  # noqa: SLF001
     assert fake_thread.quit_called
     assert fake_thread.deleted
     assert not fake_thread.finished_slots
@@ -4341,19 +4342,19 @@ def test_stop_scan_detaches_instead_of_blocking_when_still_running(
     window: gui.MainWindow,
 ) -> None:
     """
-    _stop_scan must not block the caller forever waiting on a scan that will not finish soon.
+    ScanController.stop must not block the caller forever on a scan that will not finish soon.
 
     Regression test: a single batched exiftool call cannot be cancelled mid-flight, so a large
     folder (or a hung exiftool) used to freeze closeEvent/_clear until the whole scan finished.
     """
     fake_thread = _FakeScanThread(finishes_in_time=False)
-    window._scan_thread = fake_thread  # noqa: SLF001
-    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
+    window._scan._thread = fake_thread  # noqa: SLF001
+    window._scan._worker = workers.MetadataScanWorker([])  # noqa: SLF001
 
-    window._stop_scan()  # noqa: SLF001 - must return promptly, not block for _SCAN_STOP_TIMEOUT_MS
+    window._scan.stop()  # noqa: SLF001 - must return promptly, not block for _SCAN_STOP_TIMEOUT_MS
 
-    assert window._scan_thread is None  # noqa: SLF001 - detached, not waited on further
-    assert window._scan_worker is None  # noqa: SLF001
+    assert window._scan._thread is None  # noqa: SLF001 - detached, not waited on further
+    assert window._scan._worker is None  # noqa: SLF001
     assert fake_thread.quit_called
     assert not fake_thread.deleted  # never force-deleted while still running
     assert fake_thread.finished_slots  # cleanup deferred to whenever it actually finishes
@@ -4365,23 +4366,23 @@ def test_a_detached_scan_finishing_leaves_a_newer_scan_alone(
     """
     A scan the timeout detached must not take the next scan down with it.
 
-    It keeps running after _stop_scan lets go, and _on_scan_finished tears down whatever scan is
-    current when it fires, so a late finish used to quit and discard an unrelated live one.
+    It keeps running after stop() lets go, and _on_finished tears down whatever scan is current when
+    it fires, so a late finish used to quit and discard an unrelated live one.
     """
     stale = workers.MetadataScanWorker([])
-    stale.done.connect(window._on_scan_done)  # noqa: SLF001
-    stale.finished.connect(window._on_scan_finished)  # noqa: SLF001
-    window._scan_thread = _FakeScanThread(finishes_in_time=False)  # noqa: SLF001
-    window._scan_worker = stale  # noqa: SLF001
-    window._stop_scan()  # noqa: SLF001 - detaches; `stale` runs on
+    stale.done.connect(window._scan._on_done)  # noqa: SLF001
+    stale.finished.connect(window._scan._on_finished)  # noqa: SLF001
+    window._scan._thread = _FakeScanThread(finishes_in_time=False)  # noqa: SLF001
+    window._scan._worker = stale  # noqa: SLF001
+    window._scan.stop()  # noqa: SLF001 - detaches; `stale` runs on
 
     live_thread = _FakeScanThread(finishes_in_time=True)
-    window._scan_thread = live_thread  # noqa: SLF001
-    window._scan_worker = workers.MetadataScanWorker([])  # noqa: SLF001
+    window._scan._thread = live_thread  # noqa: SLF001
+    window._scan._worker = workers.MetadataScanWorker([])  # noqa: SLF001
 
     stale.finished.emit()
 
-    assert window._scan_thread is live_thread  # noqa: SLF001
+    assert window._scan._thread is live_thread  # noqa: SLF001
     assert not live_thread.quit_called
 
 
@@ -4391,10 +4392,10 @@ def test_on_scan_finished_does_not_restart_a_scan_once_closing(
 ) -> None:
     """A scan that finishes after closeEvent already ran must not kick off a new one."""
     started: list[object] = []
-    monkeypatch.setattr(window, "_start_metadata_scan", lambda: started.append(1))
+    monkeypatch.setattr(window._scan, "start", lambda: started.append(1))  # noqa: SLF001
     window._closing = True  # noqa: SLF001
 
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
     assert not started
 
@@ -6829,7 +6830,7 @@ def test_a_saved_notice_takes_the_photo_out_of_no_copyright(
         lambda paths, _tags, **_k: dict.fromkeys(paths, _taken(2011)),
     )
     _add_dir(window, {"a": img})
-    window._on_scan_done({str(img): set()})  # noqa: SLF001
+    window._scan._on_done({str(img): set()})  # noqa: SLF001
     _select(window, window._tree.leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
 
@@ -7855,15 +7856,15 @@ def test_a_photo_the_scan_could_not_read_is_not_scanned_again_and_again(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
-    window._stop_scan()  # noqa: SLF001
+    window._scan.stop()  # noqa: SLF001
     window._items[str(img)].known_fields = None  # noqa: SLF001
-    window._scan_tried = {str(img)}  # noqa: SLF001 - an earlier scan tried it and read nothing
+    window._scan._tried = {str(img)}  # noqa: SLF001 - an earlier scan tried it and read nothing
     _patch_gui(monkeypatch, "MetadataScanWorker", lambda _paths: pytest.fail("scanned again"))
 
     # The real method: the fixture stubs it out for every other test.
-    gui.MainWindow._start_metadata_scan(window)  # noqa: SLF001
+    ScanController.start(window._scan)  # noqa: SLF001
 
-    assert window._scan_thread is None  # noqa: SLF001
+    assert window._scan._thread is None  # noqa: SLF001
 
 
 def test_clear_forgets_which_photos_the_scan_tried(
@@ -7875,11 +7876,11 @@ def test_clear_forgets_which_photos_the_scan_tried(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
-    window._scan_tried = {str(img)}  # noqa: SLF001
+    window._scan._tried = {str(img)}  # noqa: SLF001
 
     window._clear()  # noqa: SLF001
 
-    assert window._scan_tried == set()  # noqa: SLF001
+    assert window._scan._tried == set()  # noqa: SLF001
 
 
 def test_a_stopped_scan_marks_nothing_as_tried(
@@ -7892,12 +7893,12 @@ def test_a_stopped_scan_marks_nothing_as_tried(
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
     window._items[str(img)].known_fields = None  # noqa: SLF001
-    window._scan_batch = {str(img)}  # noqa: SLF001
-    window._scan_cancelled = True  # noqa: SLF001
+    window._scan._batch = {str(img)}  # noqa: SLF001
+    window._scan._cancelled = True  # noqa: SLF001
 
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
-    assert str(img) not in window._scan_tried  # noqa: SLF001
+    assert str(img) not in window._scan._tried  # noqa: SLF001
 
 
 def test_a_finished_scan_marks_what_it_could_not_read(
@@ -7910,11 +7911,11 @@ def test_a_finished_scan_marks_what_it_could_not_read(
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
     window._items[str(img)].known_fields = None  # noqa: SLF001
-    window._scan_batch = {str(img)}  # noqa: SLF001
+    window._scan._batch = {str(img)}  # noqa: SLF001
 
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
-    assert str(img) in window._scan_tried  # noqa: SLF001
+    assert str(img) in window._scan._tried  # noqa: SLF001
 
 
 def test_a_photo_added_again_while_the_scan_ran_is_read_again(
@@ -7927,14 +7928,14 @@ def test_a_photo_added_again_while_the_scan_ran_is_read_again(
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
     key = str(img)
-    window._scan_batch = {key}  # noqa: SLF001 - the scan in flight had it
+    window._scan._batch = {key}  # noqa: SLF001 - the scan in flight had it
 
     window._forget_items([key])  # noqa: SLF001 - removed mid-scan...
     _add_dir(window, {"a": img})  # ...and added back before the scan ended
     window._items[key].known_fields = None  # noqa: SLF001
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
-    assert key not in window._scan_tried  # noqa: SLF001
+    assert key not in window._scan._tried  # noqa: SLF001
 
 
 def test_a_photo_undone_while_the_scan_ran_is_read_again(
@@ -7947,14 +7948,14 @@ def test_a_photo_undone_while_the_scan_ran_is_read_again(
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
     key = str(img)
-    window._scan_batch = {key}  # noqa: SLF001
+    window._scan._batch = {key}  # noqa: SLF001
 
     window._on_undone([key])  # noqa: SLF001
     _scan_reports(window, {"a.jpg": {FIELD_TITLE}})  # read before the undo, delivered after it
-    window._on_scan_finished()  # noqa: SLF001
+    window._scan._on_finished()  # noqa: SLF001
 
     assert window._items[key].known_fields is None  # noqa: SLF001
-    assert key not in window._scan_tried  # noqa: SLF001
+    assert key not in window._scan._tried  # noqa: SLF001
 
 
 def test_uncheck_already_tagged_settles_when_only_unreadable_photos_are_left(
@@ -7967,9 +7968,9 @@ def test_uncheck_already_tagged_settles_when_only_unreadable_photos_are_left(
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
     window._items[str(img)].known_fields = None  # noqa: SLF001
-    window._scan_tried = {str(img)}  # noqa: SLF001
+    window._scan._tried = {str(img)}  # noqa: SLF001
 
     window._deselect_tagged(select_menu._TAGGED_PRESETS[0][1])  # noqa: SLF001
 
-    assert window._scan_pending is None  # noqa: SLF001
+    assert window._scan._pending is None  # noqa: SLF001
     assert "Reading metadata" not in window._status.text()  # noqa: SLF001

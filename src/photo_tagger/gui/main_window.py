@@ -43,7 +43,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QSplitter,
     QStackedWidget,
@@ -87,6 +86,7 @@ from photo_tagger.gui.pacing import PacingDialog
 from photo_tagger.gui.photo_tree import PhotoTree
 from photo_tagger.gui.run_bar import RunBar
 from photo_tagger.gui.save_options import SaveOptionsMenu
+from photo_tagger.gui.scan_controller import ScanController
 from photo_tagger.gui.select_menu import SelectMenu
 from photo_tagger.gui.settings_menu import SettingsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
@@ -98,7 +98,6 @@ from photo_tagger.gui.widgets import InputWatcher, busy_cursor
 from photo_tagger.gui.workers import (
     GenerateWorker,
     HarmonizeWorker,
-    MetadataScanWorker,
     SaveWorker,
 )
 from photo_tagger.gui_state import (
@@ -258,14 +257,8 @@ _VIEW_MODES: tuple[tuple[str, str, str], ...] = (
     ),
 )
 
-# Grace period _stop_scan gives an in-flight batched exiftool call to finish on its own before
-# detaching rather than blocking the caller. Comfortably above a normal scan's duration.
-_SCAN_STOP_TIMEOUT_MS = 3000
-# How long a metadata scan must run before the window reports it. A local folder is read well
-# inside this, so the usual case never shows a progress bar at all; a network share blows past it.
-_SCAN_PROGRESS_DELAY_MS = 700
-# The same grace period for shoot harmonization, whose batched capture-time read has no stop hook
-# either.
+# Grace period shoot harmonization gets to finish on its own before the window detaches it rather
+# than blocking the caller. Its batched capture-time read has no stop hook.
 _HARMONIZE_STOP_TIMEOUT_MS = 3000
 
 
@@ -278,8 +271,8 @@ class MainWindow(QMainWindow):
     photo (or a folder grid), and the bottom bar carries the batch actions with a progress bar.
 
     Each of those parts, and each dialog, is a class of its own. What stays here is what they
-    share: the photos, what the right pane has open, the metadata scan behind the Tagged column,
-    the generate-then-save chain that the folder watch feeds, and the telemetry the window reports.
+    share: the photos, what the right pane has open, the generate-then-save chain that the folder
+    watch feeds, and the telemetry the window reports.
     """
 
     def __init__(self) -> None:
@@ -357,6 +350,7 @@ class MainWindow(QMainWindow):
         self._connection_bar.used.connect(self._count)
         self._folder_grid.status.connect(self._status.setText)
         self._detail.status.connect(self._status.setText)
+        self._scan.status.connect(self._status.setText)
 
     def _build_dialogs(self) -> None:
         """
@@ -411,8 +405,8 @@ class MainWindow(QMainWindow):
         Seed the handles for every background job the window runs.
 
         Each job has its own thread so one never waits on another: generation, saving, grid
-        thumbnails, the metadata scan, shoot harmonization, and the watcher. The watcher belongs to
-        its WatchController, and the vocabulary build to its dialog.
+        thumbnails, the metadata scan, shoot harmonization, and the watcher. The scan belongs to its
+        ScanController, the watcher to its WatchController, and the vocabulary build to its dialog.
         """
         self._thread: QThread | None = None
         self._worker: GenerateWorker | None = None
@@ -441,22 +435,6 @@ class MainWindow(QMainWindow):
         self._save_journal: UndoJournal | None = None
         # The one journal every photo-by-photo save of this session shares, opened on the first.
         self._session_journal: UndoJournal | None = None
-        self._scan_thread: QThread | None = None
-        self._scan_worker: MetadataScanWorker | None = None
-        # The "Uncheck Already Tagged" pick waiting for the scan to cover every photo, and whether
-        # the user stopped that scan. Both None/False while no one is waiting on a scan.
-        self._scan_pending: TaggedCriterion | None = None
-        self._scan_cancelled = False
-        # A scan was asked for while Stop wound the last one down: a new request, not the old one.
-        self._scan_again = False
-        # The waiting uncheck was picked after Stop, so it is a new one, not the one Stop dropped.
-        self._scan_picked_after_stop = False
-        # The photos the running scan was handed, and the ones a finished scan could not read (see
-        # _on_scan_finished): those are not handed out again until they leave the list.
-        self._scan_batch: set[str] = set()
-        self._scan_tried: set[str] = set()
-        # Photos of the running scan's batch that an undo rewrote: what it reads of them is stale.
-        self._scan_stale: set[str] = set()
         self._harmonize_thread: QThread | None = None
         self._harmonize_worker: HarmonizeWorker | None = None
         # The status line a run owns while it works, restored after every pacing rest.
@@ -720,7 +698,15 @@ class MainWindow(QMainWindow):
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             shortcut.activated.connect(self._remove_selected)
         box.addWidget(self._tree, stretch=1)
-        box.addWidget(self._build_scan_row())
+        self._scan = ScanController(
+            self,
+            photos=self._items.items,
+            photo=self._items.get,
+            closing=lambda: self._closing,
+        )
+        self._scan.fields_read.connect(self._on_fields_read)
+        self._scan.uncheck_requested.connect(self._apply_tagged_criterion)
+        box.addWidget(self._scan.row)
 
         hint = QLabel(_("Drag photos or folders here. Select one and press Delete to remove it."))
         hint.setObjectName("hint")
@@ -1265,7 +1251,7 @@ class MainWindow(QMainWindow):
         self._usage.photos_added += len(fresh)
         self._rebuild_tree()
         self._update_status()
-        self._start_metadata_scan()
+        self._scan.start()
         return fresh
 
     def _item_paths(self) -> list[Path]:
@@ -1309,26 +1295,21 @@ class MainWindow(QMainWindow):
             return
         if not keys:
             return
-        if self._scan_worker is not None:
-            # Before anything slower: a scan in flight is reading the list as it stood when it
-            # started, and the point of removing a folder is to stop paying for it.
-            self._scan_worker.drop(Path(key) for key in keys)
+        # Before anything slower: a scan in flight is reading the list as it stood when it
+        # started, and the point of removing a folder is to stop paying for it.
+        self._scan.drop(keys)
         self._forget_items(keys)
         self._rebuild_tree()
         self._refresh_grid_after_removal()
         self._update_status()
-        if self._scan_pending is not None and self._scan_thread is None:
-            # The photos an uncheck was still waiting to have scanned are the ones just removed,
-            # so nothing will finish a scan for it. Settle it now, against what is left, and after
-            # the summary above so its own line is the one that stays up.
-            self._end_scan(stopped=False)
+        # After the summary above, so the line of an uncheck it settles is the one that stays up.
+        self._scan.settle_after_removal()
 
     def _forget_items(self, keys: list[str]) -> None:
         """Drop each key from the list, from every cache holding its pixels, and from the view."""
         for key in keys:
             self._items.pop(key, None)
-            self._scan_tried.discard(key)  # added again later, it deserves a fresh read
-            self._scan_batch.discard(key)  # the scan in flight skips it, so it has not tried it
+            self._scan.forget(key)
             self._detail.forget(key)
             self._folder_grid.forget(key)
             if self._current is not None and str(self._current.path) == key:
@@ -1359,10 +1340,8 @@ class MainWindow(QMainWindow):
             self._status.setText(_("Cancel the run in flight before clearing the list."))
             return
         self._folder_grid.clear()
-        self._stop_scan()
-        self._end_scan(stopped=True)  # the list is gone, so nothing is left to uncheck in it
+        self._scan.reset()
         self._items.clear()
-        self._scan_tried.clear()
         self._detail.forget_all()
         self._current = None
         self._rebuild_tree()
@@ -1393,20 +1372,7 @@ class MainWindow(QMainWindow):
         if all(item.known_fields is not None for item in self._items.values()):
             self._apply_tagged_criterion(criterion)
             return
-        self._scan_pending = criterion  # a second pick replaces one that is still waiting
-        self._scan_picked_after_stop = self._scan_cancelled
-        self._status.setText(
-            _("Reading metadata before unchecking photos with {phrase}...").format(
-                phrase=_(criterion.phrase),
-            ),
-        )
-        unknown = [key for key, item in self._items.items() if item.known_fields is None]
-        if all(key in self._scan_tried for key in unknown):
-            # Nothing left that a scan can read: settle on what is known, unknown photos kept.
-            self._end_scan(stopped=False)
-            return
-        self._start_metadata_scan()
-        self._show_scan_row()  # the user is waiting on this scan, so do not hold the bar back
+        self._scan.wait_for(criterion)
 
     def _apply_tagged_criterion(self, criterion: TaggedCriterion) -> None:
         """Uncheck every scanned photo matching *criterion* and report what that changed."""
@@ -1505,94 +1471,11 @@ class MainWindow(QMainWindow):
 
     # --- background metadata scan (the Tagged column) ---------------------------------------------
 
-    def _build_scan_row(self) -> QWidget:
-        """
-        Build the row under the list that reports the metadata scan behind the Tagged column.
-
-        Hidden while nothing is scanning. It carries its own Stop button rather than borrowing the
-        bottom bar's Cancel, because a scan and a generate/save run can be in flight at once (a
-        watch adds photos mid-run) and the two must stay separately stoppable.
-        """
-        self._scan_progress = QProgressBar()
-        self._scan_stop_button = QToolButton()
-        self._scan_stop_button.setText(_("Stop"))
-        self._scan_stop_button.setToolTip(
-            tooltip(
-                "Stop reading metadata. The photos already read keep their Tagged column; the "
-                "rest stay unknown until the next scan. Nothing is written either way.",
-            ),
-        )
-        self._scan_stop_button.clicked.connect(self._cancel_scan)
-        # Only show the row for a scan that actually runs long enough to be worth reporting, so a
-        # handful of local photos does not make a progress bar flash on and off.
-        self._scan_show_timer = QTimer(self)
-        self._scan_show_timer.setSingleShot(True)
-        self._scan_show_timer.setInterval(_SCAN_PROGRESS_DELAY_MS)
-        self._scan_show_timer.timeout.connect(self._show_scan_row)
-
-        self._scan_row = QWidget()
-        row = QHBoxLayout(self._scan_row)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(self._scan_progress, stretch=1)
-        row.addWidget(self._scan_stop_button)
-        self._scan_row.setVisible(False)
-        return self._scan_row
-
-    def _start_metadata_scan(self) -> None:
-        """Scan photos with an unknown Tagged state in the background, one batch at a time."""
-        if self._scan_thread is not None:
-            # A running scan picks up stragglers when it finishes. One that is stopping would not,
-            # so a photo added or an uncheck picked now asks it to start again.
-            self._scan_again = self._scan_again or self._scan_cancelled
-            return
-        # A photo a scan already tried and could not read stays unknown; asking again straight away
-        # would only fail again, and restart the scan forever.
-        pending = [
-            item.path
-            for key, item in self._items.items()
-            if item.known_fields is None and key not in self._scan_tried
-        ]
-        if not pending:
-            return
-        self._scan_batch = {str(path) for path in pending}
-        self._scan_stale = set()
-        self._scan_worker = MetadataScanWorker(pending)
-        self._scan_worker.done.connect(self._on_scan_done)
-        self._scan_worker.progress.connect(self._on_scan_progress)
-        self._scan_worker.finished.connect(self._on_scan_finished)
-        self._scan_progress.setFormat(_("Reading metadata... %v / %m"))
-        self._scan_stop_button.setEnabled(True)
-        self._scan_thread = start_in_thread(self, self._scan_worker)
-        self._scan_show_timer.start()
-
-    def _on_scan_progress(self, scanned: int, total: int) -> None:
-        """Move the scan's progress bar as each batch of photos is read."""
-        self._scan_progress.setRange(0, total)
-        self._scan_progress.setValue(scanned)
-
-    def _show_scan_row(self) -> None:
-        """Reveal the scan row, unless the scan it would report has already finished."""
-        self._scan_row.setVisible(self._scan_thread is not None)
-
-    def _hide_scan_row(self) -> None:
-        """Put the scan row away, and cancel a pending reveal so it cannot pop up after."""
-        self._scan_show_timer.stop()
-        self._scan_row.setVisible(False)
-
-    def _cancel_scan(self) -> None:
-        """Stop the metadata scan after the batch it is on (the Stop button under the list)."""
-        if self._scan_worker is None:
-            return
-        self._scan_cancelled = True
-        self._scan_worker.stop()
-        self._scan_stop_button.setEnabled(False)
-        self._scan_progress.setFormat(_("Stopping..."))
-
-    def _on_scan_done(self, presence: dict[str, set[str]]) -> None:
+    def _on_fields_read(self, presence: dict[str, set[str]]) -> None:
         """Record the scanned field sets and repaint the Tagged column."""
         for key, fields in presence.items():
             item = self._items.get(key)
-            if item is not None and key not in self._scan_stale:
+            if item is not None:
                 # Merge rather than replace: a save may have added fields while the scan ran.
                 item.known_fields = set(fields) | (item.known_fields or set())
                 self._refresh_status_cell(item)
@@ -1600,71 +1483,6 @@ class MainWindow(QMainWindow):
         # re-evaluate once the results land; the rest read state the scan does not change.
         if self._folder_grid.filter in SCAN_FILTERS:
             self._resort_grid()
-
-    def _on_scan_finished(self) -> None:
-        """Tear down the scan thread and pick up photos added while it ran."""
-        if self._closing:
-            # A scan detached by _stop_scan's timeout can finish after closeEvent already moved
-            # on; the window is going away, so there is nothing left to restart a scan for.
-            return
-        stopped = self._scan_cancelled
-        again, self._scan_again = self._scan_again, False
-        picked_after_stop, self._scan_picked_after_stop = self._scan_picked_after_stop, False
-        self._stop_scan()
-        if stopped and again and not picked_after_stop and self._scan_pending is not None:
-            # Stop drops the uncheck it was pressed on, even when a photo added since then starts
-            # the scan again. Only an uncheck picked after Stop waits for that new scan.
-            self._scan_pending = None
-            self._status.setText(_("Stopped reading metadata. No photo was unchecked."))
-        if not stopped:
-            # A scan that ran to its end read every photo it could; those still unknown are
-            # unreadable, so the restart below leaves them out. A stopped scan tried nothing more.
-            self._scan_tried |= {
-                key
-                for key in self._scan_batch
-                if (item := self._items.get(key)) is not None and item.known_fields is None
-            }
-        if not stopped or again:
-            self._scan_cancelled = False
-            self._start_metadata_scan()
-        if self._scan_thread is None:
-            # Nothing left unknown (or the user stopped it): the scan is over for now.
-            self._end_scan(stopped=stopped and not again)
-
-    def _end_scan(self, *, stopped: bool) -> None:
-        """Put the scan row away and settle whatever was waiting on the scan."""
-        self._scan_cancelled = False
-        self._scan_again = False
-        self._hide_scan_row()
-        criterion, self._scan_pending = self._scan_pending, None
-        if criterion is None:
-            return
-        if stopped:
-            self._status.setText(_("Stopped reading metadata. No photo was unchecked."))
-        else:
-            self._apply_tagged_criterion(criterion)
-
-    def _stop_scan(self) -> None:
-        if self._scan_worker is not None:
-            # Between batches the worker checks this, so a detached scan below stops reading the
-            # rest of the library instead of running it out in the background.
-            self._scan_worker.stop()
-            # Cut the worker loose before letting go of it. A scan detached by the timeout below
-            # keeps running, and its late finished signal would otherwise reach _on_scan_finished
-            # and tear down whatever scan is current by then, not the one that just ended.
-            self._scan_worker.disconnect(self)
-            self._scan_worker.deleteLater()
-        if self._scan_thread is not None:
-            # A big folder, or a hung exiftool, can outlast the timeout. pyexiftool exposes no way
-            # to cancel a batched call mid-flight, and the scan only reads metadata, so losing its
-            # result is harmless: detach rather than block the caller (closeEvent, _clear).
-            release_thread(
-                self._scan_thread,
-                timeout_ms=_SCAN_STOP_TIMEOUT_MS,
-                detached_event="gui_metadata_scan_stop_timed_out",
-            )
-            self._scan_thread = None
-        self._scan_worker = None
 
     # --- the right-hand pane: what is open, the folder grid, and the detail pane ------------------
 
@@ -2200,11 +2018,7 @@ class MainWindow(QMainWindow):
             # proposal is still worth keeping, the file's own metadata is not.
             item.status = READY if item.has_proposal else PENDING
             item.known_fields = None
-            self._scan_tried.discard(key)  # the file changed, so read it again
-            if key in self._scan_batch:
-                # What the scan in flight read of it, or is about to deliver, is stale too.
-                self._scan_batch.discard(key)
-                self._scan_stale.add(key)
+            self._scan.reread(key)  # the file changed, so read it again
             item.loaded = False
             item.field_sources_read = False
             item.sources_read = False
@@ -2212,7 +2026,7 @@ class MainWindow(QMainWindow):
             touched = True
         if not touched:
             return
-        self._start_metadata_scan()
+        self._scan.start()
         if self._current is not None:
             self._show_item(self._current)
 
@@ -3009,7 +2823,7 @@ class MainWindow(QMainWindow):
             self._save_worker.stop()
         self._watch.stop_worker()
         self._folder_grid.stop_thumbs(blocking=True)
-        self._stop_scan()
+        self._scan.stop()
         self._teardown_thread()
         self._teardown_save_thread()
         self._teardown_harmonize_thread()
