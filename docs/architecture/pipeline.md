@@ -43,8 +43,9 @@ The resolved list then passes through three optional filters, in this order:
 The skip list is newline-delimited. Blank lines and lines starting with `#` are ignored. The date
 filter compares each file's modification time, not EXIF capture time, because reading EXIF off every
 file costs an extra ExifTool pass. Bounds are exclusive: `--newer-than` drops files on or before the
-instant, and `--older-than` drops files on or after it. `--skip-tagged` uses one read per file via
-`find_tagged_images()`. See [Metadata and keywords](metadata.md) for what counts as "tagged".
+instant, and `--older-than` drops files on or after it. `--skip-tagged` reads all the files (and
+their sidecars) in one batched ExifTool call via `find_tagged_images()`. See
+[Metadata and keywords](metadata.md) for what counts as "tagged".
 
 !!! tip
 
@@ -117,12 +118,12 @@ flowchart TD
     F --> B
 ```
 
-Steps 1 to 7 above run as usual, but instead of writing, each photo's analysis is held in a
-`_PendingWrite`. Once the session's last photo is analyzed, its own output becomes a `Vocabulary`
-(majority spelling, majority hierarchy). Every held analysis is then snapped onto it, and the
-session is written in one burst. The signals that must follow a real write (the
-`--append-to-skip-file` callback and the per-photo `ImageOutcome`) fire from that burst rather than
-from the analysis.
+Steps 1 to 6 above run as usual. Then, instead of the merge and the write (steps 7 and 8), each
+photo's analysis is held in a `_PendingWrite`. Once the session's last photo is analyzed, its own
+output becomes a `Vocabulary` (majority spelling, majority hierarchy). Every held analysis is then
+snapped onto it, merged with the existing keywords, and the session is written in one burst. The
+signals that must follow a real write (the `--append-to-skip-file` callback and the per-photo
+`ImageOutcome`) fire from that burst rather than from the analysis.
 
 Sessions run in sequence. The photos inside a session still use the thread pool. A write that fails
 in the burst is final rather than retried, because the model work is already done and harmonized: an
@@ -133,11 +134,13 @@ the same terms as the rest of its shoot.
 ## Retry pass
 
 `run_batch()` runs two passes. Photos that fail the first pass are collected and retried once in a
-second pass. If `write_metadata` returns false, or if any step raises, the photo "fails". First-pass
-failures are logged as `file_queued_for_retry`. If the retry also fails, the photo is logged as
-`file_failed_after_retry` and listed in the final summary. When a photo is truly done, whether by
-first-pass success or any retry-pass outcome, the progress bar advances. This stops a flaky file
-that recovers on retry from making the bar overshoot.
+second pass. The second pass waits 5 seconds before it starts, because a busy or restarting server
+often recovers in that time. A photo that failed with HTTP 401 or 403 (a wrong or revoked
+credential) is not retried, because waiting cannot fix it. If `write_metadata` returns false, or if
+any step raises, the photo "fails". First-pass failures are logged as `file_queued_for_retry`. If
+the retry also fails, the photo is logged as `file_failed_after_retry` and listed in the final
+summary. When a photo is truly done, whether by first-pass success or any retry-pass outcome, the
+progress bar advances. This stops a flaky file that recovers on retry from making the bar overshoot.
 
 The two-pass structure is separate from the model's own `--retries`. When the model output fails
 schema validation, those retries happen inside a single `analyze_image_with_ai` call. The pipeline's
@@ -149,11 +152,11 @@ retry pass re-runs the whole photo once more after the first pass finishes.
 through optional callbacks that the CLI wires up. Each callback is invoked defensively: a callback
 that raises is logged and swallowed so it cannot abort the batch.
 
-| Callback          | Wired to                                                   | Fires                                    |
-| ----------------- | ---------------------------------------------------------- | ---------------------------------------- |
-| `on_image_result` | NDJSON emitter (`--json`) and/or CSV writer (`--csv-file`) | Once per photo, with the `ImageOutcome`. |
-| `on_success`      | skip-list appender (`--append-to-skip-file`)               | Once per successful photo.               |
-| `on_complete`     | summary writer (`--summary-file`)                          | Once at the end, with the `BatchTotals`. |
+| Callback          | Wired to                                                   | Fires                                          |
+| ----------------- | ---------------------------------------------------------- | ---------------------------------------------- |
+| `on_image_result` | NDJSON emitter (`--json`) and/or CSV writer (`--csv-file`) | Once per photo, with the `ImageOutcome`.       |
+| `on_success`      | skip-list appender (`--append-to-skip-file`)               | Once per successful photo, never on a dry run. |
+| `on_complete`     | summary writer (`--summary-file`)                          | Once at the end, with the `BatchTotals`.       |
 
 The NDJSON emitter writes one JSON line per photo to stdout (file, status, `from_cache`, `retry`,
 title, description, keywords, token counts, seconds, `foreign_terms`). Logs and the progress bar
@@ -172,9 +175,10 @@ counts, failed files, token usage, wall time) to the `--summary-file` as JSON.
 A `KeyboardInterrupt` (Ctrl-C) is handled rather than crashing the run. The current pass stops,
 every photo that was still pending is marked failed, and the retry pass is skipped. `run_batch()`
 still builds the `BatchTotals` and fires `on_complete`, so the summary file reflects what actually
-finished. In serial mode the interrupt lands cleanly between photos. In concurrent mode it cancels
-queued futures and stops accepting new work. Workers already in flight cannot be interrupted from
-outside, so this is a best-effort quick stop rather than an instant abort.
+finished. Then it raises `BatchError`, even if every photo was done. In serial mode the interrupt
+lands cleanly between photos. In concurrent mode it cancels queued futures and stops accepting new
+work. Workers already in flight cannot be interrupted from outside, so this is a best-effort quick
+stop rather than an instant abort.
 
 ## Concurrency
 
