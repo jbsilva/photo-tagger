@@ -403,8 +403,9 @@ class OutputConfig(CopyrightConfig):
         Parameter(
             name=("--dry-run",),
             help=(
-                "Run the model and log the proposed metadata for each photo, but do not "
-                "write XMP. Useful for previewing prompts before committing to a batch"
+                "Run the model and log the proposed metadata for each photo, but write no "
+                "metadata at all: no sidecar, and nothing into the photo. Useful for previewing "
+                "prompts before committing to a batch"
             ),
         ),
     ] = False
@@ -497,8 +498,9 @@ class LogConfig:
             help=(
                 "Export an OpenTelemetry trace of every model call (timings, tokens, failures) to "
                 "your own collector: Logfire, Jaeger, Grafana Tempo, anything speaking OTLP over "
-                "HTTP. Off by default, and needs an endpoint from --otel-endpoint or "
-                "OTEL_EXPORTER_OTLP_ENDPOINT. The photos themselves are never exported"
+                "HTTP. Off by default, and needs an endpoint from --otel-endpoint, "
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, or OTEL_EXPORTER_OTLP_ENDPOINT. The photos "
+                "themselves are never exported"
             ),
         ),
     ] = False
@@ -592,8 +594,9 @@ class DisplayConfig:
             name=("--json",),
             help=(
                 "Emit one NDJSON line per processed photo to stdout (file, status, title, "
-                "description, keywords, token usage, seconds, cache flag). Useful for "
-                "piping into other tools. Logs and progress stay on stderr"
+                "description, keywords, token usage, seconds, cache flag, retry flag, "
+                "foreign_terms). Useful for piping into other tools. Logs and progress stay on "
+                "stderr"
             ),
         ),
     ] = False

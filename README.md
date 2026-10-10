@@ -197,7 +197,7 @@ Key options:
   - `both`: each photo *and* a sidecar beside it
 - `--sidecar-override EXT=TARGET`: send one file type elsewhere, whatever the mode. For example,
   `dng=photo` writes into each DNG, which is where Lightroom Classic keeps the metadata of a DNG
-- `--dry-run`: run the model and log the proposed metadata without writing XMP
+- `--dry-run`: run the model and log the proposed metadata without writing any metadata
 - `-w/--workers N`: process N photos concurrently using a thread pool (default 1)
 - `--no-progress`: hide the live rich progress bar (auto-disabled when stderr is not a terminal)
 - `--max-keywords N`: cap how many AI-generated keywords are kept per photo before merging
