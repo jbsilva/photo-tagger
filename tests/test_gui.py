@@ -55,6 +55,7 @@ from photo_tagger.gui_state import (
     SAVED,
     TOOLTIP_WIDTH,
     WORKING,
+    GenerateOptions,
     Proposal,
     SaveJob,
     SaveOptions,
@@ -302,7 +303,7 @@ def test_worker_passes_output_language_to_create_agent(
         "m",
         None,
         [Path("/a.jpg")],
-        output_language="German",
+        options=GenerateOptions(output_language="German"),
     )
     worker.file_failed.connect(lambda *_a: None)
     worker.run()
@@ -4327,7 +4328,7 @@ def test_worker_puts_the_hint_in_that_photos_prompt(
         "m",
         None,
         [Path("/a.jpg"), Path("/b.jpg")],
-        hints={str(Path("/a.jpg")): "The animal is a deer"},
+        options=GenerateOptions(hints={str(Path("/a.jpg")): "The animal is a deer"}),
     )
     worker.file_done.connect(lambda _p: None)
     worker.run()
@@ -4361,7 +4362,7 @@ def test_hinted_photo_skips_the_cache_lookup(
         None,
         [img],
         cache_file=cache_file,
-        hints={str(img): "The animal is a deer"},
+        options=GenerateOptions(hints={str(img): "The animal is a deer"}),
     )
     corrected: list[Proposal] = []
     second.file_done.connect(corrected.append)
@@ -4395,7 +4396,14 @@ def test_a_refresh_run_replaces_the_answer_it_read_past(
         "analyze_image_with_ai",
         lambda **_k: InferenceResult(title="Ocarina", description="D", keywords=["Ocarina"]),
     )
-    again = gui.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file, refresh=True)
+    again = gui.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        [img],
+        cache_file=cache_file,
+        options=GenerateOptions(refresh=True),
+    )
     fresh: list[Proposal] = []
     again.file_done.connect(fresh.append)
     again.run()
@@ -4439,7 +4447,7 @@ def test_hinted_photo_does_not_poison_the_shared_cache(
         None,
         [img],
         cache_file=cache_file,
-        hints={str(img): "The animal is a deer"},
+        options=GenerateOptions(hints={str(img): "The animal is a deer"}),
     )
     corrected: list[Proposal] = []
     first.file_done.connect(corrected.append)
@@ -4639,7 +4647,13 @@ def test_worker_snaps_keywords_onto_the_vocabulary(
     )
     vocabulary = Vocabulary.from_entries(["Animal|Bird|Osprey"])
     proposals: list[Proposal] = []
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], vocabulary=vocabulary)
+    worker = gui.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        [Path("/a.jpg")],
+        options=GenerateOptions(vocabulary=vocabulary),
+    )
     worker.file_done.connect(proposals.append)
 
     worker.run()
@@ -4666,8 +4680,10 @@ def test_worker_strict_vocabulary_drops_what_the_catalog_lacks(
         "m",
         None,
         [Path("/a.jpg")],
-        vocabulary=Vocabulary.from_entries(["Osprey"]),
-        vocabulary_strict=True,
+        options=GenerateOptions(
+            vocabulary=Vocabulary.from_entries(["Osprey"]),
+            vocabulary_strict=True,
+        ),
     )
     worker.file_done.connect(proposals.append)
 
@@ -4695,7 +4711,7 @@ def test_worker_lists_the_vocabulary_in_the_prompt(
         "m",
         None,
         [Path("/a.jpg")],
-        vocabulary=Vocabulary.from_entries(["Animal|Bird|Osprey"]),
+        options=GenerateOptions(vocabulary=Vocabulary.from_entries(["Animal|Bird|Osprey"])),
     )
 
     worker.run()
@@ -4712,7 +4728,7 @@ def test_vocabulary_is_part_of_the_cache_namespace(qapp: QApplication) -> None:
         "m",
         None,
         [],
-        vocabulary=Vocabulary.from_entries(["Osprey"]),
+        options=GenerateOptions(vocabulary=Vocabulary.from_entries(["Osprey"])),
     )
     namespace = gui._gui_cache_namespace  # noqa: SLF001
     assert namespace("m", "English", plain._prompt) != namespace(  # noqa: SLF001
@@ -6050,7 +6066,13 @@ def test_worker_repairs_mixed_output_when_the_setting_is_on(
         return next(answers)
 
     monkeypatch.setattr(gui, "analyze_image_with_ai", record)
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], repair_language=True)
+    worker = gui.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        [Path("/a.jpg")],
+        options=GenerateOptions(repair_language=True),
+    )
     done: list[Proposal] = []
     worker.file_done.connect(done.append)
     worker.run()
@@ -6076,7 +6098,13 @@ def test_worker_keeps_the_answer_when_the_repair_call_fails(
             raise RuntimeError(msg) from None
 
     monkeypatch.setattr(gui, "analyze_image_with_ai", flaky)
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], repair_language=True)
+    worker = gui.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        [Path("/a.jpg")],
+        options=GenerateOptions(repair_language=True),
+    )
     done: list[Proposal] = []
     worker.file_done.connect(done.append)
     worker.run()
@@ -6095,7 +6123,13 @@ def test_worker_keeps_the_original_when_the_repair_mixes_scripts_again(
     second = replace(_GUI_MIXED, title="Painted陶器", total_tokens=40)
     answers = iter([first, second])
     monkeypatch.setattr(gui, "analyze_image_with_ai", lambda **_k: next(answers))
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], repair_language=True)
+    worker = gui.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        [Path("/a.jpg")],
+        options=GenerateOptions(repair_language=True),
+    )
     done: list[Proposal] = []
     worker.file_done.connect(done.append)
     worker.run()
@@ -6757,7 +6791,7 @@ def test_worker_rests_between_photos_when_paced(
         "m",
         None,
         paths,
-        pacing=PacingPlan(duty_percent=50, work_seconds=0.0),
+        options=GenerateOptions(pacing=PacingPlan(duty_percent=50, work_seconds=0.0)),
     )
     proposals: list[Proposal] = []
     worker.file_done.connect(proposals.append)
@@ -6783,8 +6817,9 @@ def test_worker_stop_wakes_a_run_that_is_resting(
         "m",
         None,
         paths,
-        # An hour of rest owed after the first photo, which Stop must cut short.
-        pacing=PacingPlan(duty_percent=1, work_seconds=0.0, max_pause_seconds=3600),
+        options=GenerateOptions(
+            pacing=PacingPlan(duty_percent=1, work_seconds=0.0, max_pause_seconds=3600),
+        ),
     )
     proposals: list[Proposal] = []
     worker.file_done.connect(proposals.append)
@@ -6990,7 +7025,13 @@ def test_worker_sends_the_configured_image_size(
         return SimpleNamespace(data=b"x")
 
     monkeypatch.setattr(gui, "prepare_image_for_agent", record_size)
-    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], jpeg_dimensions=1024)
+    worker = gui.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        [Path("/a.jpg")],
+        options=GenerateOptions(jpeg_dimensions=1024),
+    )
 
     worker.run()
 

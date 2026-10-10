@@ -26,6 +26,7 @@ from photo_tagger import telemetry
 from photo_tagger.config import (
     DEFAULT_BATTERY_FLOOR,
     DEFAULT_BATTERY_RESUME,
+    DEFAULT_DIMENSIONS,
     DEFAULT_DUTY_PERCENT,
     DEFAULT_MAX_PAUSE_MINUTES,
     DEFAULT_OUTPUT_LANGUAGE,
@@ -84,7 +85,7 @@ from photo_tagger.undo import (
     NO_BACKUP,
     RESTORED,
 )
-from photo_tagger.vocabulary import VocabularyError, load_vocabulary
+from photo_tagger.vocabulary import Vocabulary, VocabularyError, load_vocabulary
 from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 
 
@@ -354,6 +355,30 @@ def keywords_to_save(
     """
     base = KeywordSet() if overwrite else existing
     return merge_keywords(base, edited_keywords, verbatim=verbatim)
+
+
+@dataclass(frozen=True, slots=True)
+class GenerateOptions:
+    """
+    How a Generate run behaves: what it asks the model for, and how it paces and caches.
+
+    The window's counterpart to the pipeline's ProcessingOptions. The worker takes the connection
+    (provider, model, server, key, cache file) on its own and everything else as this one value.
+    """
+
+    output_language: str = DEFAULT_OUTPUT_LANGUAGE
+    # A path (as str) to the photographer's note for that photo; paths without one need no entry.
+    hints: Mapping[str, str] = field(default_factory=dict)
+    # Listed in the prompt and snapped onto afterwards, exactly as the CLI's --vocabulary does.
+    vocabulary: Vocabulary | None = None
+    vocabulary_strict: bool = False
+    repair_language: bool = False
+    # Rests the run between work windows. None works flat out.
+    pacing: PacingPlan | None = None
+    # The longest edge of the JPEG the model is shown.
+    jpeg_dimensions: int = DEFAULT_DIMENSIONS
+    # Read past the cache and store what comes back: the cached answer is the one being replaced.
+    refresh: bool = False
 
 
 @dataclass(frozen=True, slots=True)

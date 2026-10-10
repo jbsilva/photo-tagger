@@ -196,6 +196,7 @@ from photo_tagger.gui_state import (
     UNDO_OK_ACTIONS,
     WORKING,
     FolderNode,
+    GenerateOptions,
     GuiConfigValues,
     HarmonizeResult,
     Location,
@@ -877,7 +878,7 @@ class GenerateWorker(QObject):
     resting = Signal(str)  # status line for a pacing rest
     finished = Signal()
 
-    def __init__(  # noqa: PLR0913  # one parameter per independent run input
+    def __init__(  # noqa: PLR0913 - the connection inputs plus one options value.
         self,
         provider: ProviderName,
         model: str,
@@ -886,50 +887,39 @@ class GenerateWorker(QObject):
         *,
         api_key: str | None = None,
         cache_file: Path | None = None,
-        output_language: str = DEFAULT_OUTPUT_LANGUAGE,
-        hints: dict[str, str] | None = None,
-        vocabulary: Vocabulary | None = None,
-        vocabulary_strict: bool = False,
-        repair_language: bool = False,
-        pacing: PacingPlan | None = None,
-        jpeg_dimensions: int = DEFAULT_DIMENSIONS,
-        refresh: bool = False,
+        options: GenerateOptions | None = None,
     ) -> None:
         """
         Store the run parameters; nothing happens until :meth:`run`.
 
-        *hints* maps a path (as ``str``) to the photographer's note for that photo; paths without
-        one need no entry. *vocabulary* is listed in the prompt and snapped onto afterwards, exactly
-        as the CLI's ``--vocabulary`` does.
-
-        *refresh* reads past the cache and stores what comes back, for a run whose whole point is
-        that the cached answer is the one it is unhappy with.
-
-        *pacing* rests the run between work windows (see :mod:`photo_tagger.pacing`). The plan is
-        followed per run: a window starts with this run and is forgotten when it ends, so a quick
-        Generate on a handful of photos never waits.
+        *options* says how the run behaves (see :class:`~photo_tagger.gui_state.GenerateOptions`).
+        Its *refresh* reads past the cache and stores what comes back, for a run whose whole point
+        is that the cached answer is the one it is unhappy with. Its *pacing* is followed per run: a
+        window starts with this run and is forgotten when it ends, so a quick Generate on a handful
+        of photos never waits.
         """
         super().__init__()
+        options = options or GenerateOptions()
         self._provider = provider
         self._model = model
         self._api_base_url = api_base_url
         self._paths = paths
         self._api_key = api_key
         self._cache_file = cache_file
-        self._output_language = output_language
-        self._hints = hints or {}
-        self._vocabulary = vocabulary
-        self._vocabulary_strict = vocabulary_strict
-        self._repair_language = repair_language
-        self._refresh = refresh
+        self._output_language = options.output_language
+        self._hints = dict(options.hints)
+        self._vocabulary = options.vocabulary
+        self._vocabulary_strict = options.vocabulary_strict
+        self._repair_language = options.repair_language
+        self._refresh = options.refresh
         # The longest edge of the JPEG the model is shown. It keys the cache too, so a window that
         # sends a different size than a CLI run never replays the other one's answers.
-        self._jpeg_dimensions = jpeg_dimensions
+        self._jpeg_dimensions = options.jpeg_dimensions
         # The vocabulary listing rides in the user prompt (so the model prefers those terms in the
         # first place), which also puts it in the cache namespace below: swapping vocabularies
         # starts a fresh slice instead of replaying keywords chosen under the old one.
-        self._prompt = prompt_with_vocabulary(DEFAULT_USER_PROMPT, vocabulary)
-        self._pacing = pacing
+        self._prompt = prompt_with_vocabulary(DEFAULT_USER_PROMPT, options.vocabulary)
+        self._pacing = options.pacing
         self._pacer: Pacer | None = None
         self._rest_announced = False
         self._stop = False
@@ -5633,14 +5623,16 @@ class MainWindow(QMainWindow):
             [item.path for item in items],
             api_key=self._api_key_value(),
             cache_file=self._active_cache_file() if use_cache else None,
-            output_language=self._output_language,
-            hints={str(item.path): item.hint for item in items if item.hint},
-            vocabulary=self._vocabulary,
-            vocabulary_strict=self._vocabulary_strict,
-            repair_language=self._repair_language,
-            pacing=self._pacing_plan,
-            jpeg_dimensions=self._model_image_size,
-            refresh=refresh,
+            options=GenerateOptions(
+                output_language=self._output_language,
+                hints={str(item.path): item.hint for item in items if item.hint},
+                vocabulary=self._vocabulary,
+                vocabulary_strict=self._vocabulary_strict,
+                repair_language=self._repair_language,
+                pacing=self._pacing_plan,
+                jpeg_dimensions=self._model_image_size,
+                refresh=refresh,
+            ),
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
