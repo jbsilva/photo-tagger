@@ -30,6 +30,13 @@ def test_build_system_prompt_swaps_in_the_requested_language() -> None:
     assert "English" not in prompt
 
 
+def test_system_prompt_rules_out_untranslated_loanwords() -> None:
+    """The language rule covers a foreign word used AS the concept, not just mixed-up spelling."""
+    prompt = build_system_prompt()
+    assert "'Ocarina', never '陶笛'" in prompt
+    assert "only when the photo shows that text" in prompt
+
+
 def test_exiftool_executable_none_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     """No (or blank) PHOTO_TAGGER_EXIFTOOL means 'find exiftool on PATH' (None)."""
     monkeypatch.delenv("PHOTO_TAGGER_EXIFTOOL", raising=False)

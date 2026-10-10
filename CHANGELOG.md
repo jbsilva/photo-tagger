@@ -16,6 +16,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- The system prompt now rules out a foreign word used *as* the concept name (a title reading
+  `Decorated陶笛 with Geometric Pattern` when the output language is English). Its language rule only
+  covered mixed spelling before.
 - GUI: **Uncheck Already Tagged** no longer freezes the window. It now goes by the **Tagged**
   column's background scan instead of reading every photo from the click handler, and waits for that
   scan when it is still running.
