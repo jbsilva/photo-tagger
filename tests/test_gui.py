@@ -433,6 +433,28 @@ def test_remove_selected_file_drops_one(window: gui.MainWindow, tmp_path: Path) 
     assert len(window._items) == 1  # noqa: SLF001
 
 
+def test_remove_menu_drops_checked_or_unchecked_photos(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """The Remove arrow drops photos by checkbox, whatever the tree has highlighted."""
+    a, b, c = (_jpeg(tmp_path / f"{name}.jpg") for name in "abc")
+    _add_dir(window, {"a": a, "b": b, "c": c})
+    window._items[str(b)].selected = False  # noqa: SLF001
+    menu = window._build_remove_menu()  # noqa: SLF001
+    actions = {action.text(): action for action in menu.actions()}
+
+    actions["Remove Unchecked"].trigger()
+    assert set(window._items) == {str(a), str(c)}  # noqa: SLF001
+
+    actions["Remove Unchecked"].trigger()
+    assert window._status.text() == "No unchecked photos to remove."  # noqa: SLF001
+
+    actions["Remove Checked"].trigger()
+    assert window._items == {}  # noqa: SLF001
+    assert window._tree.topLevelItemCount() == 0  # noqa: SLF001
+
+
 def test_clear_empties_everything(window: gui.MainWindow, tmp_path: Path) -> None:
     """Clear drops all items and the tree."""
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
@@ -6713,3 +6735,21 @@ def test_cancel_during_the_pause_ends_the_chain(window: gui.MainWindow) -> None:
     assert window._generate_button.isEnabled()  # noqa: SLF001
     window._run_pending_pass()  # noqa: SLF001 - the timer firing later changes nothing
     assert window._busy() is False  # noqa: SLF001
+
+
+def test_remove_waits_for_the_run_in_flight(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A save writes from its own job list, so Remove waits for it, as Clear does."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    window._pending_pass = "failed"  # noqa: SLF001 - any busy phase will do
+
+    window._remove_items([str(img)])  # noqa: SLF001
+
+    assert str(img) in window._items  # noqa: SLF001
+    assert "Cancel the run in flight" in window._status.text()  # noqa: SLF001
+    window._pending_pass = None  # noqa: SLF001

@@ -103,6 +103,7 @@ from photo_tagger.gui_state import (
     hierarchy_tree_text,
     journal_label,
     journal_time,
+    keys_by_check,
     keyword_diff,
     keyword_lines,
     keywords_to_save,
@@ -1108,6 +1109,16 @@ def test_deselect_paths_unchecks_matches_and_counts_only_changes() -> None:
     assert items[str(a)].selected is False
     assert items[str(b)].selected is False
     assert items[str(c)].selected is True  # untouched
+
+
+def test_keys_by_check_splits_the_list_by_checkbox() -> None:
+    """Checked and unchecked photos come back as separate key lists, in list order."""
+    a, b, c = Path("/a.jpg"), Path("/b.jpg"), Path("/c.jpg")
+    items = [PhotoItem(path=p) for p in (a, b, c)]
+    items[1].selected = False
+
+    assert keys_by_check(items, checked=True) == [str(a), str(c)]
+    assert keys_by_check(items, checked=False) == [str(b)]
 
 
 def test_deselect_paths_ignores_unknown_paths() -> None:

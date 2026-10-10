@@ -227,6 +227,7 @@ from photo_tagger.gui_state import (
     harmonize_summary,
     hierarchy_preview,
     journal_label,
+    keys_by_check,
     keyword_diff,
     keyword_lines,
     keywords_to_text,
@@ -2790,13 +2791,39 @@ class MainWindow(QMainWindow):
         select.setMenu(self._build_select_menu())
         controls.addWidget(select)
 
-        remove = QPushButton(_("Remove"))
+        # A split button like Add: a click removes the highlighted rows, and the arrow removes by
+        # checkbox, since the rows a user highlights and the photos they checked are not the same.
+        remove = QToolButton()
+        remove.setObjectName("split")
+        remove.setText(_("Remove"))
         remove.setToolTip(
-            tooltip("Remove the selected folder or photo from the list (or press Delete)."),
+            tooltip(
+                "Remove the selected folder or photo from the list (or press Delete). Open the "
+                "arrow to remove every checked or every unchecked photo instead.",
+            ),
         )
+        remove.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         remove.clicked.connect(self._remove_selected)
+        remove.setMenu(self._build_remove_menu())
         controls.addWidget(remove)
         return controls
+
+    def _build_remove_menu(self) -> QMenu:
+        """Build the Remove button's arrow menu: drop photos by their checkbox, not by selection."""
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        checked = menu.addAction(_("Remove Checked"), lambda: self._remove_by_check(checked=True))
+        checked.setToolTip(tooltip("Take every checked photo off the list. Files are untouched."))
+        unchecked = menu.addAction(
+            _("Remove Unchecked"),
+            lambda: self._remove_by_check(checked=False),
+        )
+        unchecked.setToolTip(
+            tooltip(
+                "Keep only the checked photos: take the rest off the list. Files are untouched.",
+            ),
+        )
+        return menu
 
     def _build_search_row(self) -> QHBoxLayout:
         """Build the slim row right above the list: the search box, and the view-mode button."""
@@ -4173,8 +4200,25 @@ class MainWindow(QMainWindow):
                 removed.append(path)
         self._remove_items(removed)
 
+    def _remove_by_check(self, *, checked: bool) -> None:
+        """Remove every photo whose checkbox matches *checked*, hidden by the search or not."""
+        keys = keys_by_check(self._items.values(), checked=checked)
+        if not keys:
+            self._status.setText(
+                _("No checked photos to remove.")
+                if checked
+                else _("No unchecked photos to remove."),
+            )
+            return
+        self._remove_items(keys)
+
     def _remove_items(self, keys: list[str]) -> None:
         """Drop the photos behind *keys* from the list and refresh the tree and grid."""
+        if self._busy():
+            # As for Clear: a save writes from its own job list, so the removed photos would still
+            # be written, and its progress and tally would count photos the list no longer has.
+            self._status.setText(_("Cancel the run in flight before removing photos."))
+            return
         if not keys:
             return
         if self._scan_worker is not None:

@@ -745,6 +745,11 @@ def deselect_paths(items: dict[str, PhotoItem], paths: Iterable[Path]) -> int:
     return changed
 
 
+def keys_by_check(items: Iterable[PhotoItem], *, checked: bool) -> list[str]:
+    """Return the list keys of the photos whose checkbox matches *checked*, for a bulk remove."""
+    return [str(item.path) for item in items if item.selected is checked]
+
+
 # What a bulk selection action does to the photos it matched. SELECT_ONLY also unchecks everything
 # it did not match, which is the "show me just these" move the other two cannot express.
 SELECT_CHECK = "check"

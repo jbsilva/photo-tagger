@@ -63,6 +63,9 @@ All notable changes to this project are documented here. The format is based on
   the rest, so it is off by default; a repair that fails or comes back mixed keeps the original
   answer and the flag. In the GUI: **Settings > Rewrite Mixed-Language Output**.
 
+- GUI: the **Remove** button's arrow offers **Remove Checked** and **Remove Unchecked**, so you can
+  take photos off the list by checkbox, not only by selection.
+
 ### Changed
 
 - `--jpeg-dimensions` now defaults to 640 px instead of 1280. Prefill scales with the pixel count,

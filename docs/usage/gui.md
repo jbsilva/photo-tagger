@@ -68,7 +68,9 @@ the keyboard); right-clicking inside the selection then offers **Check / Uncheck
 (checks these, unchecks the rest) **/ Generate** (with or without the cache) **/ Remove** for all of
 it at once, and this works in the thumbnail grid too. To take items off the list entirely (rather
 than just deselect them), select them and click **Remove**, press ++delete++ / ++backspace++, or use
-**Remove From List** in the right-click menu; **File > Clear List** empties the whole list.
+**Remove From List** in the right-click menu. The arrow on **Remove** offers **Remove Checked** and
+**Remove Unchecked**, which act on the checkboxes rather than the selection; **File > Clear List**
+empties the whole list.
 
 The tree has four resizable, sortable columns (click a header to sort; click again to reverse;
 folders stay grouped above their sibling files either way):
