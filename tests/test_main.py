@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from photo_tagger import (
+    cli_telemetry,
     diagnostics,
     main as main_module,
     telemetry,
@@ -3184,7 +3185,7 @@ def test_a_telemetry_snapshot_that_raises_does_not_stop_the_run(
         patch.object(main_module, "setup_logging"),
         patch.object(main_module, "create_agent", return_value=object()),
         patch.object(main_module, "run_batch", side_effect=_finishing_run_batch(totals)),
-        patch.object(main_module, "to_telemetry_settings", side_effect=ValueError("boom")),
+        patch.object(cli_telemetry, "to_telemetry_settings", side_effect=ValueError("boom")),
         pytest.raises(SystemExit) as exc_info,
     ):
         main_module.main(["--input", str(image)])
@@ -3307,7 +3308,7 @@ def test_watch_session_counts_only_the_photos_that_came_out_done(
 ) -> None:
     """A batch of three with two failures adds one photo to the session, as the GUI counts it."""
     monkeypatch.setattr(telemetry, "emit", lambda *_args, **_kwargs: None)
-    beacons = main_module._Beacons(  # noqa: SLF001
+    beacons = cli_telemetry.Beacons(
         enabled=False,
         command="watch",
         provider="lmstudio",

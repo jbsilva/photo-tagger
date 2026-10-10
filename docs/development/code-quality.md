@@ -74,7 +74,8 @@ uv run pycroscope --config-file pyproject.toml
 pages describe. Its contracts live under `[tool.importlinter]` in `pyproject.toml`:
 
 - Only the `gui` package imports Qt.
-- The core modules import neither frontend (`main`, `cli_options`, or the `gui` package).
+- The core modules import neither frontend (`main`, `cli_options`, `cli_telemetry`, or the `gui`
+    package).
 - The CLI and the GUI do not import each other. `main` loads the `gui` command by name.
 - The pure modules (`keywords`, `models`, `prompt_context`, `script_guard`, and `templates`) do no
     I/O.

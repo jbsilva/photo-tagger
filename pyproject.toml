@@ -360,6 +360,7 @@ source_modules = [
     "photo_tagger.watch",
     "photo_tagger.write_plan",
     "photo_tagger.cli_options",
+    "photo_tagger.cli_telemetry",
     "photo_tagger.main",
 ]
 forbidden_modules = ["PySide6"]
@@ -409,7 +410,12 @@ source_modules = [
     "photo_tagger.watch",
     "photo_tagger.write_plan",
 ]
-forbidden_modules = ["photo_tagger.cli_options", "photo_tagger.gui", "photo_tagger.main"]
+forbidden_modules = [
+    "photo_tagger.cli_options",
+    "photo_tagger.cli_telemetry",
+    "photo_tagger.gui",
+    "photo_tagger.main",
+]
 
 [[tool.importlinter.contracts]]
 # main imports the gui package by name (importlib), so the `gui` command stays lazy and Qt-free.
