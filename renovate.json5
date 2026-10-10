@@ -78,13 +78,17 @@
 
   packageRules: [
     // requires-python is a deliberate minimum-supported-version decision, not a routine dependency
-    // floor: bumping it to the latest patch (e.g. >=3.14,<4 -> >=3.14.6,<4) would needlessly narrow
-    // who can install the package. Keep it off the auto-PR path, but still list it as a checkbox on
-    // the Dependency Dashboard so it isn't invisible, just something to raise manually on purpose.
+    // floor: bumping it to the latest patch (e.g. >=3.14,<4 -> >=3.14.7,<4) would needlessly narrow
+    // who can install the package. "replace" is what holds it back: the global "bump" strategy
+    // above would otherwise raise the floor even though the range already covers the new release.
+    // dependencyDashboardApproval alone gates the pull request, not the lookup, so a
+    // --platform=local run would still report the bump. It still matters for a release outside the
+    // range (Python 4), which then waits as a dashboard checkbox instead of opening a PR.
     {
       description: "Do not auto-bump the requires-python floor",
       matchManagers: ["pep621"],
       matchDepTypes: ["requires-python"],
+      rangeStrategy: "replace",
       dependencyDashboardApproval: true,
     },
 
