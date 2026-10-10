@@ -4,16 +4,17 @@ icon: lucide/package
 
 # Dependencies
 
-[uv](https://docs.astral.sh/uv/) manages the project's virtual environment, and `uv.lock` is
-committed so every contributor and CI run builds against the exact same pinned set of packages.
+[uv](https://docs.astral.sh/uv/) manages the virtual environment of the project. The project commits
+`uv.lock`, so every contributor and every CI run builds against exactly the same pinned set of
+packages.
 
 ## uv and the lockfile
 
-`uv.lock` records the resolved version of every direct and transitive dependency. Because it is
-checked in, `uv sync` reproduces an identical environment everywhere, and Renovate edits the lock in
-lockstep with `pyproject.toml`.
+`uv.lock` records the resolved version of every direct and transitive dependency. Because the file
+is in the repository, `uv sync` reproduces an identical environment everywhere. Renovate edits the
+lock file together with `pyproject.toml`.
 
-To keep resolution reproducible over time, `pyproject.toml` pins how fresh an artifact may be:
+To keep resolution reproducible over time, `pyproject.toml` limits how new an artifact can be:
 
 ```toml
 [tool.uv]
@@ -21,20 +22,21 @@ exclude-newer = "1 day"
 ```
 
 `exclude-newer = "1 day"` tells uv to resolve only against packages published at least a day ago.
-Brand-new releases are invisible to `uv lock` until they have aged past that window, which avoids
-locking onto an artifact that was just published and may still be yanked or repaired.
+`uv lock` does not see a brand-new release until the release is older than that window. As a result,
+uv does not lock onto an artifact that was just published. The publisher can still yank or repair a
+release that new.
 
 ## Optional extras and dependency groups
 
-The project splits its non-core dependencies two ways, and the distinction matters:
+The project splits its non-core dependencies in two ways. Each way has a different purpose:
 
-- **`[project.optional-dependencies]`** are user-facing **extras** shipped with the package. The
-    only one is `gui` (PySide6), installed on demand with `pip install 'photo-tagger[gui]'` or
-    `uv tool install 'photo-tagger[gui]'`. Keeping the GUI here means the base install stays
+- `[project.optional-dependencies]` are user-facing extras that ship with the package. The only one
+    is `gui` (PySide6). Users install it on demand with `pip install 'photo-tagger[gui]'` or
+    `uv tool install 'photo-tagger[gui]'`. Because the GUI is an extra, the base install stays
     Qt-free.
-- **`[dependency-groups]`** (`dev`, `test`, `docs`) are contributor tooling and are **not**
-    published to end users. They are synced with `uv sync --group dev --group test` and are how CI
-    installs the linters, type checker, test runner, and docs builder.
+- `[dependency-groups]` (`dev`, `test`, `docs`) are contributor tooling. The project does not
+    publish them to end users. You sync them with `uv sync --group dev --group test`. CI installs
+    the linters, type checker, test runner, and docs builder the same way.
 
 To work on the GUI locally, sync the extra alongside the dev groups:
 
@@ -44,8 +46,8 @@ uv sync --extra gui --group dev --group test
 
 ## Renovate
 
-[`renovate.json5`](https://github.com/jbsilva/photo-tagger/blob/main/renovate.json5) drives
-automated dependency updates and replaces the old `.github/dependabot.yml`. It extends
+[`renovate.json5`](https://github.com/jbsilva/photo-tagger/blob/main/renovate.json5) controls the
+automated dependency updates. It replaces the old `.github/dependabot.yml`. It extends
 `config:best-practices` and covers three update domains:
 
 - `pyproject.toml` plus `uv.lock` (the Python dependencies).
@@ -56,45 +58,45 @@ automated dependency updates and replaces the old `.github/dependabot.yml`. It e
 !!! note "Why prek hooks need a custom manager"
 
     Renovate has no native prek manager yet
-    ([renovatebot/renovate#41683](https://github.com/renovatebot/renovate/issues/41683)), and its
-    built-in pre-commit manager only matches `.pre-commit-config.ya?ml`. Since this repo uses
-    `prek.toml`, the hook revs are tracked by a regex `customManagers` entry instead, which reads the
-    `repo` / `rev` pairs and resolves them through the `github-tags` datasource. Swap it for the native
-    manager once that ships.
+    ([renovatebot/renovate#41683](https://github.com/renovatebot/renovate/issues/41683)). Its built-in
+    pre-commit manager matches only `.pre-commit-config.ya?ml`. This repository uses `prek.toml`, so a
+    regex `customManagers` entry tracks the hook revs instead. This entry reads the `repo` / `rev` pairs
+    and resolves them through the `github-tags` datasource. When the native manager ships, replace this
+    entry with it.
 
 ### Range strategy
 
-Renovate uses `rangeStrategy = "bump"`. With the default `auto` strategy an open `>=` range still
-covers a new release, so only `uv.lock` would change and the declared floor in `pyproject.toml`
-would go stale. `bump` instead raises the lower bound (for example `cyclopts>=4.16.1` to
-`cyclopts>=4.17.0`) and relocks, so the declared floor tracks what is actually installed. The
-github-actions manager and the prek.toml regex manager ignore this setting because they pin exact
-SHAs and revs rather than version ranges.
+Renovate uses `rangeStrategy = "bump"`. With the default `auto` strategy, an open `>=` range still
+covers a new release. In that case, only `uv.lock` changes, and the declared floor in
+`pyproject.toml` goes stale. `bump` instead raises the lower bound (for example `cyclopts>=4.16.1`
+to `cyclopts>=4.17.0`) and relocks. As a result, the declared floor tracks the version that is
+actually installed. The github-actions manager and the prek.toml regex manager ignore
+`rangeStrategy`, because they pin exact SHAs and revs, not version ranges.
 
 ### Schedule and release age
 
 PRs open in a weekly window: Monday 02:00-06:59 in the `Europe/Berlin` timezone. The window only
-allows PRs to open; the hosted Renovate App decides when it actually runs.
+allows PRs to open. The hosted Renovate App decides the actual time of each run.
 
-Non-security releases are held for 1 day (`minimumReleaseAge: "1 days"`) before a PR is opened.
-Security fixes do not wait: both `vulnerabilityAlerts` and `osvVulnerabilityAlerts` are enabled, and
-the security rule pins `minimumReleaseAge: "0 days"`, so those PRs open immediately and bypass both
-the weekly window and the 1-day hold.
+Renovate holds non-security releases for 1 day (`minimumReleaseAge: "1 days"`) before it opens a PR.
+Security fixes do not wait. `renovate.json5` enables both `vulnerabilityAlerts` and
+`osvVulnerabilityAlerts`, and the security rule sets `minimumReleaseAge: "0 days"`. As a result,
+those PRs open immediately and bypass both the weekly window and the 1-day hold.
 
 !!! note
 
     The 1-day hold matches `[tool.uv] exclude-newer = "1 day"`. uv refuses to lock an artifact younger
-    than a day, so if Renovate proposed a release that fresh, the resulting `uv lock` could not resolve
-    and the PR would be broken. The two windows are the same length, so the hold leaves no margin;
-    nobody merges these PRs automatically, so a person reviews each one.
+    than a day. If Renovate proposes a release that is less than a day old, `uv lock` cannot resolve it,
+    and the PR is broken. The two windows are the same length, so the hold leaves no margin. Nobody
+    merges these PRs automatically, so a person reviews each one.
 
 ### PR titles and grouping
 
-Semantic commits are enabled with a `build` type and `deps` scope, so PR titles read
-`build(deps): ...`.
+`renovate.json5` enables semantic commits with a `build` type and a `deps` scope. As a result, PR
+titles read `build(deps): ...`.
 
-Updates are grouped to keep review focused. Minor and patch updates are batched per ecosystem, while
-major updates land alone so each gets its own review:
+Renovate groups updates to keep each review focused. It batches minor and patch updates per
+ecosystem. Major updates land alone, so each one gets its own review:
 
 | Group                              | What it batches                                              |
 | ---------------------------------- | ------------------------------------------------------------ |
@@ -105,25 +107,26 @@ major updates land alone so each gets its own review:
 | `ruff`                             | The `ruff` PyPI dep and the `astral-sh/ruff-pre-commit` hook |
 | `bandit`                           | The `bandit` PyPI dep and the `PyCQA/bandit` hook            |
 
-The `ruff` and `bandit` groups deliberately have no update-type filter: the tool's pyproject
-dependency and its prek hook must move together on every bump, majors included, so each tool's dep
-and hook converge to one version in a single PR.
+The `ruff` and `bandit` groups have no update-type filter on purpose. For each of these tools, the
+pyproject dependency and the prek hook must move together on every bump, majors included. As a
+result, the dependency and the hook of each tool converge to one version in a single PR.
 
 ### Validating the config
 
-Validate any change to `renovate.json5` with the official validator:
+Run the official validator to make sure that a change to `renovate.json5` is valid:
 
 ```bash
 npx --yes --package renovate -- renovate-config-validator --strict
 ```
 
-The same command runs as a pre-commit hook, so a malformed config is caught before it reaches CI.
+The same command runs as a pre-commit hook. As a result, the hook catches a malformed configuration
+before it reaches CI.
 
 ## Version sync
 
 The package version appears in a few files at once. The `check-version-sync` pre-commit hook keeps
-them aligned across `pyproject.toml`, `uv.lock`, `SECURITY.md`, and `CHANGELOG.md`, so a release
-bump cannot land in one place and drift in another. The Python package reads its own version from
-the installed distribution metadata (`importlib.metadata.version`), so there is no version string in
-the source to keep in sync. For the rest of the local checks that run before a commit, see
-[Code quality](code-quality.md).
+the version the same in `pyproject.toml`, `uv.lock`, `SECURITY.md`, and `CHANGELOG.md`. As a result,
+a release bump cannot land in one file and drift in another. The Python package reads its own
+version from the installed distribution metadata (`importlib.metadata.version`). As a result, the
+source has no version string to keep in sync. For the rest of the local checks that run before a
+commit, see [Code quality](code-quality.md).

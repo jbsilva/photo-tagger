@@ -4,8 +4,8 @@ icon: lucide/scale
 
 # License
 
-photo-tagger is released under the MIT license; the authoritative copy lives in
-[`LICENSE`](https://github.com/jbsilva/photo-tagger/blob/main/LICENSE) in the repository.
+photo-tagger is available under the MIT license. The official copy is the
+[`LICENSE`](https://github.com/jbsilva/photo-tagger/blob/main/LICENSE) file in the repository.
 
 ```text
 MIT License
