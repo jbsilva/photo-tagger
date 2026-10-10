@@ -77,11 +77,14 @@ This is a one-person project, so everything here is best-effort with no hard gua
 
 ## Scope and Threat Model
 
-The most important thing to understand about photo-tagger is that it is **local-first** and I run no
-hosted service. I never receive your images, your metadata, or any telemetry. There is no backend to
-attack. The tool only makes network calls to the model endpoint **you** configure, and by default
-that is localhost (Ollama at `http://localhost:11434/v1` or LM Studio at
-`http://localhost:1234/v1`).
+The most important thing to understand about photo-tagger is that it is **local-first**. I never
+receive your images or your metadata. The tool sends your photos only to the model endpoint **you**
+configure. By default, that endpoint is localhost: Ollama at `http://localhost:11434/v1` or LM
+Studio at `http://localhost:1234/v1`. If you turn on `--otel`, it also sends traces to an
+OpenTelemetry collector that you name. Its one other network call is the anonymous usage telemetry
+that [docs/telemetry.md](docs/telemetry.md) describes. It sends names, counts, durations, and
+switches, never a path, a photo, or text from one. It goes to a small write-only collector (the
+Worker in [`telemetry/`](telemetry/)), and you can turn it off.
 
 Because of that design, the biggest real-world risks are configuration choices, not code defects. A
 vulnerability report should be about a flaw in photo-tagger's own code, not about how you pointed
@@ -115,6 +118,10 @@ Bugs in photo-tagger's own behavior are in scope, for example:
 - **What leaves the machine in a request.** The prompt forwards a curated subset of metadata
   (existing keywords, City/Country, GPS position, camera model, lens, capture date). Sending more
   than that, or adding fields by accident, is in scope.
+- **What the telemetry sends and keeps.** A beacon must carry only the fields that
+  [docs/telemetry.md](docs/telemetry.md) lists, and the collector must not store IP addresses. A
+  beacon that carries a path, text from a photo, or anything else that identifies you is in scope.
+  So is a flaw in the collector code in [`telemetry/`](telemetry/).
 
 ### Out of scope
 
@@ -140,7 +147,8 @@ These are not vulnerabilities in photo-tagger:
 - **Secrets exposed because you passed `--api-key` on the command line.** Command-line arguments are
   visible to other local users in process listings. This is documented, and environment variables
   are recommended instead. The OS-level visibility is not something the tool can fix.
-- **Any hosted service or telemetry.** There is none, so there is no server-side attack surface.
+- **The platform under the collector.** The telemetry collector runs on Cloudflare Workers. The
+  security of Cloudflare itself is upstream.
 
 ## Security Considerations for Users
 
