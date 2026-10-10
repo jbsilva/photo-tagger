@@ -22,6 +22,9 @@ from photo_tagger.config import (
     COUNTRY_TAGS,
     TAG_EXIF_DATE_TIME_ORIGINAL,
     TAG_EXIF_IMAGE_DESCRIPTION,
+    TAG_EXIF_LENS_MODEL,
+    TAG_EXIF_MODEL,
+    TAG_GPS_POSITION,
     TAG_IPTC_KEYWORDS,
     TAG_IPTC_OBJECT_NAME,
     TAG_XMP_DESCRIPTION,
@@ -93,12 +96,12 @@ SHOWN_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("Creator", (READ_XMP_CREATOR, TAG_EXIF_ARTIST, TAG_IPTC_BY_LINE)),
     FieldSpec("Copyright", COPYRIGHT_READ_TAGS),
     FieldSpec("Rights marked", (READ_XMP_MARKED,)),
-    FieldSpec("Camera", ("EXIF:Model",)),
-    FieldSpec("Lens", ("EXIF:LensModel",)),
+    FieldSpec("Camera", (TAG_EXIF_MODEL,)),
+    FieldSpec("Lens", (TAG_EXIF_LENS_MODEL,)),
     FieldSpec("Captured", (TAG_EXIF_DATE_TIME_ORIGINAL,)),
     FieldSpec("City", CITY_TAGS),
     FieldSpec("Country", COUNTRY_TAGS),
-    FieldSpec("GPS", ("Composite:GPSPosition",)),
+    FieldSpec("GPS", (TAG_GPS_POSITION,)),
 )
 
 

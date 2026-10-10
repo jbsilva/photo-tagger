@@ -6,7 +6,13 @@ of the prompt that tells the model what the photo already says, so the answer ag
 GUI also uses the camera and location helpers for the detail pane. Pure: no ExifTool here.
 """
 
-from photo_tagger.config import CITY_TAGS, COUNTRY_TAGS, TAG_EXIF_DATE_TIME_ORIGINAL
+from photo_tagger.config import (
+    CITY_TAGS,
+    COUNTRY_TAGS,
+    TAG_EXIF_DATE_TIME_ORIGINAL,
+    TAG_EXIF_LENS_MODEL,
+    TAG_EXIF_MODEL,
+)
 
 
 def _first_present(values: dict[str, str], *tags: str) -> str | None:
@@ -22,8 +28,8 @@ def select_camera_fields(
 ) -> tuple[str | None, str | None, str | None]:
     """Return ``(model, lens, capture_date)`` from a :data:`CAMERA_TAGS` mapping."""
     return (
-        camera_info.get("EXIF:Model"),
-        camera_info.get("EXIF:LensModel"),
+        camera_info.get(TAG_EXIF_MODEL),
+        camera_info.get(TAG_EXIF_LENS_MODEL),
         camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL),
     )
 
@@ -58,9 +64,9 @@ def _format_location(location_tags: dict[str, str]) -> str | None:
 def _camera_lines(camera_info: dict[str, str]) -> list[str]:
     """Render ``EXIF:Model`` / ``EXIF:LensModel`` / ``EXIF:DateTimeOriginal`` lines."""
     lines: list[str] = []
-    if model := camera_info.get("EXIF:Model"):
+    if model := camera_info.get(TAG_EXIF_MODEL):
         lines.append(f"- Camera: {model}")
-    if lens := camera_info.get("EXIF:LensModel"):
+    if lens := camera_info.get(TAG_EXIF_LENS_MODEL):
         lines.append(f"- Lens: {lens}")
     if captured := camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL):
         lines.append(f"- Captured: {captured}")

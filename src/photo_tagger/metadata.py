@@ -26,6 +26,7 @@ from photo_tagger.config import (
     LOCATION_TAGS,
     TAG_EXIF_DATE_TIME_ORIGINAL,
     TAG_EXIF_IMAGE_DESCRIPTION,
+    TAG_GPS_POSITION,
     TAG_IPTC_KEYWORDS,
     TAG_IPTC_OBJECT_NAME,
     TAG_XMP_DESCRIPTION,
@@ -82,8 +83,6 @@ def managed_helper(et: ExifToolHelper | None) -> Generator[ExifToolHelper]:
     with ExifToolHelper(executable=executable) as own:  # type: ignore[no-untyped-call]
         yield own
 
-
-_GPS_TAG = "Composite:GPSPosition"
 
 # Existing title/description tags, in read priority order (first non-empty wins). The GUI
 # surfaces these so a user can see and edit what is already on the photo before saving.
@@ -812,7 +811,7 @@ class ImageContext:
 def _extract_gps(blocks: list[dict[str, Any]]) -> str | None:
     """Return the first non-empty GPS position string from *blocks*, else None."""
     for block in blocks:
-        value = block.get(_GPS_TAG)
+        value = block.get(TAG_GPS_POSITION)
         if _value_is_present(value):
             return format_metadata_value(value)
     return None
@@ -884,7 +883,7 @@ def read_image_context(
                 *COPYRIGHT_READ_TAGS,
                 *LOCATION_TAGS,
                 *CAMERA_TAGS,
-                _GPS_TAG,
+                TAG_GPS_POSITION,
                 *field_tags,
             ],
         ),

@@ -198,13 +198,17 @@ LOCATION_TAGS = (*COUNTRY_TAGS, *CITY_TAGS)
 
 # When the shutter fired. Read as prompt context, and on its own when grouping a batch into shoots.
 TAG_EXIF_DATE_TIME_ORIGINAL = "EXIF:DateTimeOriginal"
+TAG_EXIF_MODEL = "EXIF:Model"
+TAG_EXIF_LENS_MODEL = "EXIF:LensModel"
+# ExifTool computes it from the GPS latitude and longitude tags, so it is read and never written.
+TAG_GPS_POSITION = "Composite:GPSPosition"
 
 # Camera/capture tags surfaced to the model as corroborative evidence. The prompt instructs the
 # model to use them only to specify or disambiguate what is visible in the image, never to assert
 # content the image doesn't show.
 CAMERA_TAGS = (
-    "EXIF:Model",
-    "EXIF:LensModel",
+    TAG_EXIF_MODEL,
+    TAG_EXIF_LENS_MODEL,
     TAG_EXIF_DATE_TIME_ORIGINAL,
 )
 
