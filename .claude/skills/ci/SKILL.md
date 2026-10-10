@@ -4,18 +4,18 @@ description: Run the full local CI pipeline (ruff, bandit, pytest, sonar-scanner
 disable-model-invocation: true
 ---
 
-# /ci — Full local CI + SonarQube refresh
+# /ci: full local CI and SonarQube refresh
 
 Run this before opening a PR, or whenever the `mcp__sonarqube__*` findings look stale. The scanner
-uploads the JSON reports that ruff, bandit, and pytest produce, so those have to run first.
+uploads the JSON reports that ruff, bandit, and pytest produce, so those must run first.
 
 ## Steps
 
 1. Drop stale reports so the scanner never uploads yesterday's data.
 2. Sync dev and test deps.
-3. Run ruff with a JSON report (exit-zero so the chain continues even if there are findings).
+3. Run ruff with a JSON report and exit-zero. If ruff finds issues, the chain still continues.
 4. Run bandit with a JSON report (exit-zero, same reason).
-5. Run the full pytest suite (must pass; pytest-cov writes `reports/coverage.xml`).
+5. Run the full pytest suite. It must pass, and pytest-cov writes `reports/coverage.xml`.
 6. Assert `reports/coverage.xml` exists and is non-empty. This guards against the "0% coverage" trap
    where `sonar-scanner` silently ships an empty report.
 7. Invoke `sonar-scanner`, tee the log to `reports/sonar-scan.log`.
@@ -39,6 +39,6 @@ findings for review.
 - The `test -s reports/coverage.xml` guard is the second gate. If coverage.xml is missing or empty
   the chain stops before upload, so the SonarCloud dashboard never flips back to 0%.
 - ruff and bandit are set to `--exit-zero` on purpose so report JSON is always written.
-- Do **not** skip this pipeline to make findings disappear. If something is flaky, fix the flake.
-- Do **not** run `sonar-scanner` on its own. Without a fresh `reports/coverage.xml` it uploads an
+- Do not skip this pipeline to make findings disappear. If something is flaky, fix the flake.
+- Do not run `sonar-scanner` on its own. Without a fresh `reports/coverage.xml` it uploads an
   analysis with 0% coverage and overwrites the last good one.
