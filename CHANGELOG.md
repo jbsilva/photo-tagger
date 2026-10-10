@@ -105,6 +105,8 @@ This file lists all notable changes to this project. The format follows the
 
 ### Fixed
 
+- A save writes only the tags whose value changed. If the photo already has every value, the file is
+  not touched, so its timestamp stays and a backup tool such as rsync does not copy it again.
 - The desktop window now sends the configured `jpeg_dimensions` to the model instead of its own
   hardcoded 640 px preview size, so a GUI run and a CLI run ask the same question about a photo.
   Windows left on the default are unaffected, cache included.

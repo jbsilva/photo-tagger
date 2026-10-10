@@ -17,6 +17,7 @@ from photo_tagger.metadata import (
     FIELD_TITLE,
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
+    WriteResult,
     _block_has_indicator,
     _build_write_payload,
     _coerce_to_list,
@@ -223,6 +224,12 @@ def test_plan_writes_lists_one_target_per_mode(tmp_path: Path) -> None:
     assert [t.existed for t in both] == [True, False]
 
 
+def _jpeg_file(path: Path) -> Path:
+    """Create a placeholder photo; the fake helper never reads its bytes."""
+    path.write_text("x")
+    return path
+
+
 def test_write_metadata_everywhere_writes_both_targets(tmp_path: Path) -> None:
     """A "both" save calls the writer once per target and reports what landed, for undo."""
     img = tmp_path / "a.dng"
@@ -261,6 +268,72 @@ def test_write_metadata_everywhere_reports_a_half_written_photo(tmp_path: Path) 
 
     assert ok is False
     assert [t.path.name for t in written] == ["a.dng"]
+
+
+def test_write_metadata_skips_a_target_that_already_carries_every_value(tmp_path: Path) -> None:
+    """ExifTool rewrites a file even for identical values, which makes rsync copy it again."""
+    img = tmp_path / "a.dng"
+    img.write_text("x")
+    (tmp_path / "a.xmp").write_text("x")
+    # A read reports a one-item list as a string and the Marked flag as a boolean.
+    helper = _fake_helper([{"XMP:Subject": "Bird", "XMP:Rights": "© 2019 Ada", "XMP:Marked": True}])
+    extra = {"XMP-dc:Rights": "© 2019 Ada", "XMP-xmpRights:Marked": "True"}
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        result = write_metadata(img, KeywordSet(subject=["Bird"]), extra=extra)
+
+    assert result == WriteResult.UNCHANGED
+    helper.set_tags.assert_not_called()
+
+
+def test_write_metadata_writes_only_the_tags_that_changed(tmp_path: Path) -> None:
+    """A new notice goes on; the keywords the file already has are not written again."""
+    img = tmp_path / "a.dng"
+    img.write_text("x")
+    (tmp_path / "a.xmp").write_text("x")
+    helper = _fake_helper([{"XMP:Subject": ["Bird"], "XMP:Rights": "© 2018 Ada"}])
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        result = write_metadata(
+            img,
+            KeywordSet(subject=["Bird"]),
+            extra={"XMP-dc:Rights": "© 2019 Ada"},
+        )
+
+    assert result == WriteResult.WRITTEN
+    assert helper.set_tags.call_args.kwargs["tags"] == {"XMP-dc:Rights": "© 2019 Ada"}
+
+
+def test_write_metadata_always_writes_a_tag_it_cannot_compare(tmp_path: Path) -> None:
+    """A group a read does not report, or two tags that read back as one, is written anyway."""
+    img = _jpeg_file(tmp_path / "a.jpg")
+    helper = _fake_helper([{"EXIF:Copyright": "X", "XMP:Rights": "X"}])
+    extra = {"IFD0:Copyright": "X", "XMP-dc:Rights": "X", "XMP-other:Rights": "X"}
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        write_metadata(img, KeywordSet(), extra=extra, use_sidecar=False)
+
+    assert set(helper.set_tags.call_args.kwargs["tags"]) == set(extra)
+
+
+def test_write_metadata_everywhere_leaves_an_untouched_target_out_of_the_journal(
+    tmp_path: Path,
+) -> None:
+    """Undo would restore an older backup over a file this save never changed."""
+    img = tmp_path / "a.dng"
+    img.write_text("x")
+    (tmp_path / "a.xmp").write_text("x")
+    helper = _fake_helper([{"XMP:Subject": "Bird"}])
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        ok, written = write_metadata_everywhere(
+            img,
+            KeywordSet(subject=["Bird"]),
+            sidecar_mode="all",
+        )
+
+    assert ok is True
+    assert written == []
 
 
 def test_build_write_payload_sets_the_exif_description_only_when_embedding() -> None:
@@ -987,7 +1060,7 @@ def test_write_metadata_with_backup_omits_overwrite_param(tmp_path: Path) -> Non
     with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
         ok = write_metadata(img, KeywordSet(subject=["Bird"]), backup=True)
 
-    assert ok is True
+    assert ok == WriteResult.WRITTEN
     _, kwargs = helper.set_tags.call_args
     assert "params" not in kwargs
 
@@ -1000,7 +1073,7 @@ def test_write_metadata_without_backup_passes_overwrite_original(tmp_path: Path)
     with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
         ok = write_metadata(img, KeywordSet(subject=["Bird"]), backup=False)
 
-    assert ok is True
+    assert ok == WriteResult.WRITTEN
     assert helper.set_tags.call_args.kwargs["params"] == ["-overwrite_original"]
 
 
@@ -1111,7 +1184,7 @@ def test_write_metadata_returns_false_on_exiftool_error(tmp_path: Path) -> None:
     helper.set_tags.side_effect = ValueError("boom")
 
     with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
-        assert write_metadata(img, KeywordSet(subject=["Bird"])) is False
+        assert write_metadata(img, KeywordSet(subject=["Bird"])) == WriteResult.FAILED
 
 
 def _execute_error(stderr: str) -> ExifToolExecuteError:
@@ -1142,7 +1215,7 @@ def test_write_metadata_retries_a_minor_error_ignoring_it(tmp_path: Path) -> Non
             use_sidecar=False,
         )
 
-    assert written is True
+    assert written == WriteResult.WRITTEN
     assert helper.set_tags.call_count == 2  # noqa: PLR2004 - the refused write plus its one retry.
     retry_params = helper.set_tags.call_args.kwargs["params"]
     # The retry keeps whatever the first attempt asked for and only adds the waiver.
@@ -1156,7 +1229,7 @@ def test_write_metadata_does_not_retry_an_error_m_would_not_waive(tmp_path: Path
     helper.set_tags.side_effect = _execute_error("Error: File format error - img.dng\n")
 
     with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
-        assert write_metadata(img, KeywordSet(subject=["Bird"])) is False
+        assert write_metadata(img, KeywordSet(subject=["Bird"])) == WriteResult.FAILED
 
     assert helper.set_tags.call_count == 1
 
@@ -1525,7 +1598,7 @@ def test_write_metadata_reports_a_missing_exiftool_binary(tmp_path: Path) -> Non
     with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
         written = write_metadata(photo, title="T", description="D", keywords=KeywordSet())
 
-    assert written is False
+    assert written == WriteResult.FAILED
 
 
 def test_read_keyword_sets_merges_image_and_sidecar_keywords(tmp_path: Path) -> None:
@@ -1607,3 +1680,11 @@ def test_read_all_tags_degrades_when_exiftool_cannot_run(tmp_path: Path) -> None
 def test_capture_year_falls_back_to_today_for_a_file_it_cannot_stat(tmp_path: Path) -> None:
     """A copyright notice needs a year for every photo, even one that vanished mid-run."""
     assert capture_year(tmp_path / "ghost.jpg", None) == datetime.now(tz=UTC).astimezone().year
+
+
+def test_changed_payload_matches_tag_names_whatever_their_case() -> None:
+    """``xmp-dc:rights`` reads back as XMP:Rights, so the same value is not written again."""
+    from photo_tagger.metadata import _changed_payload  # noqa: PLC0415
+
+    payload: dict[str, str | list[str]] = {"xmp-dc:rights": "R"}
+    assert _changed_payload(payload, {"XMP:Rights": "R"}, use_sidecar=False) == {}

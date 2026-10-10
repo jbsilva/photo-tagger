@@ -4,6 +4,7 @@ import contextlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import IntEnum
 from itertools import batched, chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1124,7 +1125,7 @@ def build_contextual_prompt(  # noqa: PLR0913 - each kwarg renders an independen
 _NON_XMP_GROUPS = ("EXIF", "IPTC")
 
 
-def _sidecar_writable(tags: Mapping[str, str]) -> dict[str, str]:
+def _sidecar_writable[V](tags: Mapping[str, V]) -> dict[str, V]:
     """Keep the extra tags an XMP sidecar can actually carry (see :data:`_NON_XMP_GROUPS`)."""
     return {
         tag: value
@@ -1272,14 +1273,15 @@ def write_metadata_everywhere(  # noqa: PLR0913 - distinct optional fields are c
     """
     Write *image_path*'s metadata everywhere *sidecar_mode* asks for.
 
-    Returns whether every target was written, and the ones that were, for the caller's undo journal.
-    A partial failure under "both" still reports what landed, so undo can revert it.
+    Returns whether every target was saved, and the ones that were written, for the caller's undo
+    journal. A target that already carried every value counts as saved but was not touched, so it is
+    left out. A partial failure under "both" still reports what landed, so undo can revert it.
     """
     targets = plan_writes(image_path, sidecar_mode)
-    written = [
-        target
-        for target in targets
-        if write_metadata(
+    saved = 0
+    written: list[WriteTarget] = []
+    for target in targets:
+        result = write_metadata(
             image_path,
             keywords,
             description=description,
@@ -1289,8 +1291,12 @@ def write_metadata_everywhere(  # noqa: PLR0913 - distinct optional fields are c
             use_sidecar=target.use_sidecar,
             et=et,
         )
-    ]
-    return (len(written) == len(targets), written)
+        if not result:
+            continue
+        saved += 1
+        if result != WriteResult.UNCHANGED:
+            written.append(target)
+    return (saved == len(targets), written)
 
 
 # What exiftool puts in front of an error it would downgrade to a warning under -m. Matched
@@ -1305,6 +1311,93 @@ def _is_minor_error(exc: ExifToolExecuteError) -> bool:
     """Report whether exiftool refused the write over something ``-m`` would let through."""
     streams = f"{exc.stderr or ''}\n{exc.stdout or ''}"
     return _MINOR_ERROR_MARKER in streams.casefold()
+
+
+class WriteResult(IntEnum):
+    """
+    What :func:`write_metadata` did to its target.
+
+    An IntEnum so the old bool contract still holds: FAILED is falsy, and WRITTEN equals True.
+    UNCHANGED is the case a bool cannot say: the file already carried every value, so it was not
+    touched, and the undo journal must not claim it.
+    """
+
+    FAILED = 0
+    WRITTEN = 1
+    UNCHANGED = 2
+
+
+# The family-0 group ExifTool reports a written group under (its default -G read spelling).
+# Groups not listed here cannot be matched to what a read returns, so their tags always count as
+# changed and are written.
+_READ_GROUPS = {"exif": "EXIF", "iptc": "IPTC", "xmp": "XMP"}
+
+
+def _read_key(tag: str) -> str | None:
+    """Return the key a read reports *tag* under (``XMP-dc:Title`` is ``XMP:Title``), or None."""
+    group, _sep, name = tag.rpartition(":")
+    family = _READ_GROUPS.get(group.split("-", 1)[0].casefold())
+    return f"{family}:{name}" if family and name else None
+
+
+def _as_values(value: Any) -> list[str]:  # noqa: ANN401 - an exiftool value of any JSON type.
+    """
+    Normalize a tag value for comparison: a list of strings, blanks dropped.
+
+    A read returns a one-item list as a plain string and a boolean as ``True``, while the payload
+    spells them ``["Duck"]`` and ``"True"``. An empty result also stands for a blank write, which is
+    how ExifTool deletes a tag, so "delete" matches a tag that is not there.
+    """
+    if value is None:
+        return []
+    return _coerce_to_list(value)
+
+
+def _changed_payload(
+    payload: dict[str, str | list[str]],
+    current: Mapping[str, Any],
+    *,
+    use_sidecar: bool,
+) -> dict[str, str | list[str]]:
+    """
+    Keep the entries of *payload* that differ from *current*, the target's own values.
+
+    Two tags that read back under one key (two XMP namespaces with the same tag name) cannot be told
+    apart, so both stay in the payload. A sidecar drops the IPTC mirrors of the keywords and the
+    title (it holds XMP only), so they never read back and cannot change it.
+    """
+    if use_sidecar:
+        payload = dict(_sidecar_writable(payload))
+    # Tag names are case-insensitive to ExifTool, so ``xmp-dc:rights`` reads back as XMP:Rights.
+    keys = {tag: key.casefold() if (key := _read_key(tag)) else None for tag in payload}
+    known = {key.casefold(): value for key, value in current.items()}
+    counts: dict[str | None, int] = {}
+    for key in keys.values():
+        counts[key] = counts.get(key, 0) + 1
+    return {
+        tag: value
+        for tag, value in payload.items()
+        if (key := keys[tag]) is None
+        or counts[key] > 1
+        or _as_values(known.get(key)) != _as_values(value)
+    }
+
+
+def _read_current(
+    helper: ExifToolHelper,
+    target: Path,
+    tags: Iterable[str],
+) -> dict[str, Any] | None:
+    """Read *tags* off *target* as it is now, or None when there is nothing to compare with."""
+    if not target.exists():
+        return None
+    try:
+        blocks = helper.get_tags(files=[str(target)], tags=list(tags))
+    except _EXIFTOOL_ERRORS as exc:
+        # A failed read only costs the comparison: the write goes ahead as before.
+        logger.warning("metadata_compare_read_failed", target=str(target), error=str(exc))
+        return None
+    return dict(blocks[0]) if blocks else None
 
 
 def _set_tags(helper: ExifToolHelper, set_kwargs: dict[str, Any], target: Path) -> None:
@@ -1342,9 +1435,13 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
     backup: bool = True,
     use_sidecar: bool = True,
     et: ExifToolHelper | None = None,
-) -> bool:
+) -> WriteResult:
     """
     Write tags to either the image file or an XMP sidecar in Lightroom-compatible format.
+
+    Only the tags whose value differs from what the target already carries are written. ExifTool
+    rewrites a file even for identical values, which moves its mtime, and a backup tool such as
+    rsync then copies an unchanged photo again.
 
     Args:
         image_path: Path to the image file. The sidecar shares its name with a `.xmp` extension.
@@ -1359,7 +1456,8 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         et: Optional already-open ExifToolHelper to reuse across a batch.
 
     Returns:
-        True on success, False on failure.
+        WRITTEN on success, UNCHANGED when the target already carried every value (it is not
+        touched), and FAILED on failure.
     """
     target_path = write_target(image_path, use_sidecar=use_sidecar)
     payload = _build_write_payload(
@@ -1371,18 +1469,26 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
     )
     if not payload:
         logger.warning("no_data_to_write", file=image_path.name)
-        return False
-
-    set_kwargs: dict[str, Any] = {"tags": payload, "files": [str(target_path)]}
-    if not backup:
-        set_kwargs["params"] = ["-overwrite_original"]
+        return WriteResult.FAILED
 
     try:
         with managed_helper(et) as helper:
+            current = _read_current(helper, target_path, payload)
+            pending = (
+                payload
+                if current is None
+                else _changed_payload(payload, current, use_sidecar=use_sidecar)
+            )
+            if not pending:
+                logger.info("metadata_unchanged", target=str(target_path))
+                return WriteResult.UNCHANGED
+            set_kwargs: dict[str, Any] = {"tags": pending, "files": [str(target_path)]}
+            if not backup:
+                set_kwargs["params"] = ["-overwrite_original"]
             _set_tags(helper, set_kwargs, target_path)
     except _EXIFTOOL_ERRORS as e:
         logger.exception("xmp_write_failed", error=str(e), target=str(target_path))
-        return False
+        return WriteResult.FAILED
 
     logger.info(
         "metadata_written_successfully",
@@ -1391,6 +1497,7 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         subject_keywords=len(keywords.subject),
         hierarchical_keywords=len(keywords.hierarchical),
         extra_tags=len(extra or {}),
+        changed_tags=len(pending),
         backup_created=backup,
     )
-    return True
+    return WriteResult.WRITTEN

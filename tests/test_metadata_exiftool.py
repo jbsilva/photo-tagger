@@ -22,6 +22,7 @@ from photo_tagger.metadata import (
     FIELD_TITLE,
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
+    WriteResult,
     capture_year,
     iter_field_presence,
     metadata_targets,
@@ -62,6 +63,36 @@ def test_metadata_targets_lists_jpeg_and_sidecar(tmp_path: Path) -> None:
     assert metadata_targets(img) == [str(img), str(sidecar)]
 
 
+@pytest.mark.parametrize("use_sidecar", [True, False])
+def test_saving_the_same_values_again_leaves_the_file_alone(
+    tmp_path: Path,
+    *,
+    use_sidecar: bool,
+) -> None:
+    """A second identical save must not move the mtime, or rsync backs the photo up again."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+    values = {
+        "keywords": KeywordSet(subject=["Frog"], hierarchical=["Animal|Frog"]),
+        "title": "A frog",
+        "description": "A frog at night.",
+        "extra": {
+            "EXIF:Copyright": "(c) 2019 Ada",
+            "IPTC:CopyrightNotice": "(c) 2019 Ada",
+            "XMP-dc:Rights": "© 2019 Ada",
+            "XMP-dc:Creator": "Ada",
+            "XMP-xmpRights:Marked": "True",
+        },
+    }
+    assert write_metadata(img, **values, backup=False, use_sidecar=use_sidecar)  # type: ignore[arg-type]
+    target = img.with_suffix(".xmp") if use_sidecar else img
+    before = target.stat().st_mtime_ns
+
+    again = write_metadata(img, **values, backup=False, use_sidecar=use_sidecar)  # type: ignore[arg-type]
+
+    assert again == WriteResult.UNCHANGED
+    assert target.stat().st_mtime_ns == before
+
+
 def test_metadata_targets_returns_empty_for_missing_file(tmp_path: Path) -> None:
     """A missing image returns an empty target list, not a crash."""
     assert metadata_targets(tmp_path / "ghost.jpg") == []
@@ -96,7 +127,7 @@ def test_write_and_read_round_trip_subject_and_hierarchy(tmp_path: Path) -> None
         backup=False,
         use_sidecar=False,
     )
-    assert ok is True
+    assert ok == WriteResult.WRITTEN
 
     keywords = read_image_context(img).existing_keywords
     assert "Beach" in keywords.subject
@@ -122,7 +153,7 @@ def test_sidecar_write_and_read_round_trip(tmp_path: Path) -> None:
         backup=False,
         use_sidecar=True,
     )
-    assert ok is True
+    assert ok == WriteResult.WRITTEN
     assert (tmp_path / "img.xmp").is_file()
     assert img.read_bytes() == original_bytes  # the original was never modified
 
@@ -179,7 +210,7 @@ def test_unicode_metadata_round_trips_unmangled(tmp_path: Path) -> None:
         backup=False,
         use_sidecar=False,
     )
-    assert ok is True
+    assert ok == WriteResult.WRITTEN
 
     keywords = read_image_context(img).existing_keywords
     # Exact equality: a garbled IPTC mirror would surface as an extra, mangled entry.
@@ -190,7 +221,7 @@ def test_unicode_metadata_round_trips_unmangled(tmp_path: Path) -> None:
 def test_write_metadata_returns_false_for_empty_payload(tmp_path: Path) -> None:
     """Nothing to write -> early False, no exiftool call."""
     img = _write_jpeg(tmp_path / "img.jpg")
-    assert write_metadata(img, KeywordSet(), use_sidecar=False) is False
+    assert write_metadata(img, KeywordSet(), use_sidecar=False) == WriteResult.FAILED
 
 
 def test_read_image_context_is_empty_for_unset_image(tmp_path: Path) -> None:
@@ -225,7 +256,7 @@ def test_description_mirror_round_trips_as_image_description(tmp_path: Path) -> 
         backup=False,
         use_sidecar=False,
     )
-    assert ok is True
+    assert ok == WriteResult.WRITTEN
 
     with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
         blocks = et.get_tags(files=[str(img)], tags=["XMP:ImageDescription"])

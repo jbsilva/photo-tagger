@@ -133,6 +133,13 @@ a camera's placeholder from surviving underneath the new description.
 When `--write-title` and `--write-description` are enabled (both are on by default), title and
 description are written. If the payload is empty, nothing is written.
 
+Before the write, `write_metadata()` reads the target's current values of the payload tags. It drops
+each tag that already has the value, and it writes only the rest. If no tag is left, it does not
+touch the file and returns `WriteResult.UNCHANGED`. ExifTool rewrites a file even for identical
+values, which moves the file's mtime. A backup tool such as rsync then copies an unchanged photo
+again. A file that a save did not touch is also left out of the undo journal. A tag that the
+comparison cannot match to a read (a group other than EXIF, IPTC, or XMP) is always written.
+
 ### Fields the model has no part in
 
 `photo_tagger.fields` holds the other half of the payload: the metadata only the photographer knows.
