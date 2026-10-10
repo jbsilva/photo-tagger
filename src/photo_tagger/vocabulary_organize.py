@@ -48,7 +48,7 @@ from photo_tagger.vocabulary_build import DROP_SYNONYM, Dropped, TrimResult
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -167,18 +167,31 @@ def _chunks(terms: Sequence[str], size: int = _CHUNK_SIZE) -> list[list[str]]:
     return [list(terms[start : start + size]) for start in range(0, len(terms), size)]
 
 
-def _resolve(candidate: str, known: dict[str, str]) -> str | None:
-    """
-    Map a string the model returned back to the keyword that was sent, or None if it invented one.
+@dataclass(frozen=True, slots=True)
+class _Keywords:
+    """The keywords a reply may name, by loose key, folded the way the trim folded them."""
 
-    Matching is loose (case, punctuation, plurals) because a model retyping a list will change a
-    capital or drop a hyphen; it is not free-form, because the result must be a keyword the library
-    actually uses.
-    """
-    stripped = candidate.strip()
-    if not stripped:
-        return None
-    return known.get(loose_key(stripped))
+    by_key: dict[str, str]
+    fold_plurals: bool = True
+
+    @classmethod
+    def of(cls, terms: Iterable[str], *, fold_plurals: bool) -> _Keywords:
+        """Index *terms* by their loose key."""
+        by_key = {loose_key(term, fold_plurals=fold_plurals): term for term in terms}
+        return cls(by_key, fold_plurals)
+
+    def resolve(self, candidate: str) -> str | None:
+        """
+        Map a string the model returned back to the keyword that was sent, or None if invented.
+
+        Matching is loose (case, punctuation, plurals where the language folds them) because a model
+        retyping a list will change a capital or drop a hyphen; it is not free-form, because the
+        result must be a keyword the library actually uses.
+        """
+        stripped = candidate.strip()
+        if not stripped:
+            return None
+        return self.by_key.get(loose_key(stripped, fold_plurals=self.fold_plurals))
 
 
 def _request[T: BaseModel](
@@ -225,7 +238,12 @@ def _request[T: BaseModel](
 _CATEGORY_CLEAN_RE = re.compile(r"[^\w\s-]", re.UNICODE)
 
 
-def choose_categories(chat_model: OpenAIChatModel, terms: Sequence[str]) -> list[str]:
+def choose_categories(
+    chat_model: OpenAIChatModel,
+    terms: Sequence[str],
+    *,
+    fold_plurals: bool = True,
+) -> list[str]:
     """
     Ask once for the library's top-level categories, and sanity-check the answer.
 
@@ -245,8 +263,9 @@ def choose_categories(chat_model: OpenAIChatModel, terms: Sequence[str]) -> list
     seen: dict[str, str] = {}
     for raw in output.categories:
         name = _CATEGORY_CLEAN_RE.sub("", raw).strip()
-        if name and loose_key(name) not in seen:
-            seen[loose_key(name)] = name
+        key = loose_key(name, fold_plurals=fold_plurals)
+        if name and key not in seen:
+            seen[key] = name
 
     if len(seen) > _MAX_CATEGORIES * _DEGENERATE_FACTOR:
         # Asked for a handful of top-level categories, a weak model hands back the keyword list it
@@ -297,7 +316,7 @@ class _Applied:
 def _claim_synonyms(
     group: KeywordGroup,
     preferred: str,
-    known: dict[str, str],
+    known: _Keywords,
     claimed: set[str],
     applied: _Applied,
 ) -> None:
@@ -320,7 +339,7 @@ def _claim_synonyms(
 
     aliases = []
     for raw in group.synonyms:
-        synonym = _resolve(raw, known)
+        synonym = known.resolve(raw)
         if synonym is None:
             applied.invented += 1
         elif synonym != preferred and synonym not in claimed:
@@ -365,6 +384,8 @@ def _apply_groups(
     groups: Sequence[KeywordGroup],
     chunk: Sequence[str],
     categories: Sequence[str],
+    *,
+    fold_plurals: bool = True,
 ) -> _Applied:
     """
     Turn one chunk's reply into synonym and hierarchy decisions, discarding anything invented.
@@ -372,15 +393,15 @@ def _apply_groups(
     A keyword may be claimed once. A later group naming a keyword already spoken for is ignored
     rather than allowed to move it, so the result cannot depend on how the model ordered its reply.
     """
-    known = {loose_key(term): term for term in chunk}
-    category_by_key = {loose_key(name): name for name in categories}
+    known = _Keywords.of(chunk, fold_plurals=fold_plurals)
+    category_by = _Keywords.of(categories, fold_plurals=fold_plurals)
     applied = _Applied()
     claimed: set[str] = set()
     parent_of: dict[str, str] = {}
     category_of: dict[str, str] = {}
 
     for group in groups:
-        preferred = _resolve(group.preferred, known)
+        preferred = known.resolve(group.preferred)
         if preferred is None:
             applied.invented += 1
             continue
@@ -389,9 +410,9 @@ def _apply_groups(
         claimed.add(preferred)
         _claim_synonyms(group, preferred, known, claimed, applied)
 
-        if (parent := _resolve(group.parent, known)) is not None and parent != preferred:
+        if (parent := known.resolve(group.parent)) is not None and parent != preferred:
             parent_of[preferred] = parent
-        if (category := category_by_key.get(loose_key(group.category))) is not None:
+        if (category := category_by.resolve(group.category)) is not None:
             category_of[preferred] = category
 
     for term in claimed - set(applied.aliased):
@@ -429,7 +450,7 @@ def organize(  # noqa: PLR0913 - provider credentials plus the list to organize.
         api_base_url=api_base_url,
         api_key=api_key,
     )
-    categories = choose_categories(chat_model, result.kept)
+    categories = choose_categories(chat_model, result.kept, fold_plurals=result.fold_plurals)
     chunks = _chunks(result.kept)
     logger.info("vocabulary_organize_started", chunks=len(chunks), terms=len(result.kept))
 
@@ -437,7 +458,7 @@ def organize(  # noqa: PLR0913 - provider credentials plus the list to organize.
         replies = _organize_chunk(chat_model, chunk, categories)
         if replies is None:
             return _Applied(failed=True)
-        return _apply_groups(replies.groups, chunk, categories)
+        return _apply_groups(replies.groups, chunk, categories, fold_plurals=result.fold_plurals)
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         applied_chunks = list(pool.map(run_chunk, chunks))
@@ -481,6 +502,7 @@ def organize(  # noqa: PLR0913 - provider credentials plus the list to organize.
             census=result.census,
             chains=chains,
             synonyms=synonyms,
+            fold_plurals=result.fold_plurals,
         ),
         stats,
     )

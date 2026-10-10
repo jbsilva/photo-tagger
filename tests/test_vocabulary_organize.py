@@ -1,5 +1,6 @@
 """Tests for the optional model pass that folds synonyms and assigns a hierarchy."""
 
+from collections import Counter
 from itertools import pairwise
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -11,8 +12,10 @@ from photo_tagger.vocabulary_build import (
     DROP_SYNONYM,
     KeywordCensus,
     TrimResult,
+    TrimRules,
     render_drop_report,
     render_vocabulary,
+    trim,
 )
 from photo_tagger.vocabulary_organize import (
     _MAX_CATEGORIES,
@@ -74,6 +77,24 @@ def test_apply_groups_folds_synonyms_and_assigns_a_category() -> None:
     assert applied.synonyms == {"Golden Hour": ["Golden Light"]}
     assert applied.aliased == {"Golden Light": "Golden Hour"}
     assert applied.chains == {"Golden Hour": ("Lighting", "Golden Hour")}
+
+
+def test_apply_groups_folds_plurals_only_where_the_trim_did() -> None:
+    """In German, "Alle" and "Alles" are two keywords, so a reply naming one is not the other."""
+    applied = _apply_groups(
+        [KeywordGroup(preferred="Alle", synonyms=[], category="Lighting")],
+        ["Alle", "Alles"],
+        ["Lighting"],
+        fold_plurals=False,
+    )
+    assert applied.chains == {"Alle": ("Lighting", "Alle")}
+
+
+def test_trim_hands_its_plural_rule_to_the_organize_pass() -> None:
+    """Organize() reads the rule off the result, so neither frontend has to pass it twice."""
+    census = KeywordCensus(uses=Counter({"Alle": 3, "Alles": 3}))
+
+    assert trim(census, TrimRules(min_uses=1, fold_plurals=False)).fold_plurals is False
 
 
 def test_apply_groups_refuses_a_keyword_the_model_invented() -> None:

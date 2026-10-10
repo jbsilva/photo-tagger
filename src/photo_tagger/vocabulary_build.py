@@ -257,6 +257,9 @@ class TrimResult:
     census: KeywordCensus = field(default_factory=KeywordCensus)
     chains: dict[str, tuple[str, ...]] = field(default_factory=dict)
     synonyms: dict[str, list[str]] = field(default_factory=dict)
+    # The trim's TrimRules.fold_plurals, so the organize pass matches the model's reply the same
+    # way: folded, "Alle" and "Alles" would be one keyword in German.
+    fold_plurals: bool = True
 
     def chain_for(self, term: str) -> tuple[str, ...]:
         """Return *term*'s hierarchy: the organized one if there is one, else the census's."""
@@ -345,6 +348,7 @@ def trim(census: KeywordCensus, rules: TrimRules | None = None) -> TrimResult:
         kept=[term for term, _ in survivors],
         dropped=dropped,
         census=census,
+        fold_plurals=rules.fold_plurals,
     )
 
 
