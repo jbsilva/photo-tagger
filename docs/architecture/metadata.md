@@ -134,8 +134,8 @@ Title and description are only written when `--write-title` and `--write-descrip
 
 `photo_tagger.fields` holds the other half of the payload: the metadata only the photographer knows.
 `--artist`, `--copyright`, `--rights`, and `--marked` become the tags below. `--set TAG=VALUE` adds
-any other tag under its ExifTool name. A tagging run and the `set` command write the same map. The
-`set` command calls no model.
+any other tag under its ExifTool name. A tagging run, the `set` command, and a save from the GUI's
+**Settings > Copyright...** all write the same map. The `set` command calls no model.
 
 | Field        | Flag          | Tags written                                                |
 | ------------ | ------------- | ----------------------------------------------------------- |

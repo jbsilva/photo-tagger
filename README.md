@@ -447,6 +447,12 @@ same config file and environment variables as the CLI, and **Settings > Save Set
 writes them back. PySide6 is only pulled in by the `gui` extra, so the plain CLI install stays
 lightweight.
 
+**Settings > Copyright...** holds your credit and copyright notice, written by every save next to
+whatever the model produced. `{year}` in a notice becomes the year of that photo, so one setting
+covers every shoot, and the panel under the fields shows the tags a save writes before it writes
+them. With a copyright set, a save writes it even with Title, Description, and Keywords all
+unchecked.
+
 The window covers the same keyword workflow as the CLI. **Settings > Keyword Rules...** picks the
 controlled vocabulary generated keywords are snapped onto (with a strict toggle) and the session gap
 that harmonizes each shoot, applied to the proposals so you still review before saving. **Tools**

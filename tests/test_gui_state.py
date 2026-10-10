@@ -2,6 +2,7 @@
 
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from photo_tagger.errors import ConfigFileError
+from photo_tagger.fields import ExtraFields
 from photo_tagger.gui_state import (
     _MAX_LISTED_DROPPED,
     ADDED,
@@ -64,6 +66,8 @@ from photo_tagger.gui_state import (
     apply_proposal,
     apply_selection,
     apply_vocabulary,
+    ascii_warning,
+    build_copyright_fields,
     build_save_job,
     build_tree,
     caption_source_note,
@@ -72,6 +76,7 @@ from photo_tagger.gui_state import (
     config_text_with_language,
     config_text_with_output_language,
     config_toml_text,
+    copyright_summary,
     deselect_paths,
     ensure_path_dirs,
     estimate_remaining,
@@ -116,6 +121,7 @@ from photo_tagger.gui_state import (
     progress_timing_text,
     rank_vision_models,
     record_dropped_terms,
+    resolve_extra_tags,
     reveal_command,
     reveal_label,
     review_summary,
@@ -2067,3 +2073,215 @@ def test_anchored_scroll_keeps_the_viewport_centered() -> None:
 def test_anchored_scroll_clamps_below_zero() -> None:
     """Zooming out far enough asks for a negative offset; a scrollbar has no such position."""
     assert anchored_scroll(0, 400, 0.25) == 0
+
+
+# ---------------------------------------------------------------------------
+# Copyright and credit
+# ---------------------------------------------------------------------------
+
+
+_NOTICE = "Copyright (c) {year} {artist}"
+
+
+def _copyright_options(**kwargs: object) -> SaveOptions:
+    """Return a SaveOptions carrying a usable copyright block."""
+    fields, error = build_copyright_fields(
+        artist="Ada Lovelace",
+        notice=_NOTICE,
+        rights="",
+        marked=True,
+        **kwargs,  # type: ignore[arg-type]
+    )
+    assert error == ""
+    return SaveOptions(extra_fields=fields)
+
+
+def test_save_options_writes_anything_covers_a_copyright_only_save() -> None:
+    """Every generated field off still writes, when a copyright is configured."""
+    bare = SaveOptions(write_title=False, write_description=False, write_keywords=False)
+    assert not bare.writes_anything
+    assert not bare.writes_copyright
+
+    stamped = replace(bare, extra_fields=_copyright_options().extra_fields)
+    assert stamped.writes_copyright
+    assert stamped.writes_anything
+    # The three field toggles are still off, which is what any_field reports.
+    assert not stamped.any_field
+
+
+def test_save_options_ignores_an_empty_copyright() -> None:
+    """A dialog nobody filled in is not a reason to write."""
+    options = SaveOptions(extra_fields=ExtraFields())
+    assert not options.writes_copyright
+
+
+def test_resolve_extra_tags_dates_the_notice_by_the_photo() -> None:
+    """The year comes from the batch read, so one photo's notice is not another's."""
+    old, new = Path("/photos/old.jpg"), Path("/photos/new.jpg")
+    options = _copyright_options()
+    years = {old: 2011, new: 2025}
+
+    assert resolve_extra_tags(options, old, years)["EXIF:Copyright"] == (
+        "Copyright (c) 2011 Ada Lovelace"
+    )
+    assert resolve_extra_tags(options, new, years)["EXIF:Copyright"] == (
+        "Copyright (c) 2025 Ada Lovelace"
+    )
+
+
+def test_resolve_extra_tags_is_empty_without_a_copyright() -> None:
+    """The usual save resolves nothing, so it pays no read and writes no extra tag."""
+    assert resolve_extra_tags(SaveOptions(), Path("/photos/a.jpg"), {}) == {}
+
+
+def test_resolve_extra_tags_falls_back_to_this_year() -> None:
+    """A photo whose year could not be read still gets a notice, dated today."""
+    tags = resolve_extra_tags(_copyright_options(), Path("/photos/a.jpg"), {})
+    this_year = datetime.now(tz=UTC).astimezone().year
+    assert tags["EXIF:Copyright"] == f"Copyright (c) {this_year} Ada Lovelace"
+
+
+def test_build_copyright_fields_reports_a_template_it_cannot_fill() -> None:
+    """The dialog gets the reason as text, rather than an exception out of a Qt slot."""
+    fields, error = build_copyright_fields(
+        artist="",
+        notice="Copyright (c) {year} {artist}",
+        rights="",
+        marked=None,
+    )
+    assert fields is None
+    assert "--artist" in error
+
+
+def test_build_copyright_fields_trims_what_was_typed() -> None:
+    """Stray spaces around a name are not part of the credit."""
+    fields, error = build_copyright_fields(
+        artist="  Ada Lovelace  ",
+        notice="",
+        rights="",
+        marked=None,
+    )
+    assert error == ""
+    assert fields is not None
+    assert fields.resolve(2025)["EXIF:Artist"] == "Ada Lovelace"
+
+
+def test_build_copyright_fields_keeps_config_only_assignments() -> None:
+    """set_tags has no dialog row, so the window carries it through from the config file."""
+    options = _copyright_options(assignments=["XMP-xmpRights:WebStatement=https://x.test/terms"])
+    assert options.extra_fields is not None
+    resolved = options.extra_fields.resolve(2025)
+    assert resolved["XMP-xmpRights:WebStatement"] == "https://x.test/terms"
+
+
+def test_copyright_summary_lists_every_tag_for_a_real_year() -> None:
+    """The preview is what tells the user their {year} template came out right."""
+    options = _copyright_options()
+    summary = copyright_summary(options.extra_fields, 2019)
+    assert "2019" in summary
+    assert "EXIF:Copyright = Copyright (c) 2019 Ada Lovelace" in summary
+    assert "XMP-xmpRights:Marked = True" in summary
+
+
+def test_copyright_summary_says_when_nothing_is_written() -> None:
+    """An empty dialog explains itself instead of showing an empty preview."""
+    assert "Nothing is written" in copyright_summary(None, 2025)
+    assert "Nothing is written" in copyright_summary(ExtraFields(), 2025)
+
+
+def test_config_toml_text_writes_the_copyright_table() -> None:
+    """Save Settings as Defaults hands the CLI the same [copyright] block it reads."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    text = config_toml_text(
+        _config_values(
+            artist="Ada Lovelace",
+            copyright_notice=_NOTICE,
+            rights="© {year} {artist}",
+            marked=True,
+        ),
+    )
+    parsed = tomllib.loads(text)
+    assert parsed["copyright"] == {
+        "artist": "Ada Lovelace",
+        "copyright_notice": _NOTICE,
+        "rights": "© {year} {artist}",
+        "marked": True,
+    }
+
+
+def test_config_toml_text_leaves_out_a_rights_flag_nobody_picked() -> None:
+    """A credit on its own writes no Marked key, so the photo keeps whatever it says."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    text = config_toml_text(_config_values(artist="Ada Lovelace"))
+    assert tomllib.loads(text)["copyright"] == {"artist": "Ada Lovelace"}
+
+
+def test_config_toml_text_omits_an_unused_copyright_table() -> None:
+    """A user who never opened the dialog gets no empty table in their config."""
+    assert "[copyright]" not in config_toml_text(_config_values())
+
+
+def test_merged_config_text_updates_and_clears_copyright_keys() -> None:
+    """Emptying a field removes its key, so the CLI stops writing it too."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    text = merged_config_text(
+        '[copyright]\nartist = "Old Name"\ncopyright_notice = "(c) old"\nmarked = true\n',
+        _config_values(artist="Ada Lovelace", marked=False),
+    )
+    parsed = tomllib.loads(text)
+    assert parsed["copyright"] == {"artist": "Ada Lovelace", "marked": False}
+
+
+def test_merged_config_text_drops_a_copyright_table_left_empty() -> None:
+    """Clearing every field removes the table rather than leaving a hollow one behind."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    text = merged_config_text('[copyright]\nartist = "Old Name"\n', _config_values())
+    assert "copyright" not in tomllib.loads(text)
+
+
+def test_merged_config_text_leaves_a_file_without_copyright_alone() -> None:
+    """A config that never mentioned copyright does not grow an empty table on save."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    text = merged_config_text("[provider]\nmodel_name = 'm'\n", _config_values())
+    assert "copyright" not in tomllib.loads(text)
+
+
+def test_ascii_warning_flags_a_notice_exif_cannot_promise() -> None:
+    """A © in the notice rides in a field EXIF types as ASCII, and the preview says so."""
+    fields, _error = build_copyright_fields(
+        artist="José",
+        notice="Copyright © {year} {artist}",
+        rights="",
+        marked=None,
+    )
+    warning = ascii_warning(fields, 2025)
+    assert "EXIF:Artist, EXIF:Copyright" in warning
+    assert "Exif 3.0" in warning
+    # The tag list itself stays a plain list of what gets written.
+    assert "Exif 3.0" not in copyright_summary(fields, 2025)
+
+
+def test_ascii_warning_stays_quiet_for_a_plain_notice() -> None:
+    """A © in XMP alone is correct there, so nothing is flagged."""
+    fields, _error = build_copyright_fields(
+        artist="Ada",
+        notice="Copyright (c) {year} {artist}",
+        rights="© {year} {artist}",
+        marked=None,
+    )
+    assert "Exif 3.0" not in copyright_summary(fields, 2025)
+
+
+def test_config_writers_persist_the_write_copyright_toggle() -> None:
+    """Save Settings as Defaults carries the toggle, so CLI runs skip the block too."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    values = _config_values(write_copyright=False)
+    assert tomllib.loads(config_toml_text(values))["output"]["write_copyright"] is False
+    merged = merged_config_text("[output]\nwrite_title = true\n", values)
+    assert tomllib.loads(merged)["output"]["write_copyright"] is False

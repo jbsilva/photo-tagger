@@ -26,7 +26,8 @@ from tomlkit.exceptions import TOMLKitError
 from photo_tagger.config import DEFAULT_OUTPUT_LANGUAGE, DEFAULT_SIDECAR_MODE, SidecarMode
 from photo_tagger.csv_report import ReportRow
 from photo_tagger.discovery import parse_extensions, resolve_image_files
-from photo_tagger.errors import ConfigFileError
+from photo_tagger.errors import ConfigFileError, FieldError
+from photo_tagger.fields import ExtraFields, build_extra_fields, non_ascii_tags
 from photo_tagger.i18n import AUTO, _, gettext_noop, ngettext, pgettext
 from photo_tagger.keywords import dedupe_keywords, merge_keywords
 from photo_tagger.metadata import (
@@ -328,11 +329,29 @@ class SaveOptions:
     # The active vocabulary's own spelling of each term, keyed by casefolded term. None when no
     # vocabulary is in force, which is the only time the merge step may capitalize freely.
     verbatim: Mapping[str, str] | None = None
+    # Copyright and credit (Settings > Copyright). Written on every save, like the CLI's own
+    # [copyright] table, and dated per photo, so it is resolved at write time rather than here.
+    extra_fields: ExtraFields | None = None
 
     @property
     def any_field(self) -> bool:
         """Whether at least one field is picked; a save with none of them would write nothing."""
         return self.write_title or self.write_description or self.write_keywords
+
+    @property
+    def writes_copyright(self) -> bool:
+        """Whether a save also stamps the copyright block."""
+        return self.extra_fields is not None and not self.extra_fields.is_empty
+
+    @property
+    def writes_anything(self) -> bool:
+        """
+        Whether a save would put anything on the file at all.
+
+        Wider than :attr:`any_field`: with a copyright configured, a save with every generated field
+        switched off still writes, and stopping it would be wrong.
+        """
+        return self.any_field or self.writes_copyright
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,6 +428,94 @@ def build_save_job(item: PhotoItem, options: SaveOptions) -> SaveJob:
             overwrite=options.overwrite_description,
         ),
     )
+
+
+def resolve_extra_tags(
+    options: SaveOptions,
+    path: Path,
+    years: Mapping[Path, int],
+) -> dict[str, str]:
+    """
+    Render one photo's copyright tags, empty when the window writes none.
+
+    *years* is a batch read of capture years (see :func:`~photo_tagger.metadata.read_capture_years`)
+    so a save pays one ExifTool call for the whole batch. A photo missing from it falls back to this
+    year: a notice dated slightly wrong beats one with a hole in it.
+    """
+    fields = options.extra_fields
+    if fields is None or fields.is_empty:
+        return {}
+    return fields.resolve(years.get(path) or datetime.now(tz=UTC).astimezone().year)
+
+
+def build_copyright_fields(
+    *,
+    artist: str,
+    notice: str,
+    rights: str,
+    marked: bool | None,
+    assignments: Iterable[str] | None = None,
+) -> tuple[ExtraFields | None, str]:
+    """
+    Validate what the Copyright dialog holds: the fields, or the message refusing them.
+
+    Returns ``(fields, "")`` when the dialog is usable and ``(None, message)`` when it is not, so
+    the Qt shell shows the reason in the dialog instead of raising out of a slot. *assignments*
+    carries raw ``TAG=VALUE`` entries from the config file's ``set_tags``, which the window writes
+    and the preview lists but the dialog does not edit.
+    """
+    try:
+        fields = build_extra_fields(
+            artist=artist.strip(),
+            notice=notice.strip(),
+            rights=rights.strip(),
+            marked=marked,
+            assignments=assignments,
+        )
+    except FieldError as exc:
+        return None, str(exc)
+    return fields, ""
+
+
+def copyright_summary(fields: ExtraFields | None, year: int) -> str:
+    """
+    Describe what the copyright settings put on a photo taken in *year*.
+
+    The dialog shows this under the fields, because ``{year}`` only means something once it has a
+    photo to stand for: seeing ``Copyright (c) 2019 ...`` is what tells you the template is right.
+    """
+    if fields is None or fields.is_empty:
+        return _("Nothing is written. Fill in a name or a notice above.")
+    resolved = fields.resolve(year)
+    lines = [
+        ngettext(
+            "Writes {n} tag. On a photo taken in {year}:",
+            "Writes {n} tags. On a photo taken in {year}:",
+            len(resolved),
+        ).format(n=len(resolved), year=year),
+    ]
+    lines += [f"{tag} = {value}" for tag, value in resolved.items()]
+    return "\n".join(lines)
+
+
+def ascii_warning(fields: ExtraFields | None, year: int) -> str:
+    """
+    Warn that a value is riding in a field the EXIF spec types as ASCII, or return "".
+
+    EXIF only took UTF-8 from Exif 3.0 on (CIPA DC-008-2023), and nothing in the file says which
+    encoding a value uses, so a ``©`` (or an accent in a name) there is a bet on the reader. Said
+    once, beside the fields, rather than per photo: the write goes ahead either way, because plenty
+    of software does read these as UTF-8 and a photographer called José should not have to spell
+    their own name differently.
+    """
+    if fields is None or fields.is_empty:
+        return ""
+    if not (tags := non_ascii_tags(fields.resolve(year))):
+        return ""
+    return _(
+        "EXIF only allows plain ASCII before Exif 3.0, so some software will show {tags} "
+        "wrongly. XMP carries the same text either way.",
+    ).format(tags=", ".join(tags))
 
 
 def apply_proposal(
@@ -1839,6 +1946,33 @@ class GuiConfigValues:
     notify: bool = False
     notify_sound: bool = False
     repair_language: bool = False
+    # Settings > Copyright. Blank strings and a None flag mean "write nothing", which removes the
+    # keys from the file rather than pinning empty ones.
+    write_copyright: bool = True
+    artist: str = ""
+    copyright_notice: str = ""
+    rights: str = ""
+    marked: bool | None = None
+
+
+def _copyright_lines(values: GuiConfigValues) -> list[str]:
+    """Render the ``[copyright]`` table, or nothing at all when no field is filled in."""
+    entries = [
+        (key, value)
+        for key, value in (
+            ("artist", values.artist),
+            ("copyright_notice", values.copyright_notice),
+            ("rights", values.rights),
+        )
+        if value
+    ]
+    if not entries and values.marked is None:
+        return []
+    lines = ["", "[copyright]"]
+    lines += [f"{key} = {_toml_str(value)}" for key, value in entries]
+    if values.marked is not None:
+        lines.append(f"marked = {_toml_bool(values.marked)}")
+    return lines
 
 
 def config_toml_text(values: GuiConfigValues) -> str:
@@ -1866,6 +2000,7 @@ def config_toml_text(values: GuiConfigValues) -> str:
         f"write_title = {_toml_bool(values.write_title)}",
         f"write_description = {_toml_bool(values.write_description)}",
         f"write_keywords = {_toml_bool(values.write_keywords)}",
+        f"write_copyright = {_toml_bool(values.write_copyright)}",
         f"preserve_keywords = {_toml_bool(values.preserve_keywords)}",
         f"preserve_title = {_toml_bool(values.preserve_title)}",
         f"preserve_description = {_toml_bool(values.preserve_description)}",
@@ -1877,6 +2012,9 @@ def config_toml_text(values: GuiConfigValues) -> str:
     lines += [
         f"vocabulary_strict = {_toml_bool(values.vocabulary_strict)}",
         f"session_gap_minutes = {values.session_gap_minutes}",
+    ]
+    lines += _copyright_lines(values)
+    lines += [
         "",
         "[inference]",
         f"repair_language = {_toml_bool(values.repair_language)}",
@@ -1930,6 +2068,36 @@ def _config_table(document: TOMLDocument, name: str) -> MutableMapping[str, obje
     return existing
 
 
+def _merge_copyright(document: TOMLDocument, values: GuiConfigValues) -> None:
+    """
+    Write the ``[copyright]`` table, dropping the keys the dialog left empty.
+
+    An emptied field has to remove its key, not write ``""``: the CLI reads the same table, and a
+    blank notice there would look like a setting rather than the absence of one. A table left with
+    nothing in it goes too.
+    """
+    if "copyright" not in document and not any(
+        (values.artist, values.copyright_notice, values.rights, values.marked is not None),
+    ):
+        return
+    table = _config_table(document, "copyright")
+    for key, value in (
+        ("artist", values.artist),
+        ("copyright_notice", values.copyright_notice),
+        ("rights", values.rights),
+    ):
+        if value:
+            table[key] = value
+        else:
+            table.pop(key, None)
+    if values.marked is None:
+        table.pop("marked", None)
+    else:
+        table["marked"] = values.marked
+    if not table:
+        document.pop("copyright", None)
+
+
 def merged_config_text(existing_text: str, values: GuiConfigValues) -> str:
     """
     Update *existing_text* (a TOML config file) with *values*, preserving everything else.
@@ -1956,6 +2124,7 @@ def merged_config_text(existing_text: str, values: GuiConfigValues) -> str:
     output["write_title"] = values.write_title
     output["write_description"] = values.write_description
     output["write_keywords"] = values.write_keywords
+    output["write_copyright"] = values.write_copyright
     output["preserve_keywords"] = values.preserve_keywords
     output["preserve_title"] = values.preserve_title
     output["preserve_description"] = values.preserve_description
@@ -1972,6 +2141,8 @@ def merged_config_text(existing_text: str, values: GuiConfigValues) -> str:
         # No vocabulary chosen: drop the key rather than write an empty path the CLI would then
         # fail to open on its next run.
         output.pop("vocabulary", None)
+
+    _merge_copyright(document, values)
 
     inference = _config_table(document, "inference")
     inference["repair_language"] = values.repair_language

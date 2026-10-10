@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format is based on
 - `photo-tagger show` prints what a photo carries, naming the ExifTool tag behind every value.
   `--all` dumps every tag, `--json` pipes it elsewhere.
 
+- GUI: **Settings > Copyright...** sets the same credit and notice, previews the tags a save writes,
+  and persists them to `[copyright]`. A copyright alone is enough to save a photo, and **Insert**
+  buttons type `©`, `{year}`, and `{artist}` into the field holding the cursor. The save menu's
+  **Write Copyright** skips the block without clearing it.
+
 - `--otel` exports an OpenTelemetry trace of every model call (timings, tokens, failures) to a
   collector you run, so a slow or expensive batch is something you can read rather than guess at.
   Off by default and pointed only where `--otel-endpoint` says. The photo itself is never exported;

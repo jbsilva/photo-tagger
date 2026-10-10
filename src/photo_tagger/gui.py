@@ -28,6 +28,7 @@ import subprocess  # nosec B404 - only used to reveal a photo in the OS file bro
 import sys
 import time
 from datetime import UTC, datetime
+from functools import partial
 from itertools import islice
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -132,6 +133,7 @@ from photo_tagger.config import (
     DEFAULT_SIDECAR_MODE,
     DEFAULT_TEMPERATURE,
     DEFAULT_USER_PROMPT,
+    TAG_EXIF_DATE_TIME_ORIGINAL,
     SidecarMode,
     build_repair_prompt,
 )
@@ -194,6 +196,8 @@ from photo_tagger.gui_state import (
     apply_proposal,
     apply_selection,
     apply_vocabulary,
+    ascii_warning,
+    build_copyright_fields,
     build_save_job,
     build_tree,
     caption_source_note,
@@ -201,6 +205,7 @@ from photo_tagger.gui_state import (
     config_text_with_language,
     config_text_with_output_language,
     config_toml_text,
+    copyright_summary,
     deselect_paths,
     ensure_path_dirs,
     expand_inputs,
@@ -235,6 +240,7 @@ from photo_tagger.gui_state import (
     progress_timing_text,
     rank_vision_models,
     record_dropped_terms,
+    resolve_extra_tags,
     reveal_command,
     reveal_label,
     review_summary,
@@ -265,12 +271,14 @@ from photo_tagger.metadata import (
     FIELD_KEYWORDS,
     FIELD_TITLE,
     build_contextual_prompt,
+    capture_year,
     first_caption,
     iter_field_presence,
     managed_helper,
     prompt_with_hint,
     read_caption,
     read_caption_values,
+    read_capture_years,
     read_image_context,
     read_metadata_sources,
     write_metadata_everywhere,
@@ -553,6 +561,40 @@ _OVERWRITE_CHOICES: tuple[tuple[str, str, str], ...] = (
         gettext_noop("Keywords"),
         gettext_noop("Replace existing keywords instead of merging the new ones in."),
     ),
+)
+
+# How much room the Copyright dialog's preview gets. The floor holds the "nothing is written" line
+# plus one more; the ceiling is nine tag lines, past which it scrolls rather than pushing the note
+# and the Close button off a small screen.
+_COPYRIGHT_PREVIEW_MIN_HEIGHT = 60
+_COPYRIGHT_PREVIEW_MAX_HEIGHT = 200
+
+# What the Copyright dialog's Insert buttons type, and why. The text is the button's own label:
+# these are syntax, not prose, so they read the same in every language.
+_COPYRIGHT_INSERTS: tuple[tuple[str, str], ...] = (
+    (
+        "©",
+        gettext_noop(
+            "The copyright sign. XMP is UTF-8 and carries it. EXIF types its copyright field as "
+            "ASCII before Exif 3.0, so '(c)' is the safe spelling for the notice.",
+        ),
+    ),
+    (
+        "{year}",
+        gettext_noop("The year the photo was taken, from its capture date."),
+    ),
+    (
+        "{artist}",
+        gettext_noop("The name in the Creator field above."),
+    ),
+)
+
+# The three answers to XMP-xmpRights:Marked, in the order the Copyright dialog lists them. None
+# is first because leaving the tag alone is what a photo gets until somebody decides otherwise.
+_MARKED_CHOICES: tuple[tuple[str, bool | None], ...] = (
+    (gettext_noop("Leave as is"), None),
+    (gettext_noop("Under copyright"), True),
+    (gettext_noop("Public domain"), False),
 )
 
 # How each Write To mode reads inside the Save buttons' "Currently writes ..." sentence. Lambdas,
@@ -1004,15 +1046,13 @@ class SaveWorker(QObject):
         self,
         jobs: list[SaveJob],
         *,
-        backup: bool,
-        sidecar_mode: SidecarMode,
+        options: SaveOptions,
         journal: UndoJournal | None = None,
     ) -> None:
-        """Store the resolved write jobs and the two file-level options; nothing runs until run."""
+        """Store the resolved write jobs and the save options; nothing runs until run."""
         super().__init__()
         self._jobs = jobs
-        self._backup = backup
-        self._sidecar_mode = sidecar_mode
+        self._options = options
         self._journal = journal
         self._emitted = 0
         self._stop = False
@@ -1035,8 +1075,20 @@ class SaveWorker(QObject):
                 self.file_done.emit(str(job.path), False)  # noqa: FBT003 - Qt signal argument
         self.finished.emit()
 
+    def _capture_years(self, helper: ExifToolHelper) -> dict[Path, int]:
+        """
+        Read the batch's capture years in one call, for dating the copyright notice.
+
+        Skipped entirely when no copyright is configured, so the usual save still costs exactly one
+        ExifTool write per photo and nothing else.
+        """
+        if not self._options.writes_copyright:
+            return {}
+        return read_capture_years([job.path for job in self._jobs], et=helper)
+
     def _write_all(self, helper: ExifToolHelper) -> None:
         """Write each job in turn, one photo's failure never stopping the rest."""
+        years = self._capture_years(helper)
         for job in self._jobs:
             if self._stop:
                 return
@@ -1046,14 +1098,15 @@ class SaveWorker(QObject):
                     job.keywords,
                     description=job.description,
                     title=job.title,
-                    backup=self._backup,
-                    sidecar_mode=self._sidecar_mode,
+                    extra=resolve_extra_tags(self._options, job.path, years),
+                    backup=self._options.backup,
+                    sidecar_mode=self._options.sidecar_mode,
                     et=helper,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("gui_save_failed", file=job.path.name, error=str(exc))
                 ok, targets = False, []
-            _record_writes(self._journal, job.path, targets, backup=self._backup)
+            _record_writes(self._journal, job.path, targets, backup=self._options.backup)
             self._emitted += 1
             self.file_done.emit(str(job.path), ok)
 
@@ -1771,15 +1824,25 @@ class MainWindow(QMainWindow):
         splitter.setSizes([500, 680])
         layout.addWidget(splitter, stretch=1)
         layout.addLayout(self._build_bottom_bar())
-        # After the panes: these dialogs read the header and folder-scan widgets when they open.
-        self._keyword_rules_dialog = self._build_keyword_rules_dialog()
-        self._builder_dialog = self._build_vocabulary_dialog()
-        self._undo_dialog = self._build_undo_dialog()
-        self._watch_dialog = self._build_watch_dialog()
+        self._build_dialogs()
         self._build_menus()
         self._refresh_save_tooltips()
         self._show_empty()
         self._load_vocabulary(self._vocabulary_path, announce=False)
+
+    def _build_dialogs(self) -> None:
+        """
+        Build the dialogs the menus open, once each.
+
+        Called after the panes, because these read the header and folder-scan widgets when they
+        open. They are kept alive for the window's lifetime rather than rebuilt per use, so what was
+        typed in one is still there the next time it opens.
+        """
+        self._keyword_rules_dialog = self._build_keyword_rules_dialog()
+        self._copyright_dialog = self._build_copyright_dialog()
+        self._builder_dialog = self._build_vocabulary_dialog()
+        self._undo_dialog = self._build_undo_dialog()
+        self._watch_dialog = self._build_watch_dialog()
 
     def _init_worker_state(self) -> None:
         """
@@ -1841,6 +1904,29 @@ class MainWindow(QMainWindow):
         # What the vocabulary did over the run in flight, for its closing summary line.
         self._vocabulary_mapped = 0
         self._vocabulary_dropped: dict[str, int] = {}
+        self._init_copyright()
+
+    def _init_copyright(self) -> None:
+        """
+        Seed the copyright block from the config file's [copyright] table.
+
+        OutputConfig carries those fields (the CLI writes them from the same group), so the defaults
+        the window already loaded hold them. ``set_tags`` is config-only: the dialog lists what it
+        writes but offers no way to edit raw tag assignments.
+        """
+        output = self._defaults.output
+        self._copyright_tags: list[str] = list(output.set_tags or [])
+        self._copyright_fields, error = build_copyright_fields(
+            artist=output.artist or "",
+            notice=output.copyright_notice or "",
+            rights=output.rights or "",
+            marked=output.marked,
+            assignments=self._copyright_tags,
+        )
+        if error:
+            # A config the CLI would refuse must not take the window down with it. The dialog
+            # shows the same message the moment it opens.
+            logger.warning("gui_copyright_config_unusable", error=error)
 
     def _init_pixmap_caches(self) -> None:
         """
@@ -2017,6 +2103,13 @@ class MainWindow(QMainWindow):
             tooltip(
                 "The controlled vocabulary generated keywords are snapped onto, and whether the "
                 "keywords of one shoot are made to agree with each other.",
+            ),
+        )
+        copyright_action = settings_menu.addAction(_("Copyright..."), self._show_copyright)
+        copyright_action.setToolTip(
+            tooltip(
+                "Your credit and copyright notice, written by every save. The year comes from "
+                "each photo, so one setting covers every shoot.",
             ),
         )
         settings_menu.addSeparator()
@@ -2302,6 +2395,7 @@ class MainWindow(QMainWindow):
             write_title=self._write_title.isChecked(),
             write_description=self._write_description.isChecked(),
             write_keywords=self._write_keywords.isChecked(),
+            write_copyright=self._write_copyright.isChecked(),
             preserve_keywords=not self._overwrites(FIELD_KEYWORDS),
             preserve_title=not self._overwrites(FIELD_TITLE),
             preserve_description=not self._overwrites(FIELD_DESCRIPTION),
@@ -2315,6 +2409,10 @@ class MainWindow(QMainWindow):
             notify=self._notify_action.isChecked(),
             notify_sound=self._notify_sound_action.isChecked(),
             repair_language=self._repair_language,
+            artist=self._artist_field.text().strip(),
+            copyright_notice=self._notice_field.text().strip(),
+            rights=self._rights_field.text().strip(),
+            marked=self._marked_box.currentData(),
         )
 
     def _config_target(self) -> Path:
@@ -3519,6 +3617,9 @@ class MainWindow(QMainWindow):
                 "only the title and description.",
             ),
         )
+        # Its tooltip and enabled state follow whether a copyright is set at all, so both are left
+        # to _sync_copyright_enabled, which the dialog calls as it is built.
+        self._write_copyright = QAction(_("Write Copyright"), self)
         # Defaults come from the config file, so choices saved via Settings > Save Settings as
         # Defaults come back on the next launch.
         output = self._defaults.output
@@ -3526,6 +3627,7 @@ class MainWindow(QMainWindow):
             (self._write_title, output.write_title),
             (self._write_description, output.write_description),
             (self._write_keywords, output.write_keywords),
+            (self._write_copyright, output.write_copyright),
         ):
             action.setCheckable(True)
             action.setChecked(checked)
@@ -3557,6 +3659,7 @@ class MainWindow(QMainWindow):
             self._write_title,
             self._write_description,
             self._write_keywords,
+            self._write_copyright,
             *self._overwrite_actions.values(),
             self._backup,
             *self._sidecar_actions.values(),
@@ -3624,6 +3727,8 @@ class MainWindow(QMainWindow):
             )
             if action.isChecked()
         ]
+        if self._writes_copyright():
+            fields.append(_("your copyright"))
         parts = [", ".join(fields) if fields else _("nothing (pick a field in the arrow menu)")]
         if self._write_keywords.isChecked():
             parts.append(
@@ -3640,6 +3745,14 @@ class MainWindow(QMainWindow):
             else _("with no *_original backup"),
         )
         return ", ".join(parts)
+
+    def _writes_copyright(self) -> bool:
+        """Report whether a save stamps a copyright: one is set, and Write Copyright is on."""
+        return (
+            self._write_copyright.isChecked()
+            and self._copyright_fields is not None
+            and not self._copyright_fields.is_empty
+        )
 
     def _kept_captions(self) -> list[str]:
         """Name the text fields a save writes only where the photo has none, for the summary."""
@@ -4713,6 +4826,9 @@ class MainWindow(QMainWindow):
             backup=self._backup.isChecked(),
             sidecar_mode=self._sidecar_mode(),
             verbatim=self._verbatim_spellings(),
+            # None when Write Copyright is off, so an unchecked toggle skips the whole block
+            # without anyone having to empty the dialog that holds it.
+            extra_fields=self._copyright_fields if self._write_copyright.isChecked() else None,
         )
 
     def _verbatim_spellings(self) -> dict[str, str] | None:
@@ -4726,8 +4842,8 @@ class MainWindow(QMainWindow):
         return self._vocabulary.exact if self._vocabulary else None
 
     def _write_fields_chosen(self) -> bool:
-        """Report whether at least one write toggle (Title/Description/Keywords) is on."""
-        return self._save_options().any_field
+        """Report whether a save would write anything: a picked field, or the copyright block."""
+        return self._save_options().writes_anything
 
     def _open_undo_journal(self) -> UndoJournal | None:
         """
@@ -4758,6 +4874,24 @@ class MainWindow(QMainWindow):
             self._session_journal = self._open_undo_journal()
         return self._session_journal
 
+    def _copyright_tags_for(self, options: SaveOptions, item: PhotoItem) -> dict[str, str]:
+        """
+        Resolve one photo's copyright tags for the inline (single photo) save path.
+
+        The year comes from the photo's own capture date. A generated photo already has it in hand;
+        any other one costs the read, which only happens when a copyright is configured at all. The
+        batch path reads the whole batch at once instead.
+        """
+        if not options.writes_copyright:
+            return {}
+        captured = item.camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL)
+        years = (
+            {item.path: capture_year(item.path, captured)}
+            if captured
+            else read_capture_years([item.path])
+        )
+        return resolve_extra_tags(options, item.path, years)
+
     def _write_item(self, item: PhotoItem) -> bool:
         """
         Write the item's checked fields to disk; return success.
@@ -4773,6 +4907,7 @@ class MainWindow(QMainWindow):
                 job.keywords,
                 description=job.description,
                 title=job.title,
+                extra=self._copyright_tags_for(options, item),
                 backup=options.backup,
                 sidecar_mode=options.sidecar_mode,
             )
@@ -4851,12 +4986,7 @@ class MainWindow(QMainWindow):
 
         self._save_thread = QThread(self)
         self._save_journal = self._open_undo_journal()
-        self._save_worker = SaveWorker(
-            jobs,
-            backup=options.backup,
-            sidecar_mode=options.sidecar_mode,
-            journal=self._save_journal,
-        )
+        self._save_worker = SaveWorker(jobs, options=options, journal=self._save_journal)
         self._save_worker.moveToThread(self._save_thread)
         self._save_thread.started.connect(self._save_worker.run)
         self._save_worker.file_done.connect(self._on_save_done)
@@ -5312,6 +5442,195 @@ class MainWindow(QMainWindow):
         self._session_gap_box.setValue(self._session_gap)
         self._refresh_vocabulary_label()
         self._keyword_rules_dialog.exec()
+
+    # --- copyright ---------------------------------------------------------------------------
+
+    def _build_copyright_dialog(self) -> QDialog:
+        """Build the dialog holding the credit and rights every save writes."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(_("Copyright"))
+        dialog.setMinimumWidth(620)
+        box = QVBoxLayout(dialog)
+        # Two sentences, broken by hand: a QLabel's size hint is the width of its longest line, so
+        # one long sentence opens the dialog as wide as itself however much it would wrap.
+        blurb = QLabel(
+            _("The model cannot know who took a photo or who owns it.")
+            + "\n"
+            + _("Use {year} for the year that photo was taken, and {artist} for the name below."),
+        )
+        blurb.setWordWrap(True)
+        box.addWidget(blurb)
+        box.addLayout(self._build_copyright_form())
+        box.addLayout(self._build_copyright_inserts())
+
+        # A box rather than a label: the preview is one line per tag and grows as fields are filled
+        # in, and a label that grows inside a dialog gets squeezed instead, cutting off its last
+        # line. This scrolls past _COPYRIGHT_PREVIEW_MAX_HEIGHT, and the lines can be copied out.
+        self._copyright_preview = _readonly_box(_COPYRIGHT_PREVIEW_MIN_HEIGHT)
+        box.addWidget(self._copyright_preview)
+
+        self._copyright_warning = QLabel("")
+        self._copyright_warning.setObjectName("warning")
+        self._copyright_warning.setWordWrap(True)
+        box.addWidget(self._copyright_warning)
+
+        note = QLabel(
+            _(
+                "Kept for this session. Settings > Save Settings as Defaults writes them to the "
+                "config file, which CLI runs read too.",
+            ),
+        )
+        note.setObjectName("hint")
+        note.setWordWrap(True)
+        box.addWidget(note)
+
+        close = QPushButton(_(_CLOSE))
+        close.setDefault(True)
+        close.clicked.connect(dialog.accept)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(close)
+        box.addLayout(buttons)
+        self._refresh_copyright()
+        return dialog
+
+    def _build_copyright_form(self) -> QFormLayout:
+        """
+        Build the four rows the Copyright dialog edits.
+
+        The growth policy is set rather than left to the style: QMacStyle keeps a form's fields at
+        their size hint, which left the notice field a couple of hundred pixels wide in a dialog
+        several times that, with the example template it carries cut off mid-word.
+        """
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        output = self._defaults.output
+        self._artist_field = QLineEdit(output.artist or "")
+        self._artist_field.setPlaceholderText(_("Your name"))
+        self._artist_field.setToolTip(
+            tooltip("Written to EXIF:Artist, XMP-dc:Creator, and IPTC:By-line."),
+        )
+        self._notice_field = QLineEdit(output.copyright_notice or "")
+        self._notice_field.setPlaceholderText(
+            _("Copyright (c) {year} {artist}, All rights reserved"),
+        )
+        self._notice_field.setToolTip(
+            tooltip("Written to EXIF:Copyright, IPTC:CopyrightNotice, and XMP-dc:Rights."),
+        )
+        self._rights_field = QLineEdit(output.rights or "")
+        self._rights_field.setPlaceholderText(_("(same as the notice)"))
+        self._rights_field.setToolTip(
+            tooltip(
+                "XMP-dc:Rights on its own, for when it should read differently: XMP is UTF-8, so "
+                "a real copyright sign is safe there.",
+            ),
+        )
+        form.addRow(_("Creator"), self._artist_field)
+        form.addRow(_("Copyright notice"), self._notice_field)
+        form.addRow(_("XMP rights"), self._rights_field)
+
+        self._marked_box = QComboBox()
+        for label, value in _MARKED_CHOICES:
+            self._marked_box.addItem(_(label), value)
+        self._marked_box.setCurrentIndex(self._marked_box.findData(output.marked))
+        self._marked_box.setToolTip(
+            tooltip("XMP-xmpRights:Marked, the flag that says the photo is under copyright."),
+        )
+        form.addRow(_("Rights flag"), self._marked_box)
+
+        for widget in (self._artist_field, self._notice_field, self._rights_field):
+            widget.textChanged.connect(self._refresh_copyright)
+        self._marked_box.currentIndexChanged.connect(self._refresh_copyright)
+        return form
+
+    def _build_copyright_inserts(self) -> QHBoxLayout:
+        """
+        Build the row of buttons that type the awkward parts of a notice for you.
+
+        ``©`` is the one nobody has on a key, and the two placeholders are worth showing rather than
+        only describing. Each button takes no focus, so the text field the user was typing in is
+        still the one that gets the insert (see :meth:`_insert_into_copyright`).
+        """
+        row = QHBoxLayout()
+        row.addWidget(QLabel(_("Insert:")))
+        for text, hint in _COPYRIGHT_INSERTS:
+            button = QPushButton(text)
+            button.setToolTip(tooltip(hint))
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.clicked.connect(partial(self._insert_into_copyright, text))
+            row.addWidget(button)
+        row.addStretch(1)
+        return row
+
+    def _insert_into_copyright(self, text: str) -> None:
+        """Type *text* into whichever template field has the cursor, the notice by default."""
+        target = QApplication.focusWidget()
+        if target not in (self._notice_field, self._rights_field):
+            target = self._notice_field
+        target.insert(text)
+        target.setFocus()
+
+    def _refresh_copyright(self) -> None:
+        """Re-read the dialog into the fields a save writes, and preview them on a real year."""
+        self._copyright_fields, error = build_copyright_fields(
+            artist=self._artist_field.text(),
+            notice=self._notice_field.text(),
+            rights=self._rights_field.text(),
+            marked=self._marked_box.currentData(),
+            assignments=self._copyright_tags,
+        )
+        self._sync_copyright_enabled()
+        year = self._preview_year()
+        self._copyright_preview.setPlainText(
+            error or copyright_summary(self._copyright_fields, year),
+        )
+        _fit_text_height(
+            self._copyright_preview,
+            min_h=_COPYRIGHT_PREVIEW_MIN_HEIGHT,
+            max_h=_COPYRIGHT_PREVIEW_MAX_HEIGHT,
+        )
+        self._copyright_warning.setText(
+            "" if error else ascii_warning(self._copyright_fields, year),
+        )
+        self._refresh_save_tooltips()
+
+    def _sync_copyright_enabled(self) -> None:
+        """
+        Gray out Write Copyright while there is no copyright to write.
+
+        The same rule the Overwrite entries follow: a toggle for something that cannot happen yet
+        should say so rather than look like a choice. It stays checked while disabled, so filling
+        the dialog in switches it straight on.
+        """
+        usable = self._copyright_fields is not None and not self._copyright_fields.is_empty
+        self._write_copyright.setEnabled(usable)
+        self._write_copyright.setToolTip(
+            tooltip(
+                "Write the credit and copyright notice from Settings > Copyright. Uncheck to skip "
+                "them for now without clearing what you typed there.",
+            )
+            if usable
+            else tooltip("Nothing to write yet. Fill in Settings > Copyright first."),
+        )
+
+    def _preview_year(self) -> int:
+        """
+        Return the year the preview stands for: the open photo's, else this one.
+
+        A photo's capture date is already in hand once it has been generated, and showing the year
+        of the photo on screen is what makes a wrong template obvious.
+        """
+        captured = (self._current.camera_info if self._current else {}).get(
+            TAG_EXIF_DATE_TIME_ORIGINAL,
+        )
+        if self._current is not None and captured:
+            return capture_year(self._current.path, captured)
+        return datetime.now(tz=UTC).astimezone().year
+
+    def _show_copyright(self) -> None:
+        """Open the Copyright dialog, its preview refreshed for the photo on screen."""
+        self._refresh_copyright()
+        self._copyright_dialog.exec()
 
     def _choose_vocabulary(self) -> None:
         """Pick a keyword file and put it in force for the next generation."""

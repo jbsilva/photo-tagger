@@ -31,7 +31,14 @@ pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMenu, QTreeWidgetItem
+from PySide6.QtWidgets import (
+    QApplication,
+    QFormLayout,
+    QLineEdit,
+    QMenu,
+    QPushButton,
+    QTreeWidgetItem,
+)
 
 from photo_tagger import gui, metadata, telemetry
 from photo_tagger.errors import ProviderError
@@ -45,8 +52,10 @@ from photo_tagger.gui_state import (
     WORKING,
     Proposal,
     SaveJob,
+    SaveOptions,
     TaggedCriterion,
     WatchSettings,
+    build_copyright_fields,
 )
 from photo_tagger.metadata import (
     FIELD_DESCRIPTION,
@@ -1920,7 +1929,7 @@ def test_save_worker_shares_one_exiftool_across_the_batch(
         )
         for name in ("a.jpg", "b.jpg")
     ]
-    worker = gui.SaveWorker(jobs, backup=True, sidecar_mode="all")
+    worker = gui.SaveWorker(jobs, options=SaveOptions(backup=True, sidecar_mode="all"))
     results: list[tuple[str, bool]] = []
     worker.file_done.connect(lambda path, ok: results.append((Path(path).name, ok)))
 
@@ -1943,7 +1952,7 @@ def test_save_worker_reports_failures_when_exiftool_cannot_start(
 
     monkeypatch.setattr(gui, "managed_helper", boom)
     jobs = [SaveJob(path=tmp_path / "a.jpg", keywords=KeywordSet(), title="T", description=None)]
-    worker = gui.SaveWorker(jobs, backup=True, sidecar_mode="all")
+    worker = gui.SaveWorker(jobs, options=SaveOptions(backup=True, sidecar_mode="all"))
     results: list[bool] = []
     finished: list[bool] = []
     worker.file_done.connect(lambda _path, ok: results.append(ok))
@@ -1970,7 +1979,7 @@ def test_save_worker_stops_before_the_next_photo(
         )
         for name in ("a.jpg", "b.jpg", "c.jpg")
     ]
-    worker = gui.SaveWorker(jobs, backup=True, sidecar_mode="all")
+    worker = gui.SaveWorker(jobs, options=SaveOptions(backup=True, sidecar_mode="all"))
     written: list[str] = []
 
     def fake_write(path: Path, *_a: object, **_k: object) -> bool:
@@ -5524,6 +5533,287 @@ def test_the_repair_toggle_lands_in_the_saved_settings(window: gui.MainWindow) -
     assert window._current_config_values().repair_language is False  # noqa: SLF001
 
 
+# ---------------------------------------------------------------------------
+# Copyright and credit
+# ---------------------------------------------------------------------------
+
+
+def _fill_copyright(
+    window: gui.MainWindow,
+    *,
+    artist: str = "Ada Lovelace",
+    notice: str = "Copyright (c) {year} {artist}",
+    rights: str = "",
+    marked: bool | None = True,
+) -> None:
+    """Type into the Copyright dialog's fields the way a user would."""
+    window._artist_field.setText(artist)  # noqa: SLF001
+    window._notice_field.setText(notice)  # noqa: SLF001
+    window._rights_field.setText(rights)  # noqa: SLF001
+    window._marked_box.setCurrentIndex(window._marked_box.findData(marked))  # noqa: SLF001
+
+
+def test_copyright_dialog_previews_the_resolved_tags(window: gui.MainWindow) -> None:
+    """Typing a template shows what it becomes, which is how a wrong one is caught."""
+    _fill_copyright(window, rights="© {year} {artist}")
+
+    preview = window._copyright_preview.toPlainText()  # noqa: SLF001
+    year = datetime.now(tz=UTC).astimezone().year
+    assert f"EXIF:Copyright = Copyright (c) {year} Ada Lovelace" in preview
+    assert f"XMP-dc:Rights = © {year} Ada Lovelace" in preview
+    assert "XMP-xmpRights:Marked = True" in preview
+
+
+def test_copyright_dialog_reports_a_template_it_cannot_fill(window: gui.MainWindow) -> None:
+    """A placeholder with nobody to fill it in says so, and nothing is written."""
+    _fill_copyright(window, artist="", notice="Copyright (c) {year} {artist}")
+
+    assert "--artist" in window._copyright_preview.toPlainText()  # noqa: SLF001
+    assert window._copyright_fields is None  # noqa: SLF001
+    assert not window._writes_copyright()  # noqa: SLF001
+
+
+def test_copyright_reaches_the_save_options_summary(window: gui.MainWindow) -> None:
+    """The Save button says the copyright is part of what it writes."""
+    assert "copyright" not in window._save_options_summary()  # noqa: SLF001
+
+    _fill_copyright(window)
+
+    assert "copyright" in window._save_options_summary()  # noqa: SLF001
+
+
+def test_save_writes_the_copyright_dated_by_the_photo(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single save stamps the credit, with the year read off that photo."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    captured = _capture_write(monkeypatch)
+    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2011))
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _fill_copyright(window)
+
+    window._save_current()  # noqa: SLF001
+
+    extra = captured["extra"]
+    assert extra["EXIF:Copyright"] == "Copyright (c) 2011 Ada Lovelace"  # type: ignore[index]
+    assert extra["XMP-dc:Creator"] == "Ada Lovelace"  # type: ignore[index]
+
+
+def test_save_reuses_a_capture_date_already_read(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A generated photo has its capture date in hand, so the save pays no second read."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    captured = _capture_write(monkeypatch)
+
+    def _refuse(*_a: object, **_k: object) -> dict[Path, int]:
+        message = "the capture date was already read"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(gui, "read_capture_years", _refuse)
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    window._items[str(img)].camera_info = {"EXIF:DateTimeOriginal": "2019:07:14 10:32:11"}  # noqa: SLF001
+    _fill_copyright(window)
+
+    window._save_current()  # noqa: SLF001
+
+    assert captured["extra"]["EXIF:Copyright"] == "Copyright (c) 2019 Ada Lovelace"  # type: ignore[index]
+
+
+def test_save_writes_nothing_extra_without_a_copyright(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The usual save is unchanged: no copyright configured, no extra tags."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    captured = _capture_write(monkeypatch)
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+
+    window._save_current()  # noqa: SLF001
+
+    assert captured["extra"] == {}
+
+
+def test_a_copyright_alone_is_enough_to_save(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With every generated field off, the save still stamps the credit rather than nagging."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    captured = _capture_write(monkeypatch)
+    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2025))
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _fill_copyright(window)
+    for action in (window._write_title, window._write_description, window._write_keywords):  # noqa: SLF001
+        action.setChecked(False)
+
+    window._save_current()  # noqa: SLF001
+
+    assert captured["title"] is None
+    assert captured["extra"]["EXIF:Artist"] == "Ada Lovelace"  # type: ignore[index]
+
+
+def test_save_worker_dates_each_photo_in_the_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The batch save reads every capture year once, then stamps each photo with its own."""
+    monkeypatch.setattr(gui, "managed_helper", lambda _et: nullcontext(None))
+    old, new = tmp_path / "old.jpg", tmp_path / "new.jpg"
+    reads: list[list[Path]] = []
+
+    def fake_years(paths: list[Path], **_kwargs: object) -> dict[Path, int]:
+        reads.append(list(paths))
+        return {old: 2011, new: 2025}
+
+    monkeypatch.setattr(gui, "read_capture_years", fake_years)
+    written: dict[str, object] = {}
+
+    def fake_write(path: Path, _keywords: object, **kwargs: object) -> bool:
+        written[path.name] = kwargs["extra"]
+        return True
+
+    monkeypatch.setattr(metadata, "write_metadata", fake_write)
+    fields, _error = build_copyright_fields(
+        artist="Ada",
+        notice="(c) {year} {artist}",
+        rights="",
+        marked=None,
+    )
+    jobs = [
+        SaveJob(path=path, keywords=KeywordSet(), title=None, description=None)
+        for path in (old, new)
+    ]
+
+    gui.SaveWorker(jobs, options=SaveOptions(extra_fields=fields)).run()
+
+    assert reads == [[old, new]]  # one batched read for the whole save
+    assert written["old.jpg"]["EXIF:Copyright"] == "(c) 2011 Ada"  # type: ignore[index]
+    assert written["new.jpg"]["EXIF:Copyright"] == "(c) 2025 Ada"  # type: ignore[index]
+
+
+def test_save_worker_skips_the_capture_read_without_a_copyright(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A save that writes no copyright costs exactly what it always did."""
+    monkeypatch.setattr(gui, "managed_helper", lambda _et: nullcontext(None))
+
+    def _refuse(*_a: object, **_k: object) -> dict[Path, int]:
+        message = "no copyright, no capture-date read"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(gui, "read_capture_years", _refuse)
+    monkeypatch.setattr(metadata, "write_metadata", lambda *_a, **_k: True)
+    jobs = [SaveJob(path=tmp_path / "a.jpg", keywords=KeywordSet(), title="T", description=None)]
+
+    gui.SaveWorker(jobs, options=SaveOptions()).run()
+
+
+def test_saving_settings_persists_the_copyright(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Save Settings as Defaults writes the [copyright] table CLI runs read too."""
+    config = tmp_path / "config.toml"
+    monkeypatch.setattr(gui, "user_config_path", lambda: config)
+    monkeypatch.setattr(gui, "find_config_file", lambda: None)
+    _fill_copyright(window, rights="© {year} {artist}")
+
+    window._save_config()  # noqa: SLF001
+
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    saved = tomllib.loads(config.read_text(encoding="utf-8"))["copyright"]
+    assert saved["artist"] == "Ada Lovelace"
+    assert saved["copyright_notice"] == "Copyright (c) {year} {artist}"
+    assert saved["rights"] == "© {year} {artist}"
+    assert saved["marked"] is True
+
+
+def test_copyright_fields_fill_the_dialog(window: gui.MainWindow) -> None:
+    """
+    The form grows its fields, whatever the platform style says.
+
+    QMacStyle leaves them at their size hint, which cut the notice field down to a couple of hundred
+    pixels and hid the example template it carries.
+    """
+    form = window._copyright_dialog.findChild(QFormLayout)  # noqa: SLF001
+    assert form is not None
+    assert form.fieldGrowthPolicy() == QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+
+
+def _copyright_button(window: gui.MainWindow, text: str) -> QPushButton:
+    """Find one of the Copyright dialog's Insert buttons by the text it types."""
+    buttons = window._copyright_dialog.findChildren(QPushButton)  # noqa: SLF001
+    return next(button for button in buttons if button.text() == text)
+
+
+def _focus_copyright(window: gui.MainWindow, field: QLineEdit) -> None:
+    """Put the keyboard cursor in one of the dialog's template fields."""
+    dialog = window._copyright_dialog  # noqa: SLF001
+    dialog.show()
+    dialog.activateWindow()
+    QApplication.processEvents()
+    field.setFocus()
+    QApplication.processEvents()
+
+
+def test_insert_buttons_build_a_notice_without_typing_it(window: gui.MainWindow) -> None:
+    """The three buttons cover the parts of a notice a keyboard makes awkward."""
+    _focus_copyright(window, window._notice_field)  # noqa: SLF001
+
+    _copyright_button(window, "©").click()
+    _copyright_button(window, "{year}").click()
+    _copyright_button(window, "{artist}").click()
+
+    assert window._notice_field.text() == "©{year}{artist}"  # noqa: SLF001
+    window._copyright_dialog.close()  # noqa: SLF001
+
+
+def test_insert_goes_to_the_field_holding_the_cursor(window: gui.MainWindow) -> None:
+    """A copyright sign belongs in XMP as often as in the notice, so the cursor decides."""
+    _focus_copyright(window, window._rights_field)  # noqa: SLF001
+
+    _copyright_button(window, "©").click()
+
+    assert window._rights_field.text() == "©"  # noqa: SLF001
+    assert window._notice_field.text() == ""  # noqa: SLF001
+    window._copyright_dialog.close()  # noqa: SLF001
+
+
+def test_insert_falls_back_to_the_notice_field(window: gui.MainWindow) -> None:
+    """With the cursor nowhere, the notice is the field a template belongs in."""
+    _copyright_button(window, "{year}").click()
+
+    assert window._notice_field.text() == "{year}"  # noqa: SLF001
+
+
+def test_insert_leaves_the_typing_where_it_was(window: gui.MainWindow) -> None:
+    """The button takes no focus, so the next keystroke still lands in the field."""
+    _focus_copyright(window, window._rights_field)  # noqa: SLF001
+
+    _copyright_button(window, "©").click()
+
+    assert QApplication.focusWidget() is window._rights_field  # noqa: SLF001
+    window._copyright_dialog.close()  # noqa: SLF001
+
+
 def test_select_by_status_isolates_the_mixed_script_photos(
     window: gui.MainWindow,
     tmp_path: Path,
@@ -5577,3 +5867,91 @@ def test_the_status_column_marks_a_mixed_script_photo(
     assert leaf is not None
     assert leaf.text(gui._COL_STATUS) == "ready ⚠"  # noqa: SLF001
     assert "陶笛" in leaf.toolTip(gui._COL_STATUS)  # noqa: SLF001
+
+
+def test_copyright_preview_grows_with_its_content(window: gui.MainWindow) -> None:
+    """
+    The preview is a box that fits its lines, not a label the dialog squeezes.
+
+    A label grew past the space the dialog gave it as fields were filled in, and its last tag line
+    was cut off mid-text.
+    """
+    preview = window._copyright_preview  # noqa: SLF001
+    _fill_copyright(window, artist="", notice="", marked=None)
+    short = preview.height()
+
+    _fill_copyright(window, rights="© {year} {artist}")
+
+    assert preview.height() > short
+    assert preview.toPlainText().splitlines()[-1].startswith("XMP-xmpRights:Marked")
+
+
+def test_copyright_preview_flags_a_notice_exif_cannot_promise(window: gui.MainWindow) -> None:
+    """A copyright sign in the EXIF notice is a bet on the reader, and the preview says so."""
+    _fill_copyright(window, notice="Copyright © {year} {artist}")
+
+    assert "EXIF:Copyright" in window._copyright_warning.text()  # noqa: SLF001
+    assert "Exif 3.0" in window._copyright_warning.text()  # noqa: SLF001
+
+
+def test_copyright_preview_stays_quiet_for_a_plain_notice(window: gui.MainWindow) -> None:
+    """The usual ASCII notice gets no warning, so the one above means something."""
+    _fill_copyright(window, notice="Copyright (c) {year} {artist}")
+
+    assert window._copyright_warning.text() == ""  # noqa: SLF001
+
+
+def test_write_copyright_toggle_skips_the_block(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchecking Write Copyright skips the credit without clearing what the dialog holds."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    captured = _capture_write(monkeypatch)
+    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2025))
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _fill_copyright(window)
+    window._write_copyright.setChecked(False)  # noqa: SLF001
+
+    window._save_current()  # noqa: SLF001
+
+    assert captured["extra"] == {}
+    # The dialog still holds it, ready for the next save.
+    assert window._notice_field.text() != ""  # noqa: SLF001
+
+
+def test_write_copyright_toggle_reaches_the_save_summary(window: gui.MainWindow) -> None:
+    """The Save button stops claiming a copyright it is no longer writing."""
+    _fill_copyright(window)
+    assert "copyright" in window._save_options_summary()  # noqa: SLF001
+
+    window._write_copyright.setChecked(False)  # noqa: SLF001
+
+    assert "copyright" not in window._save_options_summary()  # noqa: SLF001
+
+
+def test_write_copyright_is_grayed_out_until_there_is_one(window: gui.MainWindow) -> None:
+    """A toggle for something that cannot happen yet says so instead of looking like a choice."""
+    _fill_copyright(window, artist="", notice="", marked=None)
+    assert not window._write_copyright.isEnabled()  # noqa: SLF001
+    assert "Settings > Copyright" in window._write_copyright.toolTip()  # noqa: SLF001
+
+    _fill_copyright(window)
+
+    assert window._write_copyright.isEnabled()  # noqa: SLF001
+    assert window._write_copyright.isChecked()  # noqa: SLF001
+
+
+def test_a_copyright_alone_needs_its_toggle_on(window: gui.MainWindow) -> None:
+    """With every field off and the copyright skipped, a save would write nothing and says so."""
+    _fill_copyright(window)
+    for action in (window._write_title, window._write_description, window._write_keywords):  # noqa: SLF001
+        action.setChecked(False)
+    assert window._write_fields_chosen()  # noqa: SLF001
+
+    window._write_copyright.setChecked(False)  # noqa: SLF001
+
+    assert not window._write_fields_chosen()  # noqa: SLF001

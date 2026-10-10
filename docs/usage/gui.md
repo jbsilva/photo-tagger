@@ -353,6 +353,36 @@ the end of each generation instead, before you review them. **Tools > Harmonize 
 again after you have edited some keywords by hand. Zero (shown as `off`) treats every photo on its
 own.
 
+### Your copyright, on every save
+
+**Settings > Copyright...** holds the fields no model can guess: who took the photo, and who owns
+it. Fill in **Creator** and a **Copyright notice** and every save writes them, alongside whatever
+the model produced. It is the GUI's
+[`--artist` and `--copyright`](cli-reference.md#copyright-and-other-fields).
+
+A notice is a template. `{year}` becomes the year of the photo, and `{artist}` becomes the name
+above. One notice therefore dates a shoot from 2019 and one from last week correctly, in the same
+batch. The year is the photo's own capture date. A photo without one gets its file date instead.
+
+The panel under the fields lists the tags a save writes, and what each one says for a real year. A
+template with a typo in it is visible there before anything is written.
+
+The **Insert** row types the awkward parts for you: `©`, `{year}`, and `{artist}`. Each one lands in
+the field holding the cursor, and the buttons take no focus, so you can keep typing where you left
+off.
+
+**XMP rights** is the same notice for XMP alone, which is UTF-8 and carries a real `©`. EXIF types
+its copyright and artist fields as ASCII until Exif 3.0, so `(c)` is the safe spelling in the
+notice. The dialog says so in amber when a value needs more than ASCII, and writes it anyway: an
+accent in a name is not a mistake. Leave **XMP rights** empty to use the notice as it stands.
+**Rights flag** sets `XMP-xmpRights:Marked`, and *Leave as is* writes nothing at all.
+
+The save menu's **Write Copyright** turns the whole block off for a while without clearing the
+fields, and is grayed out until there is something to write. A save writes the copyright even when
+Title, Description, and Keywords are all unchecked. That is how you stamp photos you do not want
+re-tagged. The settings persist through *Save Settings as Defaults* into the config file's
+`[copyright]` table, so CLI runs credit your photos the same way.
+
 ### Build a vocabulary from your own library
 
 **Tools > Build Vocabulary...** writes the keyword file the strict vocabulary needs, out of the
