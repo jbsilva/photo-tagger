@@ -1922,15 +1922,15 @@ def test_batch_save_runs_in_the_background_with_progress(
 
     window._save_selected()  # noqa: SLF001
     assert window._save_thread is not None  # noqa: SLF001 - the writes happen off the UI thread
-    assert window._progress.maximum() == 2  # noqa: SLF001, PLR2004 - both photos
-    assert not window._timing.isHidden()  # noqa: SLF001
-    assert not window._generate_button.isEnabled()  # noqa: SLF001
-    assert not window._save_selected_button.isEnabled()  # noqa: SLF001
-    assert window._cancel_button.isEnabled()  # noqa: SLF001 - a long save is cancellable
+    assert window._run_bar._progress.maximum() == 2  # noqa: SLF001, PLR2004 - both photos
+    assert not window._run_bar._timing.isHidden()  # noqa: SLF001
+    assert not window._run_bar.generate_button.isEnabled()  # noqa: SLF001
+    assert not window._run_bar.save_button.isEnabled()  # noqa: SLF001
+    assert window._run_bar.cancel_button.isEnabled()  # noqa: SLF001 - a long save is cancellable
 
     _drain_save(window)
-    assert window._progress.isHidden()  # noqa: SLF001
-    assert window._save_selected_button.isEnabled()  # noqa: SLF001
+    assert window._run_bar._progress.isHidden()  # noqa: SLF001
+    assert window._run_bar.save_button.isEnabled()  # noqa: SLF001
     assert window._items[str(a)].status == SAVED  # noqa: SLF001
     assert window._items[str(b)].status == SAVED  # noqa: SLF001
     assert window._items[str(a)].known_fields == {FIELD_TITLE, FIELD_KEYWORDS}  # noqa: SLF001
@@ -2002,7 +2002,7 @@ def test_cancel_stops_a_running_save(
     window._save_selected()  # noqa: SLF001
     window._cancel_generation()  # noqa: SLF001
     assert window._cancelling  # noqa: SLF001
-    assert not window._cancel_button.isEnabled()  # noqa: SLF001
+    assert not window._run_bar.cancel_button.isEnabled()  # noqa: SLF001
     _drain_save(window)
 
 
@@ -3117,7 +3117,7 @@ def test_cancel_generation_stops_worker_and_disables_button(
     _stub_generation(monkeypatch)
     _add_dir(window, {"a": img})
     window._run_generation([window._items[str(img)]])  # noqa: SLF001
-    assert window._cancel_button.isEnabled()  # noqa: SLF001 - enabled while running
+    assert window._run_bar.cancel_button.isEnabled()  # noqa: SLF001 - enabled while running
 
     window._cancel_generation()  # noqa: SLF001
 
@@ -3125,7 +3125,7 @@ def test_cancel_generation_stops_worker_and_disables_button(
     assert worker is not None
     assert worker._stop is True  # noqa: SLF001
     assert window._cancelling is True  # noqa: SLF001
-    assert not window._cancel_button.isEnabled()  # noqa: SLF001
+    assert not window._run_bar.cancel_button.isEnabled()  # noqa: SLF001
     assert "Cancelling" in window._status.text()  # noqa: SLF001
     window._teardown_thread()  # noqa: SLF001 - join the worker thread the run started
 
@@ -3595,12 +3595,12 @@ def test_progress_bar_tracks_the_run(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_generation(monkeypatch)
     _add_dir(window, {"a": img})
-    assert window._progress.isHidden()  # noqa: SLF001 - idle: no bar
+    assert window._run_bar._progress.isHidden()  # noqa: SLF001 - idle: no bar
 
     window._run_generation([window._items[str(img)]])  # noqa: SLF001
-    assert not window._progress.isHidden()  # noqa: SLF001
-    assert window._progress.maximum() == 1  # noqa: SLF001
-    assert window._progress.value() == 0  # noqa: SLF001
+    assert not window._run_bar._progress.isHidden()  # noqa: SLF001
+    assert window._run_bar._progress.maximum() == 1  # noqa: SLF001
+    assert window._run_bar._progress.value() == 0  # noqa: SLF001
 
     window._on_file_done(  # noqa: SLF001
         Proposal(
@@ -3613,10 +3613,10 @@ def test_progress_bar_tracks_the_run(
             keywords=[],
         ),
     )
-    assert window._progress.value() == 1  # noqa: SLF001
+    assert window._run_bar._progress.value() == 1  # noqa: SLF001
 
     window._teardown_thread()  # noqa: SLF001 - join the worker thread the run started
-    assert window._progress.isHidden()  # noqa: SLF001
+    assert window._run_bar._progress.isHidden()  # noqa: SLF001
 
 
 def test_timing_readout_shows_elapsed_then_an_estimate(
@@ -3628,18 +3628,18 @@ def test_timing_readout_shows_elapsed_then_an_estimate(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_generation(monkeypatch)
     _add_dir(window, {"a": img})
-    assert window._timing.isHidden()  # noqa: SLF001 - idle: no clock
+    assert window._run_bar._timing.isHidden()  # noqa: SLF001 - idle: no clock
 
     window._run_generation([window._items[str(img)]])  # noqa: SLF001
-    assert not window._timing.isHidden()  # noqa: SLF001
+    assert not window._run_bar._timing.isHidden()  # noqa: SLF001
     # Backdate the start so the readout has something to show without a real wait.
-    window._run_started = time.monotonic() - 30  # noqa: SLF001
-    window._update_timing()  # noqa: SLF001
-    assert window._timing.text() == "0:30 elapsed"  # noqa: SLF001 - nothing finished yet
+    window._run_bar._started = time.monotonic() - 30  # noqa: SLF001
+    window._run_bar._update_timing()  # noqa: SLF001
+    assert window._run_bar._timing.text() == "0:30 elapsed"  # noqa: SLF001 - nothing finished yet
 
     window._teardown_thread()  # noqa: SLF001 - join the worker thread the run started
-    assert window._timing.isHidden()  # noqa: SLF001
-    assert window._run_started is None  # noqa: SLF001
+    assert window._run_bar._timing.isHidden()  # noqa: SLF001
+    assert window._run_bar._started is None  # noqa: SLF001
 
 
 def test_timing_readout_estimates_the_remaining_time_mid_run(
@@ -3647,19 +3647,19 @@ def test_timing_readout_estimates_the_remaining_time_mid_run(
     tmp_path: Path,
 ) -> None:
     """Once photos have finished, the readout extrapolates how long the rest will take."""
-    window._start_progress(4)  # noqa: SLF001
-    window._run_started = time.monotonic() - 60  # noqa: SLF001
-    window._progress.setValue(1)  # noqa: SLF001
-    window._update_timing()  # noqa: SLF001
-    assert window._timing.text() == "1:00 elapsed · 3:00 left"  # noqa: SLF001
-    window._stop_progress()  # noqa: SLF001
+    window._run_bar.start_clock(4)  # noqa: SLF001
+    window._run_bar._started = time.monotonic() - 60  # noqa: SLF001
+    window._run_bar._progress.setValue(1)  # noqa: SLF001
+    window._run_bar._update_timing()  # noqa: SLF001
+    assert window._run_bar._timing.text() == "1:00 elapsed · 3:00 left"  # noqa: SLF001
+    window._run_bar.stop_clock()  # noqa: SLF001
 
 
 def test_advance_progress_ignores_ticks_when_idle(window: gui.MainWindow) -> None:
     """A late signal from a torn-down run must not move a bar that belongs to nothing."""
-    before = window._progress.value()  # noqa: SLF001
-    window._advance_progress()  # noqa: SLF001
-    assert window._progress.value() == before  # noqa: SLF001
+    before = window._run_bar._progress.value()  # noqa: SLF001
+    window._run_bar.advance()  # noqa: SLF001
+    assert window._run_bar._progress.value() == before  # noqa: SLF001
 
 
 def test_details_disclosure_expands_and_collapses(window: gui.MainWindow) -> None:
@@ -3723,16 +3723,16 @@ def test_retry_button_enabled_only_with_failures(
     tmp_path: Path,
 ) -> None:
     """Retry failed starts disabled, lights up on a failure, and resets with the list."""
-    assert not window._retry_button.isEnabled()  # noqa: SLF001 - nothing failed yet
+    assert not window._run_bar.retry_button.isEnabled()  # noqa: SLF001 - nothing failed yet
     img = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": img})
-    assert not window._retry_button.isEnabled()  # noqa: SLF001
+    assert not window._run_bar.retry_button.isEnabled()  # noqa: SLF001
 
     window._on_file_failed(str(img), "boom")  # noqa: SLF001
-    assert window._retry_button.isEnabled()  # noqa: SLF001
+    assert window._run_bar.retry_button.isEnabled()  # noqa: SLF001
 
     window._clear()  # noqa: SLF001
-    assert not window._retry_button.isEnabled()  # noqa: SLF001
+    assert not window._run_bar.retry_button.isEnabled()  # noqa: SLF001
 
 
 def test_generate_menus_offer_one_time_skip_cache(
@@ -3752,7 +3752,7 @@ def test_generate_menus_offer_one_time_skip_cache(
         "_run_generation",
         lambda items, **kwargs: calls.append((len(items), kwargs.get("use_cache", True))),
     )
-    window._generate_menu.actions()[0].trigger()  # noqa: SLF001
+    window._run_bar.generate_menu.actions()[0].trigger()  # noqa: SLF001
     window._detail.generate_menu.actions()[0].trigger()  # noqa: SLF001
 
     assert calls == [(1, False), (1, False)]
@@ -3797,26 +3797,26 @@ def test_long_tooltips_are_wrapped_into_lines(window: gui.MainWindow) -> None:
 
 def test_save_tooltips_follow_the_chosen_options(window: gui.MainWindow) -> None:
     """Toggling a save option rewrites the Save buttons' current-options summary."""
-    assert "title, description, keywords" in _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
+    assert "title, description, keywords" in _unwrapped(window._run_bar.save_button.toolTip())  # noqa: SLF001
     assert "XMP sidecar" in _unwrapped(window._detail.save_button.toolTip())  # noqa: SLF001
 
     window._save_options_menu.write_description.setChecked(False)  # noqa: SLF001
     window._save_options_menu.sidecar_actions["none"].setChecked(True)  # noqa: SLF001
 
-    tip = _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
+    tip = _unwrapped(window._run_bar.save_button.toolTip())  # noqa: SLF001
     assert "title, keywords" in tip
     assert "into the image file" in tip
     assert "keeping a *_original backup" in tip
 
     window._save_options_menu.sidecar_actions["raw"].setChecked(True)  # noqa: SLF001
-    assert "to a sidecar for RAW" in _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
+    assert "to a sidecar for RAW" in _unwrapped(window._run_bar.save_button.toolTip())  # noqa: SLF001
 
     window._save_options_menu.sidecar_actions["both"].setChecked(True)  # noqa: SLF001
-    tip = _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
+    tip = _unwrapped(window._run_bar.save_button.toolTip())  # noqa: SLF001
     assert "into the image file and an XMP sidecar" in tip
 
     window._save_options_menu.backup.setChecked(False)  # noqa: SLF001
-    assert "with no *_original backup" in _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
+    assert "with no *_original backup" in _unwrapped(window._run_bar.save_button.toolTip())  # noqa: SLF001
 
 
 def test_grid_checkbox_unchecks_photo_and_tree(
@@ -5153,11 +5153,11 @@ def test_both_generate_menus_hold_the_one_set_of_save_options(
 ) -> None:
     """A button that writes has to show what it writes with, not point at the other button."""
     options = window._save_options_menu  # noqa: SLF001
-    for menu in (window._generate_menu, window._detail.generate_menu):  # noqa: SLF001
+    for menu in (window._run_bar.generate_menu, window._detail.generate_menu):  # noqa: SLF001
         assert options.menuAction() in menu.actions()
     # The very same menu, so a field unchecked here is unchecked for every save there is.
     assert window._detail.save_button.menu() is options  # noqa: SLF001
-    assert window._save_selected_button.menu() is options  # noqa: SLF001
+    assert window._run_bar.save_button.menu() is options  # noqa: SLF001
     assert options.title() == "Save Options"
 
 
@@ -5168,7 +5168,7 @@ def test_the_generate_tooltip_names_what_a_chained_save_writes(
     window._autosave_action.setChecked(True)  # noqa: SLF001
     window._save_options_menu.write_description.setChecked(False)  # noqa: SLF001
 
-    tip = _unwrapped(window._generate_button.toolTip())  # noqa: SLF001
+    tip = _unwrapped(window._run_bar.generate_button.toolTip())  # noqa: SLF001
 
     assert "as Save Selected would" in tip
     assert "Currently writes title, keywords" in tip
@@ -5179,19 +5179,19 @@ def test_the_toggle_renames_both_generate_buttons(
     window: gui.MainWindow,
 ) -> None:
     """A button that is about to write has to say so before it is pressed."""
-    assert window._generate_button.text() == "Generate Selected"  # noqa: SLF001
+    assert window._run_bar.generate_button.text() == "Generate Selected"  # noqa: SLF001
     assert window._detail.generate_button.text() == "Generate This Photo"  # noqa: SLF001
 
     window._autosave_action.setChecked(True)  # noqa: SLF001
 
-    assert window._generate_button.text() == "Generate and Save Selected"  # noqa: SLF001
+    assert window._run_bar.generate_button.text() == "Generate and Save Selected"  # noqa: SLF001
     assert window._detail.generate_button.text() == "Generate and Save This Photo"  # noqa: SLF001
     # And the tooltip spells out what that write covers, the way the Save buttons do.
-    assert "keywords" in window._generate_button.toolTip()  # noqa: SLF001
+    assert "keywords" in window._run_bar.generate_button.toolTip()  # noqa: SLF001
 
     window._autosave_action.setChecked(False)  # noqa: SLF001
 
-    assert window._generate_button.text() == "Generate Selected"  # noqa: SLF001
+    assert window._run_bar.generate_button.text() == "Generate Selected"  # noqa: SLF001
 
 
 def test_turning_the_toggle_on_with_nothing_to_write_says_so(
@@ -5450,7 +5450,7 @@ def test_a_window_built_from_that_config_comes_up_ready_to_write(
     win = gui.MainWindow()
     try:
         assert win._autosave_action.isChecked() is True  # noqa: SLF001
-        assert win._generate_button.text() == "Generate and Save Selected"  # noqa: SLF001
+        assert win._run_bar.generate_button.text() == "Generate and Save Selected"  # noqa: SLF001
     finally:
         win.close()
 
@@ -7237,14 +7237,14 @@ def test_cancel_during_the_pause_ends_the_chain(window: gui.MainWindow) -> None:
     """Cancel between the chain's steps runs no pass and no save, and frees the buttons."""
     window._pending_pass = "failed"  # noqa: SLF001
     window._hold_for_chain()  # noqa: SLF001
-    assert not window._generate_button.isEnabled()  # noqa: SLF001
-    assert window._cancel_button.isEnabled()  # noqa: SLF001
+    assert not window._run_bar.generate_button.isEnabled()  # noqa: SLF001
+    assert window._run_bar.cancel_button.isEnabled()  # noqa: SLF001
 
     window._cancel_generation()  # noqa: SLF001
 
     assert window._pending_pass is None  # noqa: SLF001
     assert window._busy() is False  # noqa: SLF001
-    assert window._generate_button.isEnabled()  # noqa: SLF001
+    assert window._run_bar.generate_button.isEnabled()  # noqa: SLF001
     window._run_pending_pass()  # noqa: SLF001 - the timer firing later changes nothing
     assert window._busy() is False  # noqa: SLF001
 

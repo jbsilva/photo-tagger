@@ -84,6 +84,7 @@ from photo_tagger.gui.folder_grid import FolderGrid
 from photo_tagger.gui.keyword_rules import KeywordRulesDialog
 from photo_tagger.gui.pacing import PacingDialog
 from photo_tagger.gui.photo_tree import PhotoTree
+from photo_tagger.gui.run_bar import RunBar
 from photo_tagger.gui.save_options import SaveOptionsMenu
 from photo_tagger.gui.settings_menu import SettingsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
@@ -163,7 +164,6 @@ from photo_tagger.gui_state import (
     photos_for_pass,
     photos_to_save,
     photos_to_write,
-    progress_timing_text,
     record_dropped_terms,
     reports_status,
     resolve_extra_tags,
@@ -226,10 +226,6 @@ if TYPE_CHECKING:
 # a first-pass failure usually means the model server is overloaded or mid-restart, and asking
 # again straight away just retries into the same outage.
 _RETRY_PASS_DELAY_MS = 5000
-
-# How often the elapsed/remaining readout is repainted during a run. Half a second reads as a live
-# clock without being busywork.
-_TIMING_TICK_MS = 500
 
 _PAGE_EMPTY = 0  # right-pane stack index for the idle "add or pick a photo" placeholder
 _PAGE_DETAIL = 1  # right-pane stack index for one photo's detail
@@ -449,7 +445,7 @@ class MainWindow(QMainWindow):
         # Start with the left pane wide enough for all four tree columns.
         splitter.setSizes([500, 680])
         layout.addWidget(splitter, stretch=1)
-        layout.addLayout(self._build_bottom_bar())
+        layout.addWidget(self._build_run_bar())
         # Connected once the bottom bar exists, since the status line lives there.
         self._connection_bar.status.connect(self._status.setText)
         self._connection_bar.used.connect(self._count)
@@ -524,8 +520,6 @@ class MainWindow(QMainWindow):
         self._save_journal: UndoJournal | None = None
         # The one journal every photo-by-photo save of this session shares, opened on the first.
         self._session_journal: UndoJournal | None = None
-        # When the run in flight started, for the elapsed/remaining readout. None while idle.
-        self._run_started: float | None = None
         self._scan_thread: QThread | None = None
         self._scan_worker: MetadataScanWorker | None = None
         # The "Uncheck Already Tagged" pick waiting for the scan to cover every photo, and whether
@@ -1584,7 +1578,7 @@ class MainWindow(QMainWindow):
                 summary=summary,
             ),
         )
-        self._save_selected_button.setToolTip(
+        self._run_bar.save_button.setToolTip(
             tooltip(
                 "Write the checked photos that have a generated proposal. With a copyright set, "
                 "also stamp it on the other checked photos, leaving their text alone. {summary} "
@@ -1627,8 +1621,10 @@ class MainWindow(QMainWindow):
     def _refresh_generate_labels(self) -> None:
         """Keep both Generate buttons saying whether the run writes when it is done, and what."""
         if not self._autosave_action.isChecked():
-            self._generate_button.setText(_("Generate Selected"))
-            self._generate_button.setToolTip(tooltip("Run the model on the checked photos."))
+            self._run_bar.generate_button.setText(_("Generate Selected"))
+            self._run_bar.generate_button.setToolTip(
+                tooltip("Run the model on the checked photos."),
+            )
             self._detail.generate_button.setText(_("Generate This Photo"))
             self._detail.generate_button.setToolTip(
                 tooltip(
@@ -1637,8 +1633,8 @@ class MainWindow(QMainWindow):
             )
             return
         summary = _("Currently writes {options}.").format(options=self._save_options_summary())
-        self._generate_button.setText(_("Generate and Save Selected"))
-        self._generate_button.setToolTip(
+        self._run_bar.generate_button.setText(_("Generate and Save Selected"))
+        self._run_bar.generate_button.setToolTip(
             tooltip(
                 "Run the model on the checked photos, then write them with no review, exactly as "
                 "Save Selected would. {summary} Change that under Save Options, in this button's "
@@ -1656,86 +1652,20 @@ class MainWindow(QMainWindow):
             ),
         )
 
-    def _build_bottom_bar(self) -> QHBoxLayout:
-        """Status on the left; the batch workflow (generate, then save) on the right."""
-        self._status = QLabel(_("Drag photos or folders here to begin."))
-        self._status.setObjectName("status")
-        self._progress = QProgressBar()
-        self._progress.setMaximumWidth(220)
-        self._progress.setFormat("%v / %m")
-        self._progress.setVisible(False)
-        # Elapsed time (and, once a photo has finished, the estimate of what is left) beside the
-        # bar. A long save used to show nothing at all, which looks like the app hung.
-        self._timing = QLabel()
-        self._timing.setObjectName("timing")
-        self._timing.setVisible(False)
-        # Repaints the readout between photos so the clock keeps moving during a slow one.
-        self._timing_timer = QTimer(self)
-        self._timing_timer.setInterval(_TIMING_TICK_MS)
-        self._timing_timer.timeout.connect(self._update_timing)
-
-        self._retry_button = QPushButton(_("Retry Failed"))
-        self._retry_button.setToolTip(
-            tooltip(
-                "Re-run the model on every photo that failed to generate. Enabled once a photo "
-                "has actually failed.",
-            ),
+    def _build_run_bar(self) -> RunBar:
+        """Build the bar under the panes: the status line, then the batch generate and save."""
+        bar = self._run_bar = RunBar(
+            self,
+            save_options_menu=self._save_options_menu,
+            autosave_action=self._autosave_action,
         )
-        self._retry_button.setEnabled(False)
-        self._retry_button.clicked.connect(self._retry_failed)
-        self._cancel_button = QPushButton(_("Cancel"))
-        self._cancel_button.setToolTip(
-            tooltip(
-                "Stop the run in progress, generating or saving. The photo currently in flight "
-                "finishes; the rest are left untouched so you can resume them later.",
-            ),
-        )
-        self._cancel_button.setEnabled(False)
-        self._cancel_button.clicked.connect(self._cancel_generation)
-
-        # A split button: a click generates normally (cache included); the arrow offers the
-        # one-time skip-cache run without changing the Settings toggle.
-        self._generate_button = QToolButton()
-        self._generate_button.setObjectName("primarysplit")
-        self._generate_button.setText(_("Generate Selected"))
-        self._generate_button.setToolTip(tooltip("Run the model on the checked photos."))
-        self._generate_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._generate_button.clicked.connect(
-            lambda: self._generate(),  # noqa: PLW0108  # drop Qt's clicked(checked) arg
-        )
-        # Kept on self: Qt's menu() accessor returns a transient wrapper shiboken may delete.
-        self._generate_menu = QMenu(self)
-        self._generate_menu.setToolTipsVisible(True)
-        skip_all = self._generate_menu.addAction(
-            _("Generate Selected (Skip Cache)"),
-            lambda: self._generate(use_cache=False),
-        )
-        skip_all.setToolTip(
-            tooltip("One-time: call the model even for photos with cached results."),
-        )
-        self._generate_menu.addSeparator()
-        self._generate_menu.addAction(self._autosave_action)
-        self._generate_menu.addMenu(self._save_options_menu)
-        self._generate_button.setMenu(self._generate_menu)
-
-        self._save_selected_button = QToolButton()
-        self._save_selected_button.setObjectName("primarysplit")
-        self._save_selected_button.setText(_("Save Selected"))
-        self._save_selected_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._save_selected_button.clicked.connect(
-            lambda: self._save_selected(),  # noqa: PLW0108  # drop Qt's clicked(checked) arg
-        )
-        self._save_selected_button.setMenu(self._save_options_menu)
-
-        row = QHBoxLayout()
-        row.addWidget(self._status, stretch=1)
-        row.addWidget(self._timing)
-        row.addWidget(self._progress)
-        row.addWidget(self._retry_button)
-        row.addWidget(self._cancel_button)
-        row.addWidget(self._generate_button)
-        row.addWidget(self._save_selected_button)
-        return row
+        # The window's one status line, which everything it has to say is written to.
+        self._status = bar.status
+        bar.generate_requested.connect(lambda use_cache: self._generate(use_cache=use_cache))
+        bar.save_requested.connect(self._save_selected)
+        bar.retry_requested.connect(self._retry_failed)
+        bar.cancel_requested.connect(self._cancel_generation)
+        return bar
 
     # --- drag and drop ---------------------------------------------------------------------
 
@@ -1880,7 +1810,7 @@ class MainWindow(QMainWindow):
         self._rebuild_tree()
         self._show_empty()
         self._status.setText(_("Drag photos or folders here to begin."))
-        self._retry_button.setEnabled(False)
+        self._run_bar.retry_button.setEnabled(False)
 
     def _deselect(self, paths: set[Path]) -> int:
         """Uncheck the matched photos and refresh the tree; return how many changed."""
@@ -2472,7 +2402,7 @@ class MainWindow(QMainWindow):
         self._usage.saved(item, ok=ok, now=time.monotonic(), stamp_only=stamp_only, kept=kept)
         self._apply_write_result(item, job, ok=ok)
         self._saved_ok += int(ok)
-        self._advance_progress()
+        self._run_bar.advance()
         self._update_status()
 
     def _on_save_finished(self) -> None:
@@ -2654,7 +2584,7 @@ class MainWindow(QMainWindow):
         record_dropped_terms(self._vocabulary_dropped, proposal.vocabulary_dropped)
         self._usage.generated(str(item.path), proposal)
         self._refresh_status_cell(item)
-        self._advance_progress()
+        self._run_bar.advance()
         if self._current is item:
             self._show_item(item)
         self._update_status()
@@ -2674,7 +2604,7 @@ class MainWindow(QMainWindow):
         item.status = FAILED
         item.error = message
         self._refresh_status_cell(item)
-        self._advance_progress()
+        self._run_bar.advance()
         if self._current is item:
             self._detail.update_error(item)
         self._update_status()
@@ -2692,14 +2622,14 @@ class MainWindow(QMainWindow):
                 # Between the chain's steps: nothing to stop mid-photo, so end it at the next step.
                 self._count("cancel")
                 self._chain_cancelled = True
-                self._cancel_button.setEnabled(False)
+                self._run_bar.cancel_button.setEnabled(False)
                 if self._harmonize_thread is None:
                     self._end_chain()
             return
         self._count("cancel")
         self._cancelling = True
         worker.stop()
-        self._cancel_button.setEnabled(False)
+        self._run_bar.cancel_button.setEnabled(False)
         self._status.setText(_("Cancelling after the current photo finishes..."))
 
     def _on_generate_finished(self) -> None:
@@ -2781,16 +2711,16 @@ class MainWindow(QMainWindow):
         end the chain there.
         """
         for button in (
-            self._generate_button,
+            self._run_bar.generate_button,
             self._detail.generate_button,
             self._detail.save_button,
-            self._save_selected_button,
-            self._retry_button,
+            self._run_bar.save_button,
+            self._run_bar.retry_button,
         ):
             button.setEnabled(False)
         self._connection_bar.set_testable(enabled=False)
         self._harmonize_action.setEnabled(False)
-        self._cancel_button.setEnabled(True)
+        self._run_bar.cancel_button.setEnabled(True)
 
     def _end_chain(self) -> None:
         """Close a chain that Cancel stopped between its steps: no pass, and no chained save."""
@@ -2930,62 +2860,19 @@ class MainWindow(QMainWindow):
 
     def _set_running(self, *, running: bool, total: int = 0) -> None:
         """Switch the window between idle and busy: buttons, progress bar, and the clock."""
-        self._generate_button.setEnabled(not running)
+        self._run_bar.generate_button.setEnabled(not running)
         self._detail.generate_button.setEnabled(not running)
         self._detail.save_button.setEnabled(not running)
-        self._save_selected_button.setEnabled(not running)
-        self._retry_button.setEnabled(not running and self._has_failures())
+        self._run_bar.save_button.setEnabled(not running)
+        self._run_bar.retry_button.setEnabled(not running and self._has_failures())
         self._connection_bar.set_testable(enabled=not running)
-        self._cancel_button.setEnabled(running)
+        self._run_bar.cancel_button.setEnabled(running)
         # Harmonizing rewrites the proposals a run is still producing, so it waits its turn.
         self._harmonize_action.setEnabled(not running)
         if running:
-            self._start_progress(total)
+            self._run_bar.start_clock(total)
         else:
-            self._stop_progress()
-
-    def _start_progress(self, total: int) -> None:
-        """Show the bar and start the clock for a run over *total* photos."""
-        self._progress.setRange(0, total)
-        self._progress.setValue(0)
-        self._progress.setVisible(True)
-        self._run_started = time.monotonic()
-        self._timing.setVisible(True)
-        self._update_timing()
-        self._timing_timer.start()
-
-    def _stop_progress(self) -> None:
-        """Hide the bar and the clock; the run is over."""
-        self._timing_timer.stop()
-        self._run_started = None
-        self._progress.setVisible(False)
-        self._timing.setVisible(False)
-        self._timing.clear()
-
-    def _update_timing(self) -> None:
-        """
-        Repaint the elapsed/remaining readout from the progress bar's own counters.
-
-        Driven by a timer as well as by each finished photo, so the elapsed time keeps moving while
-        a single slow photo is in flight. That movement is the point: it is what tells the user the
-        program is working rather than wedged.
-        """
-        if self._run_started is None:
-            return
-        self._timing.setText(
-            progress_timing_text(
-                self._progress.value(),
-                self._progress.maximum(),
-                time.monotonic() - self._run_started,
-            ),
-        )
-
-    def _advance_progress(self) -> None:
-        """Tick the run progress bar for one finished (or failed) photo."""
-        if self._run_started is None:
-            return
-        self._progress.setValue(self._progress.value() + 1)
-        self._update_timing()
+            self._run_bar.stop_clock()
 
     def _teardown_thread(self) -> None:
         # deleteLater releases the C++ side of the thread and the (parentless, moved) worker;
@@ -3306,7 +3193,7 @@ class MainWindow(QMainWindow):
             self._status.setText(summary)
         # Retry only makes sense when something actually failed (and no run is in flight).
         if self._thread is None and self._save_thread is None:
-            self._retry_button.setEnabled(self._has_failures())
+            self._run_bar.retry_button.setEnabled(self._has_failures())
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override.
         """
