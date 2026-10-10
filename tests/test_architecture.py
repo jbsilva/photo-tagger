@@ -8,7 +8,19 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "src" / "photo_tagger"
 # The frontends: the core may not import them, so they are left out of its contract on purpose.
-FRONTENDS = {"cli_options", "cli_reports", "cli_telemetry", "gui", "main"}
+FRONTENDS = {
+    "cli_fields",
+    "cli_options",
+    "cli_reports",
+    "cli_run",
+    "cli_tag",
+    "cli_telemetry",
+    "cli_undo",
+    "cli_vocabulary",
+    "cli_watch",
+    "gui",
+    "main",
+}
 
 
 def _contracts() -> dict[str, dict[str, object]]:
@@ -50,3 +62,16 @@ def test_the_architecture_page_lists_every_module() -> None:
     rows = set(re.findall(r"^\| \[`(\w+)(?:\.py|/)`\]", page, re.MULTILINE))
 
     assert rows == _modules()
+
+
+def test_the_frontend_contracts_cover_every_cli_module() -> None:
+    """The CLI and the GUI stay apart only if every CLI module is on both lists."""
+    cli = FRONTENDS - {"gui"}
+    to_gui = _contracts()["The CLI does not import the GUI"]
+    from_gui = _contracts()["The GUI does not import the CLI"]
+
+    assert _listed(to_gui) == cli
+    forbidden = from_gui["forbidden_modules"]
+    assert isinstance(forbidden, list)
+    # The GUI reads its defaults from the option schema, so that one module is shared.
+    assert {str(name).removeprefix("photo_tagger.") for name in forbidden} == cli - {"cli_options"}

@@ -160,15 +160,15 @@ reports `source`, `keywords_read`, `keywords_kept`, and `keywords_dropped`. `doc
 
 ### Crash
 
-| Field              | Example                                                    | What it is                                                                    |
-| ------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `exception_type`   | `KeyError`                                                 | The class of the error, never its message.                                    |
-| `exception_module` | `builtins`                                                 | The module that defines that class.                                           |
-| `exception_chain`  | `FieldError<KeyError`                                      | The error and the errors that caused it, the outermost first.                 |
-| `crash_location`   | `pipeline:run_batch:714`                                   | The deepest photo-tagger code location.                                       |
-| `crash_frames`     | `main:tag:1400>...`                                        | The last few photo-tagger code locations.                                     |
-| `crash_stack`      | `photo_tagger.main:tag:1400>...>pydantic_ai.agent:run:512` | The stack trace: each frame as module, function, and line, at most 40 frames. |
-| `libraries`        | `openai=2.1.0,pydantic=2.13.5`                             | The versions of the libraries that crashes most often come from.              |
+| Field              | Example                                                      | What it is                                                                    |
+| ------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `exception_type`   | `KeyError`                                                   | The class of the error, never its message.                                    |
+| `exception_module` | `builtins`                                                   | The module that defines that class.                                           |
+| `exception_chain`  | `FieldError<KeyError`                                        | The error and the errors that caused it, the outermost first.                 |
+| `crash_location`   | `pipeline:run_batch:714`                                     | The deepest photo-tagger code location.                                       |
+| `crash_frames`     | `main:tag:1400>...`                                          | The last few photo-tagger code locations.                                     |
+| `crash_stack`      | `photo_tagger.cli_tag:tag:190>...>pydantic_ai.agent:run:512` | The stack trace: each frame as module, function, and line, at most 40 frames. |
+| `libraries`        | `openai=2.1.0,pydantic=2.13.5`                               | The versions of the libraries that crashes most often come from.              |
 
 The stack trace names library frames too, but only by module name. A frame outside the installed
 packages and the Python library shows as `?`, so a folder name never gets into the report. A crash

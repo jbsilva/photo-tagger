@@ -1,5 +1,5 @@
 """
-End-to-end wiring tests for the cyclopts CLI in photo_tagger.main.
+End-to-end wiring tests for the cyclopts CLI: main and the command modules it registers.
 
 The agent (network calls) and pipeline (long-running work) are mocked; the goal is to prove that
 flag values reach the right collaborators with the right shape, and that the short-circuit / skip
@@ -20,8 +20,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from photo_tagger import (
+    cli_fields,
+    cli_options,
     cli_reports,
+    cli_run,
     cli_telemetry,
+    cli_vocabulary,
+    cli_watch,
+    config_file,
     diagnostics,
     main as main_module,
     telemetry,
@@ -87,9 +93,9 @@ def _patches(captured: dict[str, Any]) -> Any:  # noqa: ANN401 - context manager
         return None
 
     return (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=fake_run_batch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=fake_run_batch),
     )
 
 
@@ -369,9 +375,9 @@ def test_cli_csv_file_writes_streamed_report(tmp_path: Path) -> None:
         return None
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=fake_run_batch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=fake_run_batch),
     ):
         _run_app(["--input", str(image), "--csv-file", str(csv_path)])
 
@@ -395,9 +401,9 @@ def test_cli_csv_file_installs_csv_sink_and_writes_header(tmp_path: Path) -> Non
         kwargs["on_image_result"](_rich_outcome(image))
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=fake_run_batch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=fake_run_batch),
     ):
         _run_app(["--input", str(image), "--csv-file", str(csv_path)])
 
@@ -511,7 +517,7 @@ def test_parse_filter_date_treats_naive_as_local_time() -> None:
     """A naive ISO date attaches the system local zone, not UTC."""
     from datetime import datetime  # noqa: PLC0415 - test-local import.
 
-    parsed = main_module._parse_filter_date("2024-01-01T00:00:00", flag="--newer-than")  # noqa: SLF001
+    parsed = cli_run.parse_filter_date("2024-01-01T00:00:00", flag="--newer-than")
     assert parsed is not None
     assert parsed.tzinfo is not None
     # Wall-clock fields are preserved verbatim: the user wrote midnight local.
@@ -526,7 +532,7 @@ def test_parse_filter_date_treats_naive_as_local_time() -> None:
 
 def test_parse_filter_date_preserves_explicit_timezone() -> None:
     """An ISO string that already carries a timezone is passed through unchanged."""
-    parsed = main_module._parse_filter_date("2024-01-01T00:00:00+00:00", flag="--newer-than")  # noqa: SLF001
+    parsed = cli_run.parse_filter_date("2024-01-01T00:00:00+00:00", flag="--newer-than")
     assert parsed is not None
     offset = parsed.utcoffset()
     assert offset is not None
@@ -535,7 +541,7 @@ def test_parse_filter_date_preserves_explicit_timezone() -> None:
 
 def test_parse_filter_date_returns_none_for_none() -> None:
     """Passing None short-circuits without raising."""
-    assert main_module._parse_filter_date(None, flag="--newer-than") is None  # noqa: SLF001
+    assert cli_run.parse_filter_date(None, flag="--newer-than") is None
 
 
 def test_cli_skips_cache_when_open_fails(tmp_path: Path) -> None:
@@ -580,7 +586,7 @@ def test_cli_cache_file_opened_is_passed_and_closed(tmp_path: Path) -> None:
         setup,
         create_agent,
         run_batch,
-        patch.object(main_module, "open_cache", spying_open_cache),
+        patch.object(cli_run, "open_cache", spying_open_cache),
     ):
         _run_app(["--input", str(image), "--cache-file", str(cache_path)])
 
@@ -628,10 +634,10 @@ def test_cli_closes_the_cache_when_building_the_run_fails(tmp_path: Path) -> Non
     cache = MagicMock()
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "open_cache", return_value=cache),
-        patch.object(main_module, "open_journal", side_effect=OSError("no state dir")),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "open_cache", return_value=cache),
+        patch.object(cli_run, "open_journal", side_effect=OSError("no state dir")),
         pytest.raises(OSError, match="no state dir"),
     ):
         main_module.app(["--input", str(image), "--cache-file", str(tmp_path / "c.sqlite")])
@@ -708,8 +714,8 @@ def test_watch_takes_the_lock_file_too(tmp_path: Path) -> None:
     lock_path = tmp_path / "run.lock"
     with (
         FileLock(lock_path),
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "_watch_forever", side_effect=AssertionError("no watch")),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_watch, "_watch_forever", side_effect=AssertionError("no watch")),
         pytest.raises(SystemExit) as exc_info,
     ):
         main_module.app(["watch", str(tmp_path), "--lock-file", str(lock_path)])
@@ -732,7 +738,7 @@ def test_cli_log_setup_failure_exits_cleanly(
     image = _make_jpeg(tmp_path / "img.cr3")
 
     with (
-        patch.object(main_module, "setup_logging", side_effect=OSError("disk full")),
+        patch.object(cli_run, "setup_logging", side_effect=OSError("disk full")),
         pytest.raises(SystemExit) as exc_info,
     ):
         main_module.app(["--input", str(image)])
@@ -756,7 +762,7 @@ def test_cli_otel_without_an_endpoint_exits_before_tagging(
         monkeypatch.delenv(name, raising=False)
 
     with (
-        patch.object(main_module, "create_agent") as agent_mock,
+        patch.object(cli_run, "create_agent") as agent_mock,
         pytest.raises(SystemExit) as exc_info,
     ):
         main_module.app(["--input", str(image), "--otel", "--log-folder", str(tmp_path / "logs")])
@@ -776,7 +782,7 @@ def test_cli_lock_file_open_failure_exits(tmp_path: Path) -> None:
         setup,
         create_agent,
         run_batch,
-        patch.object(main_module, "FileLock", side_effect=OSError("disk full")),
+        patch.object(cli_run, "FileLock", side_effect=OSError("disk full")),
         pytest.raises(SystemExit),
     ):
         main_module.app(["--input", str(image), "--lock-file", str(lock_path)])
@@ -843,7 +849,7 @@ def test_cli_summary_file_creates_missing_parent_dir(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _read_prompt_file edge cases
+# read_prompt_file edge cases
 # ---------------------------------------------------------------------------
 
 
@@ -852,21 +858,21 @@ def test_read_prompt_file_exits_on_empty_file(tmp_path: Path) -> None:
     prompt = tmp_path / "prompt.txt"
     prompt.write_text("   \n  ", encoding="utf-8")
     with pytest.raises(SystemExit):
-        main_module._read_prompt_file(prompt)  # noqa: SLF001
+        cli_run.read_prompt_file(prompt)
 
 
 def test_read_prompt_file_exits_on_read_error(tmp_path: Path) -> None:
     """An unreadable prompt file triggers SystemExit."""
     prompt = tmp_path / "missing.txt"
     with pytest.raises(SystemExit):
-        main_module._read_prompt_file(prompt)  # noqa: SLF001
+        cli_run.read_prompt_file(prompt)
 
 
 def test_read_prompt_file_returns_default_when_none() -> None:
     """Passing None returns the built-in default prompt."""
     from photo_tagger.config import DEFAULT_USER_PROMPT  # noqa: PLC0415
 
-    assert main_module._read_prompt_file(None) == DEFAULT_USER_PROMPT  # noqa: SLF001
+    assert cli_run.read_prompt_file(None) == DEFAULT_USER_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -1014,9 +1020,9 @@ def test_cli_emits_telemetry_on_completion(tmp_path: Path) -> None:
         emitted["block"] = block
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=_run_batch_firing_complete),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=_run_batch_firing_complete),
         patch.object(telemetry, "emit", side_effect=fake_emit),
     ):
         _run_app(["--input", str(image), "--provider", "ollama", "--model", "my-vlm"])
@@ -1041,9 +1047,9 @@ def test_cli_no_telemetry_flag_disables_and_silences_notice(
         emitted["enabled"] = enabled
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=_run_batch_firing_complete),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=_run_batch_firing_complete),
         patch.object(telemetry, "emit", side_effect=fake_emit),
     ):
         _run_app(["--input", str(image), "--no-telemetry"])
@@ -1088,10 +1094,10 @@ def _run_with_notify(tmp_path: Path, args: list[str], totals: BatchTotals) -> di
         raised.update(kwargs)
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=fake_run_batch),
-        patch.object(main_module, "notify", side_effect=fake_notify),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=fake_run_batch),
+        patch.object(cli_run, "notify", side_effect=fake_notify),
     ):
         _run_app(["--input", str(image), *args])
     return raised
@@ -1455,9 +1461,9 @@ def test_main_reports_unhandled_crashes_and_re_raises(tmp_path: Path) -> None:
         crashes.append({"exc": exc, **kwargs})
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=RuntimeError("boom")),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=RuntimeError("boom")),
         patch.object(telemetry, "emit_crash", side_effect=fake_emit_crash),
         pytest.raises(RuntimeError, match="boom"),
     ):
@@ -1480,8 +1486,8 @@ def test_a_first_run_crash_shows_the_notice_before_its_beacon(
         notice_before_send.append(not telemetry.notice_due())
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", side_effect=RuntimeError("boom")),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", side_effect=RuntimeError("boom")),
         patch.object(telemetry, "emit_crash", side_effect=fake_emit_crash),
         pytest.raises(RuntimeError, match="boom"),
     ):
@@ -1561,22 +1567,24 @@ def test_load_defaults_reads_exiftool_path() -> None:
     assert load_defaults({}).exiftool_path is None
 
 
-def test_apply_exiftool_path_bridges_to_env_without_overriding(
+def test_export_exiftool_path_bridges_to_env_without_overriding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fill an unset env var from config; never override an exported one; no-op on None."""
+    """Fill an unset env var from config; never override an exported one; no-op when unset."""
     import os  # noqa: PLC0415 - test-local
 
+    monkeypatch.setattr(config_file, "configured_exiftool_path", lambda: "/cfg/exiftool")
     monkeypatch.delenv("PHOTO_TAGGER_EXIFTOOL", raising=False)
-    main_module._apply_exiftool_path("/cfg/exiftool")  # noqa: SLF001
+    config_file.export_exiftool_path()
     assert os.environ["PHOTO_TAGGER_EXIFTOOL"] == "/cfg/exiftool"
 
     monkeypatch.setenv("PHOTO_TAGGER_EXIFTOOL", "/env/exiftool")
-    main_module._apply_exiftool_path("/cfg/exiftool")  # noqa: SLF001
+    config_file.export_exiftool_path()
     assert os.environ["PHOTO_TAGGER_EXIFTOOL"] == "/env/exiftool"
 
+    monkeypatch.setattr(config_file, "configured_exiftool_path", lambda: None)
     monkeypatch.delenv("PHOTO_TAGGER_EXIFTOOL", raising=False)
-    main_module._apply_exiftool_path(None)  # noqa: SLF001
+    config_file.export_exiftool_path()
     assert "PHOTO_TAGGER_EXIFTOOL" not in os.environ
 
 
@@ -1608,7 +1616,7 @@ def test_vocabulary_command_builds_a_file_from_the_photos(tmp_path: Path) -> Non
     census.add(["Animal", "Bird"], weight=5)
     census.add(["One Off"], weight=1)
 
-    with patch.object(main_module, "census_from_photos", return_value=census) as counted:
+    with patch.object(cli_vocabulary, "census_from_photos", return_value=census) as counted:
         _run_app(
             [
                 "vocabulary",
@@ -1681,7 +1689,7 @@ def test_vocabulary_command_exits_1_when_no_keywords_are_found(tmp_path: Path) -
     output = tmp_path / "vocabulary.txt"
 
     with (
-        patch.object(main_module, "census_from_photos", return_value=KeywordCensus()),
+        patch.object(cli_vocabulary, "census_from_photos", return_value=KeywordCensus()),
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(["vocabulary", "--input", str(image), "--output", str(output)])
@@ -1700,7 +1708,7 @@ def test_vocabulary_command_organizes_when_asked(tmp_path: Path) -> None:
     organized = TrimResult(kept=["Golden Hour"], census=census, synonyms={})
     stats = OrganizeStats(model_name="test-model", categories=["Lighting"], grouped=1)
 
-    with patch.object(main_module, "organize", return_value=(organized, stats)) as organizer:
+    with patch.object(cli_vocabulary, "organize", return_value=(organized, stats)) as organizer:
         _run_app(
             [
                 "vocabulary",
@@ -1731,7 +1739,7 @@ def test_vocabulary_command_exits_1_when_the_provider_is_unreachable(tmp_path: P
     output = tmp_path / "vocabulary.txt"
 
     with (
-        patch.object(main_module, "organize", side_effect=ProviderError("no provider")),
+        patch.object(cli_vocabulary, "organize", side_effect=ProviderError("no provider")),
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(
@@ -1903,7 +1911,7 @@ def test_undo_reports_an_unreadable_journal(
     journal.write_text("{}", encoding="utf-8")
 
     with (
-        patch("photo_tagger.main.read_journal", side_effect=UndoError("boom")),
+        patch("photo_tagger.cli_undo.read_journal", side_effect=UndoError("boom")),
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(["undo", "--run", str(journal)])
@@ -1931,7 +1939,7 @@ def test_cli_reports_the_journal_it_wrote(
     with (
         setup,
         create_agent,
-        patch.object(main_module, "run_batch", side_effect=recording_run_batch),
+        patch.object(cli_run, "run_batch", side_effect=recording_run_batch),
     ):
         _run_app(["--input", str(image)])
 
@@ -1967,10 +1975,10 @@ def test_watch_tags_each_batch_with_one_shared_setup(tmp_path: Path) -> None:
             _settled_photo(inbox / "b.cr3")
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "_process_batch", side_effect=fake_process),
-        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "process_batch", side_effect=fake_process),
+        patch.object(cli_watch, "watch_batches", side_effect=_bounded_watch),
     ):
         _run_app(["watch", "--input", str(inbox)])
 
@@ -1995,10 +2003,10 @@ def test_watch_records_one_undo_journal_per_batch(
             _settled_photo(inbox / "b.cr3")
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "_process_batch", side_effect=fake_process),
-        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "process_batch", side_effect=fake_process),
+        patch.object(cli_watch, "watch_batches", side_effect=_bounded_watch),
     ):
         _run_app(["watch", "--input", str(inbox)])
 
@@ -2023,10 +2031,10 @@ def test_watch_records_nothing_when_the_undo_log_is_off(
         journals.append(setup.journal)
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "_process_batch", side_effect=fake_process),
-        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "process_batch", side_effect=fake_process),
+        patch.object(cli_watch, "watch_batches", side_effect=_bounded_watch),
     ):
         _run_app(["watch", "--input", str(inbox), "--no-undo-log"])
 
@@ -2060,10 +2068,10 @@ def test_watch_keeps_going_after_a_batch_with_failures(tmp_path: Path) -> None:
             raise BatchError(BatchTotals(total_files=1))
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "_process_batch", side_effect=failing_process),
-        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "process_batch", side_effect=failing_process),
+        patch.object(cli_watch, "watch_batches", side_effect=_bounded_watch),
     ):
         _run_app(["watch", "--input", str(inbox)])
 
@@ -2088,10 +2096,10 @@ def test_watch_stops_after_an_interrupted_batch(tmp_path: Path) -> None:
         raise BatchError(BatchTotals(total_files=1, interrupted=True))
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "_process_batch", side_effect=interrupted_process),
-        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "process_batch", side_effect=interrupted_process),
+        patch.object(cli_watch, "watch_batches", side_effect=_bounded_watch),
     ):
         _run_app(["watch", "--input", str(inbox)])
 
@@ -2106,16 +2114,16 @@ def test_watch_applies_the_batch_filters(tmp_path: Path) -> None:
     calls: list[list[Path]] = []
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
         patch.object(
-            main_module,
-            "_process_batch",
+            cli_run,
+            "process_batch",
             side_effect=lambda files, _s: calls.append(
                 list(files),
             ),
         ),
-        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(cli_watch, "watch_batches", side_effect=_bounded_watch),
         patch("photo_tagger.discovery.find_tagged_images", return_value={photo}),
     ):
         _run_app(["watch", "--input", str(inbox), "--skip-tagged"])
@@ -2129,8 +2137,8 @@ def test_watch_workers_flag_reaches_the_run(tmp_path: Path) -> None:
     inbox.mkdir()
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "_watch_forever") as forever,
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_watch, "_watch_forever") as forever,
     ):
         _run_app(["watch", "--input", str(inbox), "--workers", "3"])
 
@@ -2153,12 +2161,12 @@ def test_watch_alerts_once_per_batch(tmp_path: Path) -> None:
             on_complete(BatchTotals(total_files=len(image_files), success=len(image_files)))  # type: ignore[operator]
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=run_one_batch),
-        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=run_one_batch),
+        patch.object(cli_watch, "watch_batches", side_effect=_bounded_watch),
         patch.object(
-            main_module,
+            cli_run,
             "notify",
             side_effect=lambda _t, message, **kwargs: raised.append((message, kwargs["enabled"])),
         ),
@@ -2178,10 +2186,10 @@ def test_watch_stops_cleanly_on_ctrl_c(tmp_path: Path) -> None:
         raise KeyboardInterrupt
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "_process_batch", side_effect=interrupt),
-        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "process_batch", side_effect=interrupt),
+        patch.object(cli_watch, "watch_batches", side_effect=_bounded_watch),
     ):
         _run_app(["watch", "--input", str(inbox)])
 
@@ -2189,7 +2197,7 @@ def test_watch_stops_cleanly_on_ctrl_c(tmp_path: Path) -> None:
 def test_watch_requires_an_input(tmp_path: Path) -> None:
     """Watching nothing is a clean exit 1, not an infinite loop over an empty list."""
     with (
-        patch.object(main_module, "setup_logging"),
+        patch.object(cli_run, "setup_logging"),
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(["watch"])
@@ -2204,7 +2212,7 @@ def test_watch_exits_when_logging_cannot_be_set_up(tmp_path: Path) -> None:
     inbox.mkdir()
 
     with (
-        patch.object(main_module, "setup_logging", side_effect=OSError("read-only")),
+        patch.object(cli_run, "setup_logging", side_effect=OSError("read-only")),
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(["watch", "--input", str(inbox)])
@@ -2220,8 +2228,8 @@ def test_watch_exits_1_when_the_vocabulary_is_unusable(tmp_path: Path) -> None:
     vocabulary.write_text("# nothing\n", encoding="utf-8")
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(["watch", "--input", str(inbox), "--vocabulary", str(vocabulary)])
@@ -2242,9 +2250,9 @@ def test_watch_reads_the_interval_and_settle_flags(tmp_path: Path) -> None:
         return iter(())
 
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "watch_batches", side_effect=fake_watch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_watch, "watch_batches", side_effect=fake_watch),
     ):
         _run_app(["watch", "--input", str(inbox), "--interval", "11", "--settle", "3"])
 
@@ -2261,7 +2269,7 @@ def test_show_prints_the_curated_fields_with_their_tags(
         FieldReading(label="Creator", value="Ada Lovelace", tag="XMP:Creator", source="image file"),
     ]
 
-    with patch.object(main_module, "read_fields", return_value=readings):
+    with patch.object(cli_fields, "read_fields", return_value=readings):
         _run_app(["show", "--input", str(image)])
 
     out = capsys.readouterr().out
@@ -2284,7 +2292,7 @@ def test_show_marks_a_value_that_lives_in_the_sidecar(
         ),
     ]
 
-    with patch.object(main_module, "read_fields", return_value=readings):
+    with patch.object(cli_fields, "read_fields", return_value=readings):
         _run_app(["show", "--input", str(image)])
 
     assert "sidecar" in capsys.readouterr().out
@@ -2305,7 +2313,7 @@ def test_show_json_emits_one_parseable_line_per_photo(
         ),
     ]
 
-    with patch.object(main_module, "read_fields", return_value=readings):
+    with patch.object(cli_fields, "read_fields", return_value=readings):
         _run_app(["show", "--input", str(image), "--json"])
 
     lines = capsys.readouterr().out.splitlines()
@@ -2322,7 +2330,7 @@ def test_show_reports_a_photo_with_no_metadata(
     """Nothing found is said plainly, rather than printing an empty table."""
     image = _make_jpeg(tmp_path / "img.cr3")
 
-    with patch.object(main_module, "read_fields", return_value=[]):
+    with patch.object(cli_fields, "read_fields", return_value=[]):
         _run_app(["show", "--input", str(image)])
 
     assert "no metadata" in capsys.readouterr().out
@@ -2336,7 +2344,7 @@ def test_show_all_dumps_every_tag_per_file(
     image = _make_jpeg(tmp_path / "img.cr3")
     dump = {str(image): {"EXIF:Artist": "Ada"}, str(tmp_path / "img.xmp"): {"XMP:Creator": "Ada"}}
 
-    with patch.object(main_module, "read_all_tags", return_value=dump):
+    with patch.object(cli_fields, "read_all_tags", return_value=dump):
         _run_app(["show", "--input", str(image), "--all"])
 
     out = capsys.readouterr().out
@@ -2373,11 +2381,11 @@ def test_set_writes_the_copyright_fields_dated_per_photo(tmp_path: Path) -> None
 
     with (
         patch.object(
-            main_module,
+            cli_fields,
             "read_field_sources",
             return_value={old: _taken(2011), new: _taken(2025)},
         ),
-        patch.object(main_module, "write_metadata_everywhere", side_effect=fake_write),
+        patch.object(cli_fields, "write_metadata_everywhere", side_effect=fake_write),
     ):
         _run_app(
             [
@@ -2408,11 +2416,11 @@ def test_set_passes_the_sidecar_overrides_to_the_writer(tmp_path: Path) -> None:
 
     with (
         patch.object(
-            main_module,
+            cli_fields,
             "read_field_sources",
             return_value={image.resolve(): _taken(2025)},
         ),
-        patch.object(main_module, "write_metadata_everywhere", return_value=(True, [])) as write,
+        patch.object(cli_fields, "write_metadata_everywhere", return_value=(True, [])) as write,
     ):
         _run_app(
             ["set", "--input", str(image), "--artist", "Ada", "--sidecar-override", "dng=photo"],
@@ -2430,12 +2438,12 @@ def test_set_records_its_writes_for_undo(tmp_path: Path) -> None:
 
     with (
         patch.object(
-            main_module,
+            cli_fields,
             "read_field_sources",
             return_value={image.resolve(): _taken(2025)},
         ),
-        patch.object(main_module, "write_metadata_everywhere", return_value=(True, [target])),
-        patch.object(main_module, "open_journal", return_value=journal),
+        patch.object(cli_fields, "write_metadata_everywhere", return_value=(True, [target])),
+        patch.object(cli_fields, "open_journal", return_value=journal),
     ):
         _run_app(["set", "--input", str(image), "--artist", "Ada"])
 
@@ -2448,11 +2456,11 @@ def test_set_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixtur
 
     with (
         patch.object(
-            main_module,
+            cli_fields,
             "read_field_sources",
             return_value={image.resolve(): _taken(2025)},
         ),
-        patch.object(main_module, "write_metadata_everywhere") as write,
+        patch.object(cli_fields, "write_metadata_everywhere") as write,
     ):
         _run_app(["set", "--input", str(image), "--dry-run", "--copyright", "(c) {year} Ada"])
 
@@ -2475,7 +2483,7 @@ def test_set_refuses_exif_tags_that_only_sidecars_would_get(
     """EXIF in a sidecar-only run would fail on every photo, so it stops first and says why."""
     image = _make_jpeg(tmp_path / "img.jpg")
     with (
-        patch.object(main_module, "write_metadata_everywhere") as write,
+        patch.object(cli_fields, "write_metadata_everywhere") as write,
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(["set", "--input", str(image), "--set", "EXIF:Copyright=(c) Ada"])
@@ -2488,7 +2496,7 @@ def test_set_refuses_exif_tags_that_only_sidecars_would_get(
 def test_set_lets_exif_tags_through_when_the_photo_is_written(tmp_path: Path) -> None:
     """With the photo among the targets, the same EXIF tag has somewhere to go."""
     image = _make_jpeg(tmp_path / "img.jpg")
-    with patch.object(main_module, "write_metadata_everywhere", return_value=(True, [])) as write:
+    with patch.object(cli_fields, "write_metadata_everywhere", return_value=(True, [])) as write:
         _run_app(
             ["set", "--input", str(image), "--embed-in-photo", "--set", "EXIF:Copyright=(c) Ada"],
         )
@@ -2499,7 +2507,7 @@ def test_set_exits_1_on_a_template_it_cannot_fill(tmp_path: Path) -> None:
     """A typo in the notice stops the run before the first photo is touched."""
     image = _make_jpeg(tmp_path / "img.cr3")
     with (
-        patch.object(main_module, "write_metadata_everywhere") as write,
+        patch.object(cli_fields, "write_metadata_everywhere") as write,
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(["set", "--input", str(image), "--copyright", "(c) {shot_at}"])
@@ -2512,11 +2520,11 @@ def test_set_exits_1_when_a_write_fails(tmp_path: Path) -> None:
     image = _make_jpeg(tmp_path / "img.cr3")
     with (
         patch.object(
-            main_module,
+            cli_fields,
             "read_field_sources",
             return_value={image.resolve(): _taken(2025)},
         ),
-        patch.object(main_module, "write_metadata_everywhere", return_value=(False, [])),
+        patch.object(cli_fields, "write_metadata_everywhere", return_value=(False, [])),
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(["set", "--input", str(image), "--artist", "Ada"])
@@ -2531,11 +2539,11 @@ def test_set_says_how_many_photos_got_no_notice(
     image = _make_jpeg(tmp_path / "img.cr3")
     with (
         patch.object(
-            main_module,
+            cli_fields,
             "read_field_sources",
             return_value={image.resolve(): FieldSources()},
         ),
-        patch.object(main_module, "write_metadata_everywhere", return_value=(True, [])) as write,
+        patch.object(cli_fields, "write_metadata_everywhere", return_value=(True, [])) as write,
     ):
         _run_app(["set", "--input", str(image), "--artist", "Ada", "--copyright", "(c) {year!}"])
 
@@ -2556,8 +2564,8 @@ def test_set_keeps_a_notice_unless_told_to_replace_it(
     image = _make_jpeg(tmp_path / "img.cr3")
     values = _taken(2025, EXIF_Copyright="(c) 2011 Ada")
     with (
-        patch.object(main_module, "read_field_sources", return_value={image.resolve(): values}),
-        patch.object(main_module, "write_metadata_everywhere", return_value=(True, [])) as write,
+        patch.object(cli_fields, "read_field_sources", return_value={image.resolve(): values}),
+        patch.object(cli_fields, "write_metadata_everywhere", return_value=(True, [])) as write,
     ):
         _run_app(["set", "--input", str(image), "--copyright", "(c) {year} Ada", *flag])
 
@@ -2573,8 +2581,8 @@ def test_set_counts_a_photo_that_keeps_everything_as_kept_not_failed(
     image = _make_jpeg(tmp_path / "img.cr3")
     values = FieldSources(sidecar={"XMP:Rights": "(c) 2011 Ada", "XMP:Creator": "Ada"})
     with (
-        patch.object(main_module, "read_field_sources", return_value={image.resolve(): values}),
-        patch.object(main_module, "write_metadata_everywhere") as write,
+        patch.object(cli_fields, "read_field_sources", return_value={image.resolve(): values}),
+        patch.object(cli_fields, "write_metadata_everywhere") as write,
     ):
         _run_app(["set", "--input", str(image), "--artist", "Ada", "--copyright", "(c) {year}"])
 
@@ -2592,11 +2600,11 @@ def test_set_does_not_count_a_skipped_photo_as_kept(
     image = _make_jpeg(tmp_path / "img.cr3")
     with (
         patch.object(
-            main_module,
+            cli_fields,
             "read_field_sources",
             return_value={image.resolve(): FieldSources()},
         ),
-        patch.object(main_module, "write_metadata_everywhere") as write,
+        patch.object(cli_fields, "write_metadata_everywhere") as write,
     ):
         _run_app(["set", "--input", str(image), "--copyright", "(c) {year!}"])
 
@@ -2648,7 +2656,7 @@ def test_show_all_json_emits_the_raw_tag_dump(
     image = _make_jpeg(tmp_path / "img.cr3")
     dump = {str(image): {"EXIF:Artist": "Ada"}}
 
-    with patch.object(main_module, "read_all_tags", return_value=dump):
+    with patch.object(cli_fields, "read_all_tags", return_value=dump):
         _run_app(["show", "--input", str(image), "--all", "--json"])
 
     payload = json.loads(capsys.readouterr().out)
@@ -2664,7 +2672,7 @@ def test_read_and_write_commands_report_an_unusable_input(tmp_path: Path, comman
         args += ["--artist", "Ada"]
 
     with (
-        patch.object(main_module, "resolve_image_batch", side_effect=DiscoveryError("unreadable")),
+        patch.object(cli_fields, "resolve_image_batch", side_effect=DiscoveryError("unreadable")),
         pytest.raises(SystemExit) as exit_info,
     ):
         main_module.app(args)
@@ -2907,9 +2915,9 @@ def test_run_beacon_describes_the_batch_and_how_it_was_set_up(
     image = _make_jpeg(tmp_path / "img.cr3")
     totals = BatchTotals(total_files=1, success=1, workers=1, inference_calls=1)
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=_finishing_run_batch(totals)),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=_finishing_run_batch(totals)),
         pytest.raises(SystemExit),
     ):
         main_module.main(["--input", str(image), "--temperature", "0.3", "--dry-run"])
@@ -2935,8 +2943,8 @@ def test_run_beacon_reports_a_batch_with_nothing_to_do(
     """A rerun whose filters leave nothing to tag still says so, as an empty run."""
     image = _make_jpeg(tmp_path / "img.cr3")
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "_filter_batch", return_value=[]),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "filter_batch", return_value=[]),
         pytest.raises(SystemExit),
     ):
         main_module.main(["--input", str(image)])
@@ -2952,8 +2960,8 @@ def test_run_beacon_reports_a_run_that_never_started(
     """A model that cannot be reached stops the run before its first photo, and that is reported."""
     image = _make_jpeg(tmp_path / "img.cr3")
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", side_effect=ProviderError("down")),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", side_effect=ProviderError("down")),
         pytest.raises(SystemExit),
     ):
         main_module.main(["--input", str(image)])
@@ -2979,9 +2987,9 @@ def test_a_telemetry_snapshot_that_raises_does_not_stop_the_run(
         lambda _event, **kwargs: enabled.append(kwargs["enabled"]),
     )
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=_finishing_run_batch(totals)),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=_finishing_run_batch(totals)),
         patch.object(cli_telemetry, "to_telemetry_settings", side_effect=ValueError("boom")),
         pytest.raises(SystemExit) as exc_info,
     ):
@@ -3084,10 +3092,10 @@ def test_watch_reports_each_batch_and_then_the_session(
     _settled_photo(inbox / "a.cr3")
     totals = BatchTotals(total_files=1, success=1)
     with (
-        patch.object(main_module, "setup_logging"),
-        patch.object(main_module, "create_agent", return_value=object()),
-        patch.object(main_module, "run_batch", side_effect=_finishing_run_batch(totals)),
-        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(cli_run, "setup_logging"),
+        patch.object(cli_run, "create_agent", return_value=object()),
+        patch.object(cli_run, "run_batch", side_effect=_finishing_run_batch(totals)),
+        patch.object(cli_watch, "watch_batches", side_effect=_bounded_watch),
     ):
         _run_app(["watch", "--input", str(inbox)])
 
@@ -3122,7 +3130,7 @@ def test_watch_session_counts_only_the_photos_that_came_out_done(
 def test_config_hook_records_the_command_and_the_typed_flags(tmp_path: Path) -> None:
     """The hook names what was typed, by option name, and never keeps a value."""
     main_module.app.parse_args(["watch", str(tmp_path), "--interval", "5", "-w", "2"])
-    invocation = main_module._CONFIG_SOURCE.invocation  # noqa: SLF001
+    invocation = cli_options.CONFIG_SOURCE.invocation
     assert invocation.command == "watch"
     assert invocation.cli_flags == ("--input", "--interval", "--workers")
 
@@ -3142,7 +3150,7 @@ def test_a_typed_embed_in_photo_beats_a_saved_sidecar_mode(
         seen.append(kwargs["sidecar_mode"])
         return True, []
 
-    with patch.object(main_module, "write_metadata_everywhere", side_effect=fake_write):
+    with patch.object(cli_fields, "write_metadata_everywhere", side_effect=fake_write):
         _run_app(["set", "--input", str(image), "--embed-in-photo", "--artist", "Ada"])
 
     assert seen == ["none"]
@@ -3177,7 +3185,7 @@ def test_a_typed_notify_flag_beats_the_saved_pair(
 def test_config_hook_reports_an_alias_by_its_option_name(tmp_path: Path) -> None:
     """``--lang`` and ``--output-language`` are one option, and a negative keeps its "no"."""
     main_module.app.parse_args(["--input", str(tmp_path), "--lang", "German", "--no-backup-xmp"])
-    invocation = main_module._CONFIG_SOURCE.invocation  # noqa: SLF001
+    invocation = cli_options.CONFIG_SOURCE.invocation
     assert invocation.cli_flags == ("--input", "--no-backup-xmp", "--output-language")
 
 

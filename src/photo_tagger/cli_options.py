@@ -1468,3 +1468,30 @@ def validate_pacing(_type: type, config: PacingConfig) -> None:
             f"rest again as soon as it resumed."
         )
         raise ValueError(msg)
+
+
+# Any TOML config is layered onto flags the user does not pass by the ConfigFileSource hook at
+# parse time, giving per-field precedence (CLI flag > config file > built-in). The hook re-reads
+# the file per invocation, so nothing config-dependent is captured at import. It also records the
+# command and the options typed on it, which telemetry reports. One instance serves the whole CLI:
+# main builds the app around it, and the commands read what it recorded.
+CONFIG_SOURCE = ConfigFileSource()
+
+# Built-in default option groups, hoisted to module scope so the function-default expressions of
+# the commands are simple name lookups, which keeps ruff's B008 (no function call in a default
+# argument) satisfied. Do NOT fold the config file into these instances: cyclopts rebuilds a group
+# from its class defaults whenever any of the group's flags is passed, which would drop the config
+# values of every sibling field in that group.
+DEFAULT_PROVIDER_OPTIONS = ProviderConfig()
+DEFAULT_OUTPUT_OPTIONS = OutputConfig()
+DEFAULT_INFERENCE_OPTIONS = InferenceConfig()
+DEFAULT_LOG_OPTIONS = LogConfig()
+DEFAULT_DISPLAY_OPTIONS = DisplayConfig()
+DEFAULT_ARTIFACTS_OPTIONS = ArtifactConfig()
+DEFAULT_FILTER_OPTIONS = FilterConfig()
+DEFAULT_TELEMETRY_OPTIONS = TelemetryConfig()
+DEFAULT_PACING_OPTIONS = PacingConfig()
+DEFAULT_WATCH_OPTIONS = WatchConfig()
+# The `set` command's own group. `tag` and `watch` get these flags through OutputConfig, which
+# inherits them; only a command that takes them *without* the rest of the output group needs this.
+DEFAULT_COPYRIGHT_OPTIONS = CopyrightConfig()

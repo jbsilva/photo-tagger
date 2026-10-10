@@ -92,6 +92,12 @@ def configured_exiftool_path() -> str | None:
     return str(value) if value else None
 
 
+def export_exiftool_path() -> None:
+    """Bridge a config ``exiftool_path`` into ``PHOTO_TAGGER_EXIFTOOL`` (an exported var wins)."""
+    if path := configured_exiftool_path():
+        os.environ.setdefault("PHOTO_TAGGER_EXIFTOOL", path)
+
+
 def _coerce_field(annotation: object, value: object) -> object:
     """
     Convert a raw TOML value to the type required by *annotation*.

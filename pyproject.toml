@@ -362,9 +362,15 @@ source_modules = [
     "photo_tagger.vocabulary_organize",
     "photo_tagger.watch",
     "photo_tagger.write_plan",
+    "photo_tagger.cli_fields",
     "photo_tagger.cli_options",
     "photo_tagger.cli_reports",
+    "photo_tagger.cli_run",
+    "photo_tagger.cli_tag",
     "photo_tagger.cli_telemetry",
+    "photo_tagger.cli_undo",
+    "photo_tagger.cli_vocabulary",
+    "photo_tagger.cli_watch",
     "photo_tagger.main",
 ]
 forbidden_modules = ["PySide6"]
@@ -418,18 +424,53 @@ source_modules = [
     "photo_tagger.write_plan",
 ]
 forbidden_modules = [
+    "photo_tagger.cli_fields",
     "photo_tagger.cli_options",
     "photo_tagger.cli_reports",
+    "photo_tagger.cli_run",
+    "photo_tagger.cli_tag",
     "photo_tagger.cli_telemetry",
+    "photo_tagger.cli_undo",
+    "photo_tagger.cli_vocabulary",
+    "photo_tagger.cli_watch",
     "photo_tagger.gui",
     "photo_tagger.main",
 ]
 
 [[tool.importlinter.contracts]]
 # main imports the gui package by name (importlib), so the `gui` command stays lazy and Qt-free.
-name = "The CLI and the GUI do not import each other"
-type = "independence"
-modules = ["photo_tagger.gui", "photo_tagger.main"]
+name = "The CLI does not import the GUI"
+type = "forbidden"
+source_modules = [
+    "photo_tagger.cli_fields",
+    "photo_tagger.cli_options",
+    "photo_tagger.cli_reports",
+    "photo_tagger.cli_run",
+    "photo_tagger.cli_tag",
+    "photo_tagger.cli_telemetry",
+    "photo_tagger.cli_undo",
+    "photo_tagger.cli_vocabulary",
+    "photo_tagger.cli_watch",
+    "photo_tagger.main",
+]
+forbidden_modules = ["photo_tagger.gui"]
+
+[[tool.importlinter.contracts]]
+# cli_options is left out: it is the option schema, and the GUI reads its defaults from it too.
+name = "The GUI does not import the CLI"
+type = "forbidden"
+source_modules = ["photo_tagger.gui"]
+forbidden_modules = [
+    "photo_tagger.cli_fields",
+    "photo_tagger.cli_reports",
+    "photo_tagger.cli_run",
+    "photo_tagger.cli_tag",
+    "photo_tagger.cli_telemetry",
+    "photo_tagger.cli_undo",
+    "photo_tagger.cli_vocabulary",
+    "photo_tagger.cli_watch",
+    "photo_tagger.main",
+]
 
 [[tool.importlinter.contracts]]
 name = "The pure modules do no I/O"

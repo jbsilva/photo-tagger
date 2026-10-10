@@ -3,7 +3,7 @@ The CLI's telemetry: how a tag or watch run was set up, and what each batch repo
 
 The counterpart of :mod:`photo_tagger.gui_usage` for the command line. It turns the parsed option
 groups into the settings and setup a beacon carries, and the totals of a finished batch into its run
-beacon, so :mod:`photo_tagger.main` only says when to send.
+beacon, so the commands only say when to send.
 """
 
 import sys

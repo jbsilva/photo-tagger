@@ -8,17 +8,19 @@ This file gives guidance to Claude Code (claude.ai/code) for work in this reposi
 existing metadata → build a prompt → call a vision model → merge keywords → write XMP/IPTC. Each
 module owns one part of that pipeline:
 
-- `main.py`: the cyclopts entry point and the orchestration (the default `tag` command, plus the
-  `doctor`, `watch`, `undo`, `show`, `set`, `vocabulary`, and `gui` commands). Keep it thin. It
-  connects the modules and translates domain errors into exit codes. `_RunSetup` holds what a run
-  builds once (agent, cache, report writers, undo journal). `_process_batch` runs one batch against
-  it, so `tag` and `watch` share one path. `cli_telemetry.py` holds the telemetry of a CLI run (the
-  beacons of a `tag` or `watch`, built from the option groups and the batch totals), so `main` only
-  says when to send. `cli_reports.py` holds the report sinks of a run: `--json`, `--csv-file`, and
-  `--summary-file`.
+- `main.py`: the cyclopts entry point. It builds the app, registers the commands, and holds the two
+  small ones (`doctor`, `gui`) and `main()`. Keep it thin. Each other command has a module of its
+  own: `cli_tag.py` (the default `tag`), `cli_watch.py`, `cli_fields.py` (`show` and `set`),
+  `cli_vocabulary.py`, and `cli_undo.py`. Each translates domain errors into exit codes.
+  `cli_run.py` holds what `tag` and `watch` share: `RunSetup` (what a run builds once: agent, cache,
+  report writers, undo journal) and `process_batch`, which runs one batch against it. Both pass
+  their flags around as one `RunOptions`. `cli_telemetry.py` holds the telemetry of a CLI run (the
+  beacons of a `tag` or `watch`, and the `CommandReporter` of every invocation), so the commands
+  only say when to send. `cli_reports.py` holds the report sinks of a run: `--json`, `--csv-file`,
+  and `--summary-file`.
 - `cli_options.py`: the CLI _schema_. It holds the twelve `@dataclass` option groups, their defaults
   from the configuration file (`load_defaults`), and the `ProcessingOptions` mapping. New flags go
-  here, not in `main`.
+  here, not in a command module.
 - `providers.py`: the backend registry. A `ProviderBackend` (Strategy) bundles the parts that differ
   per backend: the listing URL, the listing parser, and the provider factory. The shared HTTP code
   exists once. To add a backend, add one entry to `_BACKENDS` (with the label users see), its

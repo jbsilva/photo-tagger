@@ -12,10 +12,10 @@ if TYPE_CHECKING:
     from pydantic_ai import Agent
 
 
-# Make the whole suite independent of any real ~/.config/photo-tagger/config.toml. main.py resolves
-# its CLI defaults at import time (a module-level load_defaults()), so this has to be set before any
-# test module imports it - here at conftest import, not in a fixture. The target file is empty, so
-# config resolution falls through to the built-in defaults. A test asserts this stays in effect.
+# Make the whole suite independent of any real ~/.config/photo-tagger/config.toml. Set at conftest
+# import, before any test runs, so every config read (the CLI's hook on each parse, the GUI's
+# load_defaults) sees this empty file and falls through to the built-in defaults. A test asserts
+# this stays in effect.
 os.environ["PHOTO_TAGGER_CONFIG"] = str(Path(__file__).parent / "empty-config.toml")
 
 

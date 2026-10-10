@@ -240,7 +240,7 @@ def test_atomic_write_text_cleans_up_when_rename_fails(tmp_path: Path) -> None:
     target = tmp_path / "output.json"
 
     with (
-        patch("photo_tagger.main.Path.replace", side_effect=OSError("read-only filesystem")),
+        patch("photo_tagger.cli_reports.Path.replace", side_effect=OSError("read-only filesystem")),
         pytest.raises(OSError, match="read-only"),
     ):
         cli_reports.atomic_write_text(target, "content")
