@@ -1,12 +1,15 @@
 """
 The template language of a copyright notice: ``{year}``, ``{artist}``, and fallback chains.
 
-A placeholder is a chain of sources, tried left to right: ``{EXIF:Artist|XMP-
-dc:Creator|"Unknown"}``. A tag name reads that tag from the photo, and a blank value counts as
-missing. A quoted literal always wins when the chain reaches it. ``%`` after a tag formats a date
-with strftime codes (``{EXIF:DateTimeOriginal%Y}``). A chain that ends in ``""`` drops the
-placeholder when nothing answers. A chain with no literal leaves the whole field unwritten on that
-photo, because a notice with a hole in it is worse than none. ``{{`` and ``}}`` are literal braces.
+A placeholder is a chain of sources, tried left to right::
+
+    {EXIF:Artist|XMP-dc:Creator|"Unknown"}
+
+A tag name reads that tag from the photo, and a blank value counts as missing. A quoted literal
+always wins when the chain reaches it. ``%`` after a tag formats a date with strftime codes
+(``{EXIF:DateTimeOriginal%Y}``). A chain that ends in ``""`` drops the placeholder when nothing
+answers. A chain with no literal leaves the whole field unwritten on that photo, because a notice
+with a hole in it is worse than none. ``{{`` and ``}}`` are literal braces.
 
 ``{year}`` and ``{artist}`` are aliases for the chains most notices want. With a ``!`` they lose
 their final ``""``, so a photo with no capture date (or no name) gets no notice rather than one with

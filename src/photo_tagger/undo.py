@@ -58,11 +58,10 @@ class WriteRecord:
     """
     One file a run wrote, and what putting it back would take.
 
-    ``target`` is the file that changed: the sidecar, or the photo itself under ``--embed-in-
-    photo``. ``backup`` is ExifTool's ``*_original`` copy of its previous contents, absent when the
-    target did not exist before (``created``) or when the run disabled backups. ``size`` and
-    ``mtime`` describe the target as we left it, so a later edit can be detected before anything is
-    reverted.
+    ``target`` is the file that changed: the sidecar, or the photo itself when the run embeds.
+    ``backup`` is ExifTool's ``*_original`` copy of its previous contents, absent when the target
+    did not exist before (``created``) or when the run disabled backups. ``size`` and ``mtime``
+    describe the target as we left it, so a later edit can be detected before anything is reverted.
     """
 
     image: str

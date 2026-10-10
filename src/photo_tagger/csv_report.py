@@ -3,8 +3,8 @@ Build and write a per-photo CSV report of generated and extracted metadata.
 
 The report is the tabular sibling of the JSON run summary (``--summary-file``) and the per-photo
 NDJSON stream (``--json``): one row per photo carrying the generated title, description, and
-keywords, the metadata already on the file, the camera/location EXIF read as context, and the per-
-call token usage and timing.
+keywords, the metadata already on the file, the camera/location EXIF read as context, and the token
+usage and timing of each call.
 
 Both frontends funnel through the same :class:`ReportRow` and the single :data:`CSV_FIELDNAMES`
 column order, so the CLI and the GUI emit an identical schema. They differ only in *when* they

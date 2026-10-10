@@ -294,9 +294,9 @@ def apply_skip_tagged(
     """
     Drop images that already have keywords, a description, or a title.
 
-    Useful when a folder mixes new shots with photos that have already been processed (by photo-
-    tagger, Lightroom, or by hand) and the user does not want to redo the work. Pass *et* to reuse
-    an already-open ExifToolHelper across the batch.
+    Useful when a folder mixes new shots with photos that were already processed (by this tool, by
+    Lightroom, or by hand) and the user does not want to redo the work. Pass *et* to reuse an
+    already-open ExifToolHelper across the batch.
     """
     if not skip_tagged or not image_files:
         return image_files
@@ -336,11 +336,11 @@ def _read_skip_entries(skip_file: Path) -> set[str]:
     }
 
 
-# How long a second process may wait for another one's hold on the skip-file lock before giving
-# up on this particular append. Bounded, not indefinite: filelock silently falls back to a marker-
-# file lock on filesystems without native flock support (some network mounts), and that fallback
-# cannot reclaim a marker left by a peer that crashed on a *different* host. An unbounded wait
-# there would hang every future run forever instead of just losing one skip-file entry.
+# How long a second process may wait for another one's hold on the skip-file lock before giving up
+# on this particular append. Bounded, not indefinite: filelock silently falls back to a lock by
+# marker file on filesystems without native flock support (some network mounts), and that fallback
+# cannot reclaim a marker left by a peer that crashed on a *different* host. An unbounded wait there
+# would hang every future run forever instead of just losing one skip-file entry.
 _SKIP_FILE_LOCK_TIMEOUT_SECONDS = 30.0
 
 
