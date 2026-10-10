@@ -56,6 +56,7 @@ from photo_tagger.gui_state import (
     Proposal,
     SaveOptions,
     SelectionChange,
+    TaggedCriterion,
     WatchSettings,
     anchored_scroll,
     apply_proposal,
@@ -1232,6 +1233,17 @@ def test_paths_matching_fields_empty_required_matches_nothing() -> None:
     presence = {Path("/a.jpg"): {"title"}}
     assert paths_matching_fields(presence, set(), match_all=True) == set()
     assert paths_matching_fields(presence, set(), match_all=False) == set()
+
+
+def test_tagged_criterion_matches_carries_its_own_rule() -> None:
+    """A criterion applies the same AND/OR rule wherever it ends up, menu or parked scan."""
+    a, b = Path("/a.jpg"), Path("/b.jpg")
+    presence = {a: {"title", "description"}, b: {"title"}}
+    both = TaggedCriterion(frozenset({"title", "description"}), match_all=True, phrase="both")
+    either = TaggedCriterion(frozenset({"title", "description"}), match_all=False, phrase="either")
+
+    assert both.matches(presence) == {a}
+    assert either.matches(presence) == {a, b}
 
 
 def test_status_sort_rank_follows_lifecycle_order() -> None:

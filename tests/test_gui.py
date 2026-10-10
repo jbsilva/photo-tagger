@@ -45,6 +45,7 @@ from photo_tagger.gui_state import (
     WORKING,
     Proposal,
     SaveJob,
+    TaggedCriterion,
     WatchSettings,
 )
 from photo_tagger.metadata import (
@@ -619,33 +620,37 @@ def test_tree_keeps_folders_above_files(window: gui.MainWindow, tmp_path: Path) 
 # ---------------------------------------------------------------------------
 
 
-def _stub_field_presence(monkeypatch: pytest.MonkeyPatch, by_name: dict[str, set[str]]) -> None:
-    """Patch find_field_presence to report fields per filename, on the passed-in path objects."""
-    monkeypatch.setattr(
-        gui,
-        "find_field_presence",
-        lambda paths: {p: set(by_name.get(p.name, set())) for p in paths},
+def _scan_reports(window: gui.MainWindow, by_name: dict[str, set[str]]) -> None:
+    """Report a finished metadata scan over the whole list, fields keyed by filename."""
+    window._on_scan_done(  # noqa: SLF001
+        {key: set(by_name.get(Path(key).name, set())) for key in window._items},  # noqa: SLF001
     )
+
+
+def _criterion(required: set[str], *, match_all: bool, phrase: str) -> TaggedCriterion:
+    """Build one "already tagged" rule, the way a Select-menu preset holds it."""
+    return TaggedCriterion(frozenset(required), match_all=match_all, phrase=phrase)
 
 
 def test_deselect_tagged_field_aware_keeps_keyword_only_photos(
     window: gui.MainWindow,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """'Title and description' skips photos that have both, keeping keyword-only ones selected."""
     a = _jpeg(tmp_path / "a.jpg")  # already has a title and a description
     b = _jpeg(tmp_path / "b.jpg")  # only keywords -> must stay selected for description generation
     _add_dir(window, {"a": a, "b": b})
-    _stub_field_presence(
-        monkeypatch,
+    _scan_reports(
+        window,
         {"a.jpg": {FIELD_TITLE, FIELD_DESCRIPTION}, "b.jpg": {FIELD_KEYWORDS}},
     )
 
     window._deselect_tagged(  # noqa: SLF001
-        frozenset({FIELD_TITLE, FIELD_DESCRIPTION}),
-        match_all=True,
-        phrase="a title and a description",
+        _criterion(
+            {FIELD_TITLE, FIELD_DESCRIPTION},
+            match_all=True,
+            phrase="a title and a description",
+        ),
     )
 
     assert window._items[str(a)].selected is False  # noqa: SLF001
@@ -660,18 +665,19 @@ def test_deselect_tagged_field_aware_keeps_keyword_only_photos(
 def test_deselect_tagged_any_metadata_uses_or_semantics(
     window: gui.MainWindow,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The 'any metadata' criterion deselects a photo that has even one indicator field."""
     a = _jpeg(tmp_path / "a.jpg")  # keywords only
     b = _jpeg(tmp_path / "b.jpg")  # nothing
     _add_dir(window, {"a": a, "b": b})
-    _stub_field_presence(monkeypatch, {"a.jpg": {FIELD_KEYWORDS}})
+    _scan_reports(window, {"a.jpg": {FIELD_KEYWORDS}})
 
     window._deselect_tagged(  # noqa: SLF001
-        frozenset({FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS}),
-        match_all=False,
-        phrase="any metadata",
+        _criterion(
+            {FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS},
+            match_all=False,
+            phrase="any metadata",
+        ),
     )
 
     assert window._items[str(a)].selected is False  # noqa: SLF001
@@ -681,43 +687,154 @@ def test_deselect_tagged_any_metadata_uses_or_semantics(
 def test_deselect_tagged_reports_when_none_match(
     window: gui.MainWindow,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When no checked photo has the field, the action says so instead of 'Deselected 0'."""
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
-    _stub_field_presence(monkeypatch, {})  # no photo has any field
+    _scan_reports(window, {})  # scanned, and no photo has any field
 
     window._deselect_tagged(  # noqa: SLF001
-        frozenset({FIELD_DESCRIPTION}),
-        match_all=True,
-        phrase="a description",
+        _criterion({FIELD_DESCRIPTION}, match_all=True, phrase="a description"),
     )
 
     assert window._items[str(a)].selected is True  # noqa: SLF001
     assert "No checked photos have a description" in window._status.text()  # noqa: SLF001
 
 
-def test_tagged_presets_all_run_without_error(
+def test_deselect_tagged_waits_for_the_metadata_scan(
     window: gui.MainWindow,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """
+    A pick made before the Tagged column is known is parked until the scan reaches the end.
+
+    Regression test: this used to run its own batched exiftool read straight from the click
+    handler, which froze the window for minutes on a few thousand photos on a network share.
+    """
+    a = _jpeg(tmp_path / "a.jpg")
+    b = _jpeg(tmp_path / "b.jpg")
+    _add_dir(window, {"a": a, "b": b})
+    started: list[int] = []
+    monkeypatch.setattr(window, "_start_metadata_scan", lambda: started.append(1))
+
+    window._deselect_tagged(  # noqa: SLF001
+        _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
+    )
+
+    assert started  # it asked the scan to run instead of reading anything itself
+    assert window._items[str(a)].selected is True  # noqa: SLF001 - nothing decided yet
+    assert "Reading metadata" in window._status.text()  # noqa: SLF001
+
+    _scan_reports(window, {"a.jpg": {FIELD_TITLE}})
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert window._items[str(a)].selected is False  # noqa: SLF001
+    assert window._items[str(b)].selected is True  # noqa: SLF001
+    assert "Deselected 1" in window._status.text()  # noqa: SLF001
+    assert window._scan_pending is None  # noqa: SLF001
+
+
+def test_a_second_pick_replaces_the_one_waiting_on_the_scan(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changing your mind mid-scan applies the last pick, not both."""
+    a = _jpeg(tmp_path / "a.jpg")  # keywords only
+    _add_dir(window, {"a": a})
+    monkeypatch.setattr(window, "_start_metadata_scan", lambda: None)
+
+    window._deselect_tagged(  # noqa: SLF001
+        _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
+    )
+    window._deselect_tagged(  # noqa: SLF001
+        _criterion({FIELD_KEYWORDS}, match_all=True, phrase="keywords"),
+    )
+    _scan_reports(window, {"a.jpg": {FIELD_KEYWORDS}})
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert window._items[str(a)].selected is False  # noqa: SLF001
+    assert "keywords" in window._status.text()  # noqa: SLF001
+
+
+def test_stopping_the_scan_abandons_the_waiting_uncheck(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stop leaves every checkbox alone and says so, rather than acting on a half-read list."""
+    a = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": a})
+    monkeypatch.setattr(window, "_start_metadata_scan", lambda: None)
+    window._scan_worker = gui.MetadataScanWorker([])  # noqa: SLF001
+    window._deselect_tagged(  # noqa: SLF001
+        _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
+    )
+
+    window._cancel_scan()  # noqa: SLF001
+    _scan_reports(window, {"a.jpg": {FIELD_TITLE}})  # the batch already in flight still lands
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert window._items[str(a)].selected is True  # noqa: SLF001
+    assert "Stopped reading metadata" in window._status.text()  # noqa: SLF001
+    assert window._scan_pending is None  # noqa: SLF001
+    assert window._scan_row.isHidden()  # noqa: SLF001
+
+
+def test_removing_the_unscanned_photos_settles_a_waiting_uncheck(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Taking the unscanned photos off the list must not leave the pick waiting forever."""
+    a = _jpeg(tmp_path / "a.jpg")  # scanned, has a title
+    b = _jpeg(tmp_path / "b.jpg")  # the one the scan had not reached
+    _add_dir(window, {"a": a, "b": b})
+    window._on_scan_done({str(a): {FIELD_TITLE}})  # noqa: SLF001 - only a was read
+    monkeypatch.setattr(window, "_start_metadata_scan", lambda: None)
+    window._deselect_tagged(  # noqa: SLF001
+        _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
+    )
+
+    window._remove_items([str(b)])  # noqa: SLF001
+
+    assert window._items[str(a)].selected is False  # noqa: SLF001
+    assert window._scan_pending is None  # noqa: SLF001
+    assert "Deselected 1" in window._status.text()  # noqa: SLF001
+
+
+def test_the_scan_row_only_shows_while_a_scan_runs(window: gui.MainWindow) -> None:
+    """The delayed reveal must not pop a progress bar up after the scan it reports has ended."""
+    window._show_scan_row()  # noqa: SLF001 - the timer firing with no scan left
+    assert window._scan_row.isHidden()  # noqa: SLF001
+
+    window._scan_thread = _FakeScanThread(finishes_in_time=True)  # noqa: SLF001
+    window._show_scan_row()  # noqa: SLF001
+    assert not window._scan_row.isHidden()  # noqa: SLF001
+
+    window._hide_scan_row()  # noqa: SLF001
+    window._scan_thread = None  # noqa: SLF001
+    assert window._scan_row.isHidden()  # noqa: SLF001
+
+
+def test_tagged_presets_all_run_without_error(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
     """Every menu preset is wired to a real criterion the deselect handler accepts."""
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
-    _stub_field_presence(monkeypatch, {})
-    for _label, required, match_all, phrase in gui._TAGGED_PRESETS:  # noqa: SLF001
-        window._deselect_tagged(required, match_all=match_all, phrase=phrase)  # noqa: SLF001
-        assert phrase in window._status.text()  # noqa: SLF001
+    _scan_reports(window, {})
+    for _label, criterion in gui._TAGGED_PRESETS:  # noqa: SLF001
+        window._deselect_tagged(criterion)  # noqa: SLF001
+        assert criterion.phrase in window._status.text()  # noqa: SLF001
 
 
 def test_deselect_tagged_with_no_photos_nags(window: gui.MainWindow) -> None:
-    """With nothing added, the action reports it instead of calling exiftool."""
+    """With nothing added, the action reports it instead of starting a scan."""
     window._deselect_tagged(  # noqa: SLF001
-        frozenset({FIELD_TITLE}),
-        match_all=True,
-        phrase="a title",
+        _criterion({FIELD_TITLE}, match_all=True, phrase="a title"),
     )
     assert "Add photos" in window._status.text()  # noqa: SLF001
 
@@ -730,16 +847,12 @@ def test_already_tagged_menu_actions_route_to_each_preset(
     actions = window._tagged_menu.actions()  # noqa: SLF001
     assert len(actions) == len(gui._TAGGED_PRESETS)  # noqa: SLF001
 
-    captured: list[tuple[frozenset[str], bool, str]] = []
-    monkeypatch.setattr(
-        window,
-        "_deselect_tagged",
-        lambda req, *, match_all, phrase: captured.append((req, match_all, phrase)),
-    )
+    captured: list[TaggedCriterion] = []
+    monkeypatch.setattr(window, "_deselect_tagged", captured.append)
     for action in actions:
         action.trigger()
 
-    assert captured == [(r, m, p) for _label, r, m, p in gui._TAGGED_PRESETS]  # noqa: SLF001
+    assert captured == [criterion for _label, criterion in gui._TAGGED_PRESETS]  # noqa: SLF001
 
 
 def test_select_menu_checks_and_unchecks_all(window: gui.MainWindow, tmp_path: Path) -> None:
@@ -3770,21 +3883,57 @@ def test_scan_results_fill_the_tagged_column(window: gui.MainWindow, tmp_path: P
     assert window._items[str(img)].known_fields == {FIELD_TITLE, FIELD_KEYWORDS}  # noqa: SLF001
 
 
-def test_metadata_scan_worker_emits_string_keyed_presence(
+def test_metadata_scan_worker_emits_each_batch_with_progress(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The scan worker batches one presence read and emits it keyed by path string."""
+    """
+    The worker reports a batch at a time, keyed by path string, and ticks progress for each.
+
+    Emitting per batch is what fills the Tagged column as the read runs, instead of leaving the list
+    blank until a whole library has been read.
+    """
+    paths = [Path("/a.jpg"), Path("/b.jpg"), Path("/c.jpg")]
     monkeypatch.setattr(
         gui,
-        "find_field_presence",
-        lambda paths: {p: {FIELD_TITLE} for p in paths},
+        "iter_field_presence",
+        # The middle batch stands in for one exiftool could not read at all.
+        lambda scanned: (
+            metadata.PresenceBatch(1, {} if path.name == "b.jpg" else {path: {FIELD_TITLE}})
+            for path in scanned
+        ),
     )
     results: list[dict] = []
-    worker = gui.MetadataScanWorker([Path("/a.jpg")])
+    ticks: list[tuple[int, int]] = []
+    worker = gui.MetadataScanWorker(paths)
     worker.done.connect(results.append)
+    worker.progress.connect(lambda done, total: ticks.append((done, total)))
+
     worker.run()
-    assert results == [{"/a.jpg": {FIELD_TITLE}}]
+
+    assert results == [{"/a.jpg": {FIELD_TITLE}}, {"/c.jpg": {FIELD_TITLE}}]
+    assert ticks == [(0, 3), (1, 3), (2, 3), (3, 3)]  # the unread batch still advances the bar
+
+
+def test_metadata_scan_worker_stops_after_the_batch_in_flight(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stopping ends the read at the next batch boundary, leaving the rest of the list unread."""
+    worker = gui.MetadataScanWorker([Path("/a.jpg"), Path("/b.jpg"), Path("/c.jpg")])
+
+    def batches(scanned: list[Path]) -> Iterator[metadata.PresenceBatch]:
+        for path in scanned:
+            worker.stop()  # the UI thread pressing Stop while the read is under way
+            yield metadata.PresenceBatch(1, {path: set()})
+
+    monkeypatch.setattr(gui, "iter_field_presence", batches)
+    results: list[dict] = []
+    worker.done.connect(results.append)
+
+    worker.run()
+
+    assert results == [{"/a.jpg": set()}]
 
 
 class _FakeScanThread:

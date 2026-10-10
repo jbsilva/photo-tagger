@@ -80,7 +80,10 @@ folders stay grouped above their sibling files either way):
     processing stage, not the label text, so clicking it groups all the failures or all the ready
     photos together.
 - **Tagged**: which metadata the file already carries, filled in by a background scan after you add
-    photos: `T` title, `D` description, `K` keywords, `-` for none (hover for the full list).
+    photos: `T` title, `D` description, `K` keywords, `-` for none (hover for the full list). The
+    scan reads a few dozen photos at a time and fills the column as it goes. A scan that runs longer
+    than a moment (a few thousand photos, or a network share) gets a progress bar and a **Stop**
+    button under the list; stopping keeps whatever was read and leaves the rest blank.
 
 Above the list is a **search box**: type into it and the list narrows to the photos whose name
 matches. Plain text matches anywhere in the name (`IMG` finds `IMG_0001.dng`), and `*`, `?` and `[]`
@@ -120,8 +123,10 @@ list by hand:
         (`*_edit.jpg`). A pattern holding a `/` is matched against the whole path, so it can name a
         subfolder. Matching ignores case, and the box remembers your last pattern.
 - **Uncheck Already Tagged** opens a menu of criteria for what counts as "already done", the GUI's
-    field-aware [`--skip-tagged`](cli-reference.md). It reads the metadata in one pass (so a large
-    folder pauses briefly) and unchecks the matching photos:
+    field-aware [`--skip-tagged`](cli-reference.md). It goes by the **Tagged** column, so it
+    unchecks exactly what the list shows. When the scan behind that column has not reached the end
+    yet, the criterion waits for it and applies the moment it does: a progress bar with a **Stop**
+    button appears under the list, and the window stays usable meanwhile. The criteria are:
     - **Has any metadata** unchecks any photo that has a title, description, *or* keywords (the broad,
         original behavior).
     - **Has a title**, **Has a description**, **Has keywords**, or **Has a title and a description**

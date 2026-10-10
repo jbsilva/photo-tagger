@@ -521,6 +521,26 @@ def photo_item_to_report_row(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class TaggedCriterion:
+    """
+    One "already tagged" rule: which fields count as done, and how to say so.
+
+    *required* is the set of fields to look for, *match_all* picks AND over OR (see
+    :func:`paths_matching_fields`), and *phrase* names the rule in the status bar ("a title and a
+    description"). Kept as one value so the menu preset, the action waiting on a metadata scan, and
+    the deselection that finally runs all pass the same thing around.
+    """
+
+    required: frozenset[str]
+    match_all: bool
+    phrase: str
+
+    def matches(self, presence: dict[Path, set[str]]) -> set[Path]:
+        """Pick the paths in *presence* that satisfy this rule."""
+        return paths_matching_fields(presence, set(self.required), match_all=self.match_all)
+
+
 def paths_matching_fields(
     presence: dict[Path, set[str]],
     required: set[str],

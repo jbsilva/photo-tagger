@@ -183,6 +183,7 @@ from photo_tagger.gui_state import (
     SaveJob,
     SaveOptions,
     SelectionChange,
+    TaggedCriterion,
     WatchSettings,
     anchored_scroll,
     apply_proposal,
@@ -221,7 +222,6 @@ from photo_tagger.gui_state import (
     navigation_shortcuts,
     new_paths,
     parse_keyword_lines,
-    paths_matching_fields,
     paths_under,
     photo_item_to_report_row,
     photo_matches_filter,
@@ -257,8 +257,8 @@ from photo_tagger.metadata import (
     FIELD_KEYWORDS,
     FIELD_TITLE,
     build_contextual_prompt,
-    find_field_presence,
     first_caption,
+    iter_field_presence,
     managed_helper,
     prompt_with_hint,
     read_caption,
@@ -381,31 +381,51 @@ _STATUS_LABEL = {
 }
 
 # The field-aware "deselect already-tagged" menu, mirroring the CLI's --skip-tagged but letting
-# the user pick which fields count as "done". Each entry is (menu label, required fields, whether
-# ALL must be present, status-bar phrase). "Any metadata" is the broad OR criterion (the original
-# skip-tagged); the rest require all of their fields, so a keyword-only photo survives "a title and
-# a description" and stays selected for title/description generation.
-_TAGGED_PRESETS: tuple[tuple[str, frozenset[str], bool, str], ...] = (
+# the user pick which fields count as "done". Each entry pairs a menu label with the criterion it
+# applies. "Any metadata" is the broad OR criterion (the original skip-tagged); the rest require all
+# of their fields, so a keyword-only photo survives "a title and a description" and stays selected
+# for title/description generation.
+_TAGGED_PRESETS: tuple[tuple[str, TaggedCriterion], ...] = (
     (
         gettext_noop("Has any metadata"),
-        frozenset({FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS}),
-        False,
-        gettext_noop("any metadata"),
+        TaggedCriterion(
+            frozenset({FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS}),
+            match_all=False,
+            phrase=gettext_noop("any metadata"),
+        ),
     ),
-    (gettext_noop("Has a title"), frozenset({FIELD_TITLE}), True, gettext_noop("a title")),
+    (
+        gettext_noop("Has a title"),
+        TaggedCriterion(
+            frozenset({FIELD_TITLE}),
+            match_all=True,
+            phrase=gettext_noop("a title"),
+        ),
+    ),
     (
         gettext_noop("Has a description"),
-        frozenset({FIELD_DESCRIPTION}),
-        True,
-        gettext_noop("a description"),
+        TaggedCriterion(
+            frozenset({FIELD_DESCRIPTION}),
+            match_all=True,
+            phrase=gettext_noop("a description"),
+        ),
     ),
     (
         gettext_noop("Has a title and a description"),
-        frozenset({FIELD_TITLE, FIELD_DESCRIPTION}),
-        True,
-        gettext_noop("a title and a description"),
+        TaggedCriterion(
+            frozenset({FIELD_TITLE, FIELD_DESCRIPTION}),
+            match_all=True,
+            phrase=gettext_noop("a title and a description"),
+        ),
     ),
-    (gettext_noop("Has keywords"), frozenset({FIELD_KEYWORDS}), True, gettext_noop("keywords")),
+    (
+        gettext_noop("Has keywords"),
+        TaggedCriterion(
+            frozenset({FIELD_KEYWORDS}),
+            match_all=True,
+            phrase=gettext_noop("keywords"),
+        ),
+    ),
 )
 
 # Edge of the small drawn icons in the row above the photo list, in pixels.
@@ -1013,6 +1033,9 @@ class ThumbnailWorker(QObject):
 # Grace period _stop_scan gives an in-flight batched exiftool call to finish on its own before
 # detaching rather than blocking the caller. Comfortably above a normal scan's duration.
 _SCAN_STOP_TIMEOUT_MS = 3000
+# How long a metadata scan must run before the window reports it. A local folder is read well
+# inside this, so the usual case never shows a progress bar at all; a network share blows past it.
+_SCAN_PROGRESS_DELAY_MS = 700
 # The same grace period for the folder watcher, which reacts to a stop within a fraction of a
 # second unless it is inside a slow poll (a huge folder, or a network share).
 _WATCH_STOP_TIMEOUT_MS = 3000
@@ -1030,28 +1053,46 @@ class MetadataScanWorker(QObject):
     """
     Reads which metadata fields each photo already carries, off the UI thread.
 
-    One batched exiftool call covers the whole list, the same read the "Uncheck Already Tagged"
-    action does synchronously. The result feeds the tree's Tagged column so the user can see at a
-    glance which photos are already done. Failures degrade to an empty report.
+    The read is chunked, so each small batch of photos lands in the tree's Tagged column as it is
+    read rather than all at once at the end, and the scan can be stopped between batches. That is
+    what makes a few thousand photos on a network share bearable: the read runs for minutes there,
+    and it is also what "Uncheck Already Tagged" waits on. Failures degrade to a partial report.
     """
 
-    done = Signal(object)  # dict[str, set[str]]: path -> present indicator fields
+    done = Signal(object)  # dict[str, set[str]]: path -> present fields, one batch at a time
+    progress = Signal(int, int)  # photos read so far, photos in this scan
     finished = Signal()
 
     def __init__(self, paths: list[Path]) -> None:
         """Store the paths to scan; nothing runs until :meth:`run`."""
         super().__init__()
         self._paths = paths
+        self._stop = False
+
+    def stop(self) -> None:
+        """
+        Ask the scan to stop after the batch it is on.
+
+        One batched exiftool call cannot be interrupted mid-flight, so stopping takes effect at the
+        next batch boundary rather than immediately.
+        """
+        self._stop = True
 
     def run(self) -> None:
-        """Scan all paths in one batched read and emit the per-path field sets."""
+        """Emit each batch of per-path field sets as it is read, until done or stopped."""
+        scanned = 0
+        self.progress.emit(scanned, len(self._paths))
         try:
-            presence = find_field_presence(self._paths)
+            for batch in iter_field_presence(self._paths):
+                scanned += batch.scanned
+                if batch.presence:
+                    self.done.emit({str(p): set(f) for p, f in batch.presence.items()})
+                self.progress.emit(scanned, len(self._paths))
+                if self._stop:
+                    break
         except Exception as exc:  # noqa: BLE001
             # The scan is a convenience; a broken exiftool must not take the window down.
             logger.warning("gui_metadata_scan_failed", error=str(exc))
-            presence = {}
-        self.done.emit({str(path): set(fields) for path, fields in presence.items()})
         self.finished.emit()
 
 
@@ -1667,6 +1708,10 @@ class MainWindow(QMainWindow):
         self._thumb_worker: ThumbnailWorker | None = None
         self._scan_thread: QThread | None = None
         self._scan_worker: MetadataScanWorker | None = None
+        # The "Uncheck Already Tagged" pick waiting for the scan to cover every photo, and whether
+        # the user stopped that scan. Both None/False while no one is waiting on a scan.
+        self._scan_pending: TaggedCriterion | None = None
+        self._scan_cancelled = False
         self._harmonize_thread: QThread | None = None
         self._harmonize_worker: HarmonizeWorker | None = None
         self._build_thread: QThread | None = None
@@ -2329,12 +2374,46 @@ class MainWindow(QMainWindow):
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             shortcut.activated.connect(self._remove_selected)
         box.addWidget(self._tree, stretch=1)
+        box.addWidget(self._build_scan_row())
 
         hint = QLabel(_("Drag photos or folders here. Select one and press Delete to remove it."))
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         box.addWidget(hint)
         return panel
+
+    def _build_scan_row(self) -> QWidget:
+        """
+        Build the row under the list that reports the metadata scan behind the Tagged column.
+
+        Hidden while nothing is scanning. It carries its own Stop button rather than borrowing the
+        bottom bar's Cancel, because a scan and a generate/save run can be in flight at once (a
+        watch adds photos mid-run) and the two must stay separately stoppable.
+        """
+        self._scan_progress = QProgressBar()
+        self._scan_stop_button = QToolButton()
+        self._scan_stop_button.setText(_("Stop"))
+        self._scan_stop_button.setToolTip(
+            tooltip(
+                "Stop reading metadata. The photos already read keep their Tagged column; the "
+                "rest stay unknown until the next scan. Nothing is written either way.",
+            ),
+        )
+        self._scan_stop_button.clicked.connect(self._cancel_scan)
+        # Only show the row for a scan that actually runs long enough to be worth reporting, so a
+        # handful of local photos does not make a progress bar flash on and off.
+        self._scan_show_timer = QTimer(self)
+        self._scan_show_timer.setSingleShot(True)
+        self._scan_show_timer.setInterval(_SCAN_PROGRESS_DELAY_MS)
+        self._scan_show_timer.timeout.connect(self._show_scan_row)
+
+        self._scan_row = QWidget()
+        row = QHBoxLayout(self._scan_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self._scan_progress, stretch=1)
+        row.addWidget(self._scan_stop_button)
+        self._scan_row.setVisible(False)
+        return self._scan_row
 
     def _build_tree_controls(self) -> QHBoxLayout:
         controls = QHBoxLayout()
@@ -2518,19 +2597,14 @@ class MainWindow(QMainWindow):
             tooltip(
                 "Uncheck photos that already have the chosen metadata (in the image or its XMP "
                 "sidecar), e.g. 'a title and a description' to skip those while keeping "
-                "keyword-only photos. Mirrors the CLI's --skip-tagged.",
+                "keyword-only photos. Mirrors the CLI's --skip-tagged. It reads what the Tagged "
+                "column shows, so it waits for the scan under the list to reach the end.",
             ),
         )
-        for text, required, match_all, phrase in _TAGGED_PRESETS:
+        for text, criterion in _TAGGED_PRESETS:
             action = self._tagged_menu.addAction(_(text))
             action.triggered.connect(
-                lambda _checked=False, req=required, all_=match_all, ph=phrase: (
-                    self._deselect_tagged(
-                        req,
-                        match_all=all_,
-                        phrase=ph,
-                    )
-                ),
+                lambda _checked=False, chosen=criterion: self._deselect_tagged(chosen),
             )
 
         from_file = menu.addAction(_("Uncheck From Skip List..."), self._deselect_from_file)
@@ -2870,8 +2944,35 @@ class MainWindow(QMainWindow):
         self._scan_worker.moveToThread(self._scan_thread)
         self._scan_thread.started.connect(self._scan_worker.run)
         self._scan_worker.done.connect(self._on_scan_done)
+        self._scan_worker.progress.connect(self._on_scan_progress)
         self._scan_worker.finished.connect(self._on_scan_finished)
+        self._scan_progress.setFormat(_("Reading metadata... %v / %m"))
+        self._scan_stop_button.setEnabled(True)
         self._scan_thread.start()
+        self._scan_show_timer.start()
+
+    def _on_scan_progress(self, scanned: int, total: int) -> None:
+        """Move the scan's progress bar as each batch of photos is read."""
+        self._scan_progress.setRange(0, total)
+        self._scan_progress.setValue(scanned)
+
+    def _show_scan_row(self) -> None:
+        """Reveal the scan row, unless the scan it would report has already finished."""
+        self._scan_row.setVisible(self._scan_thread is not None)
+
+    def _hide_scan_row(self) -> None:
+        """Put the scan row away, and cancel a pending reveal so it cannot pop up after."""
+        self._scan_show_timer.stop()
+        self._scan_row.setVisible(False)
+
+    def _cancel_scan(self) -> None:
+        """Stop the metadata scan after the batch it is on (the Stop button under the list)."""
+        if self._scan_worker is None:
+            return
+        self._scan_cancelled = True
+        self._scan_worker.stop()
+        self._scan_stop_button.setEnabled(False)
+        self._scan_progress.setFormat(_("Stopping..."))
 
     def _on_scan_done(self, presence: dict[str, set[str]]) -> None:
         """Record the scanned field sets and repaint the Tagged column."""
@@ -2892,11 +2993,31 @@ class MainWindow(QMainWindow):
             # A scan detached by _stop_scan's timeout can finish after closeEvent already moved
             # on; the window is going away, so there is nothing left to restart a scan for.
             return
+        stopped = self._scan_cancelled
         self._stop_scan()
-        self._start_metadata_scan()
+        if not stopped:
+            self._start_metadata_scan()
+        if self._scan_thread is None:
+            # Nothing left unknown (or the user stopped it): the scan is over for now.
+            self._end_scan(stopped=stopped)
+
+    def _end_scan(self, *, stopped: bool) -> None:
+        """Put the scan row away and settle whatever was waiting on the scan."""
+        self._scan_cancelled = False
+        self._hide_scan_row()
+        criterion, self._scan_pending = self._scan_pending, None
+        if criterion is None:
+            return
+        if stopped:
+            self._status.setText(_("Stopped reading metadata. No photo was unchecked."))
+        else:
+            self._apply_tagged_criterion(criterion)
 
     def _stop_scan(self) -> None:
         if self._scan_worker is not None:
+            # Between batches the worker checks this, so a detached scan below stops reading the
+            # rest of the library instead of running it out in the background.
+            self._scan_worker.stop()
             # Cut the worker loose before letting go of it. A scan detached by the timeout below
             # keeps running, and its late finished signal would otherwise reach _on_scan_finished
             # and tear down whatever scan is current by then, not the one that just ended.
@@ -3621,6 +3742,11 @@ class MainWindow(QMainWindow):
                 self._grid_folder = None
                 self._show_empty()
         self._update_status()
+        if self._scan_pending is not None and self._scan_thread is None:
+            # The photos an uncheck was still waiting to have scanned are the ones just removed,
+            # so nothing will finish a scan for it. Settle it now, against what is left, and after
+            # the summary above so its own line is the one that stays up.
+            self._end_scan(stopped=False)
 
     def _clear(self) -> None:
         """Empty the list, unless a run is still working through it."""
@@ -3631,6 +3757,7 @@ class MainWindow(QMainWindow):
             return
         self._stop_thumbs()
         self._stop_scan()
+        self._end_scan(stopped=True)  # the list is gone, so nothing is left to uncheck in it
         self._items.clear()
         self._preview_cache.clear()
         self._thumb_cache.clear()
@@ -3651,32 +3778,49 @@ class MainWindow(QMainWindow):
             self._rebuild_tree()
         return changed
 
-    def _deselect_tagged(self, required: frozenset[str], *, match_all: bool, phrase: str) -> None:
-        """Uncheck photos that already carry the chosen field(s); *phrase* names the criterion."""
+    def _deselect_tagged(self, criterion: TaggedCriterion) -> None:
+        """
+        Uncheck photos that already carry the fields *criterion* asks for.
+
+        The fields come from the same background scan that fills the Tagged column, so the action
+        agrees with what the list shows. When the scan has not covered every photo yet the
+        criterion is parked and applied the moment it does: reading a few thousand photos off a
+        network share takes minutes, and doing it in the click handler froze the whole window.
+        """
         if not self._items:
             self._status.setText(_("Add photos before deselecting."))
             return
-        # One batched exiftool read, like the CLI's --skip-tagged. A wait cursor covers the
-        # brief pause, the same way opening a photo's metadata does.
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            presence = find_field_presence([item.path for item in self._items.values()])
-        finally:
-            QApplication.restoreOverrideCursor()
-        # The read just told us every photo's fields; refresh the Tagged column for free.
-        self._on_scan_done({str(path): set(fields) for path, fields in presence.items()})
-        matched = paths_matching_fields(presence, set(required), match_all=match_all)
-        changed = self._deselect(matched)
+        if all(item.known_fields is not None for item in self._items.values()):
+            self._apply_tagged_criterion(criterion)
+            return
+        self._scan_pending = criterion  # a second pick replaces one that is still waiting
+        self._status.setText(
+            _("Reading metadata before unchecking photos with {phrase}...").format(
+                phrase=_(criterion.phrase),
+            ),
+        )
+        self._start_metadata_scan()
+        self._show_scan_row()  # the user is waiting on this scan, so do not hold the bar back
+
+    def _apply_tagged_criterion(self, criterion: TaggedCriterion) -> None:
+        """Uncheck every scanned photo matching *criterion* and report what that changed."""
+        presence = {
+            item.path: item.known_fields
+            for item in self._items.values()
+            if item.known_fields is not None
+        }
+        changed = self._deselect(criterion.matches(presence))
+        phrase = _(criterion.phrase)
         if changed:
             self._status.setText(
                 ngettext(
                     "Deselected {n} photo with {phrase}; {selected} still selected.",
                     "Deselected {n} photos with {phrase}; {selected} still selected.",
                     changed,
-                ).format(n=changed, phrase=_(phrase), selected=self._selected_count()),
+                ).format(n=changed, phrase=phrase, selected=self._selected_count()),
             )
         else:
-            self._status.setText(_("No checked photos have {phrase}.").format(phrase=_(phrase)))
+            self._status.setText(_("No checked photos have {phrase}.").format(phrase=phrase))
 
     def _deselect_from_file(self) -> None:
         """Pick a skip-list file and uncheck the photos it names."""

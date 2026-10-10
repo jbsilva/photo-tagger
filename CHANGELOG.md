@@ -14,6 +14,15 @@ All notable changes to this project are documented here. The format is based on
   (`osascript`, `notify-send`, a PowerShell toast), so no new dependency and no failure where there
   is none.
 
+### Fixed
+
+- GUI: **Uncheck Already Tagged** no longer freezes the window. It now goes by the **Tagged**
+  column's background scan instead of reading every photo from the click handler, and waits for that
+  scan when it is still running.
+- GUI: the metadata scan behind the **Tagged** column reads in small batches, so the column fills in
+  as it goes and a long scan (thousands of photos, or a network share) shows a progress bar with a
+  **Stop** button under the list.
+
 ## [0.9.0] - 2026-09-18
 
 ### Added
