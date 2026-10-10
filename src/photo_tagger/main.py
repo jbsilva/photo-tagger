@@ -527,13 +527,7 @@ def _write_extra(
         et=et,
     )
     if journal is not None:
-        for target in targets:
-            journal.record(
-                image_file,
-                target.path,
-                created=not target.existed,
-                backed_up=target.made_backup(backup=backup),
-            )
+        journal.record_writes(image_file, targets, backup=backup)
     return ok
 
 

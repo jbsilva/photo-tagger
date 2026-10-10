@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from photo_tagger.metadata import WriteTarget
 from photo_tagger.undo import (
     BACKUP_SUFFIX,
     CHANGED,
@@ -435,3 +436,51 @@ def test_journal_keeps_its_backup_for_a_second_write_of_the_same_file(tmp_path: 
 
     records = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines()]
     assert records[-1]["backup"] is not None
+
+
+def test_record_writes_journals_each_target_of_one_save(tmp_path: Path) -> None:
+    """
+    One save that wrote a photo and its new sidecar journals both files.
+
+    The photo existed and had no backup before, so this write made one; the sidecar is new, so undo
+    deletes it instead of looking for a backup.
+    """
+    photo = tmp_path / "a.jpg"
+    photo.write_text("written")
+    (tmp_path / ("a.jpg" + BACKUP_SUFFIX)).write_text("before")
+    sidecar = tmp_path / "a.xmp"
+    sidecar.write_text("xmp")
+    journal = UndoJournal(tmp_path / "run.jsonl")
+
+    journal.record_writes(
+        photo,
+        [
+            WriteTarget(photo, use_sidecar=False, existed=True),
+            WriteTarget(sidecar, use_sidecar=True, existed=False),
+        ],
+        backup=True,
+    )
+
+    records = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines()]
+    assert [(r["target"], r["created"]) for r in records] == [
+        (str(photo), False),
+        (str(sidecar), True),
+    ]
+    assert records[0]["backup"] == str(tmp_path / ("a.jpg" + BACKUP_SUFFIX))
+    assert records[1]["backup"] is None
+
+
+def test_record_writes_adopts_no_backup_that_predates_the_save(tmp_path: Path) -> None:
+    """A backup that was already there belongs to an earlier write, so it is not recorded."""
+    photo = tmp_path / "a.jpg"
+    photo.write_text("written")
+    (tmp_path / ("a.jpg" + BACKUP_SUFFIX)).write_text("from an earlier run")
+    journal = UndoJournal(tmp_path / "run.jsonl")
+
+    journal.record_writes(
+        photo,
+        [WriteTarget(photo, use_sidecar=False, existed=True, had_backup=True)],
+        backup=True,
+    )
+
+    assert json.loads(journal.path.read_text(encoding="utf-8"))["backup"] is None

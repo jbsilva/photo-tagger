@@ -378,7 +378,6 @@ if TYPE_CHECKING:
     from exiftool import ExifToolHelper
     from pydantic_ai import BinaryContent
 
-    from photo_tagger.metadata import WriteTarget
     from photo_tagger.models import InferenceResult
     from photo_tagger.undo import UndoJournal, UndoResult, WriteRecord
     from photo_tagger.vocabulary import Vocabulary
@@ -809,25 +808,6 @@ def _svg_icon(name: str) -> QIcon:
 def _app_icon() -> QIcon:
     """Load the bundled app icon, or an empty icon if it is not present."""
     return _svg_icon("icon.svg")
-
-
-def _record_writes(
-    journal: UndoJournal | None,
-    image_path: Path,
-    targets: list[WriteTarget],
-    *,
-    backup: bool,
-) -> None:
-    """Journal every file a save wrote for one photo, so undo can put each one back."""
-    if journal is None:
-        return
-    for target in targets:
-        journal.record(
-            image_path,
-            target.path,
-            created=not target.existed,
-            backed_up=target.made_backup(backup=backup),
-        )
 
 
 def _readonly_box(min_height: int) -> QPlainTextEdit:
@@ -1266,7 +1246,8 @@ class SaveWorker(QObject):
             except Exception as exc:  # noqa: BLE001
                 logger.exception("gui_save_failed", file=job.path.name, error=str(exc))
                 ok, targets = False, []
-            _record_writes(self._journal, job.path, targets, backup=self._options.backup)
+            if self._journal is not None:
+                self._journal.record_writes(job.path, targets, backup=self._options.backup)
             self._emitted += 1
             self.file_done.emit(str(job.path), ok)
 
@@ -5373,7 +5354,8 @@ class MainWindow(QMainWindow):
             # as a failed save, not an uncaught exception Qt swallows into the log unseen.
             logger.exception("gui_save_single_failed", error=str(exc), file=str(job.path))
             ok, targets = False, []
-        _record_writes(self._single_save_journal(), job.path, targets, backup=options.backup)
+        if (journal := self._single_save_journal()) is not None:
+            journal.record_writes(job.path, targets, backup=options.backup)
         self._apply_write_result(item, job, ok=ok)
         return ok
 

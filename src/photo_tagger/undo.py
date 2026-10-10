@@ -21,12 +21,18 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from loguru import logger
 
 from photo_tagger.config import state_dir
 from photo_tagger.errors import PhotoTaggerError
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from photo_tagger.metadata import WriteTarget
 
 
 # ExifTool's backup suffix. It appends this to the full name, so "IMG.xmp" backs up to
@@ -223,6 +229,22 @@ class UndoJournal:
             mtime=stat.st_mtime,
         )
         self._append(record)
+
+    def record_writes(
+        self,
+        image_path: Path,
+        targets: Iterable[WriteTarget],
+        *,
+        backup: bool,
+    ) -> None:
+        """Record every file one save wrote for *image_path*, with backups set to *backup*."""
+        for target in targets:
+            self.record(
+                image_path,
+                target.path,
+                created=not target.existed,
+                backed_up=target.made_backup(backup=backup),
+            )
 
     def _append(self, record: WriteRecord) -> None:
         """Serialize one record to the journal, disabling the journal on a write failure."""

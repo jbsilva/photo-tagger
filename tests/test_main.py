@@ -37,7 +37,7 @@ from photo_tagger.errors import BatchError, DiscoveryError, ProviderError
 from photo_tagger.metadata import SOURCE_SIDECAR, FieldReading, FieldSources, WriteTarget
 from photo_tagger.pacing import SECONDS_PER_MINUTE
 from photo_tagger.pipeline import BatchTotals, ImageOutcome
-from photo_tagger.undo import UndoError, UndoJournal
+from photo_tagger.undo import UndoError, UndoJournal, read_journal
 from photo_tagger.vocabulary_build import KeywordCensus, TrimResult
 from photo_tagger.vocabulary_organize import OrganizeStats
 
@@ -2606,7 +2606,8 @@ def test_set_records_its_writes_for_undo(tmp_path: Path) -> None:
     """A run that went to the wrong folder is one `photo-tagger undo` away."""
     image = _make_jpeg(tmp_path / "img.cr3")
     target = WriteTarget(path=tmp_path / "img.xmp", use_sidecar=True, existed=False)
-    journal = MagicMock()
+    target.path.write_text("xmp")  # what the stubbed write would have created
+    journal = UndoJournal(tmp_path / "run.jsonl")
 
     with (
         patch.object(
@@ -2619,7 +2620,7 @@ def test_set_records_its_writes_for_undo(tmp_path: Path) -> None:
     ):
         _run_app(["set", "--input", str(image), "--artist", "Ada"])
 
-    assert journal.record.call_args.kwargs["created"] is True
+    assert [record.created for record in read_journal(journal.path)] == [True]
 
 
 def test_set_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
