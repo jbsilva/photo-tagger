@@ -2,10 +2,11 @@
 Vision-language backend registry.
 
 Each backend answers three questions: where do I list available models, how do I read model ids out
-of that listing, and how do I build the pydantic-ai provider object? Bundling those as a
-:class:`ProviderBackend` (the Strategy pattern) means adding a backend is a single entry in
-``_BACKENDS`` plus its defaults in :mod:`photo_tagger.config`, with no edits scattered across the
-agent setup, the CLI ``--provider`` choices, or the model-validation paths.
+of that listing, and how do I build the pydantic-ai provider object? Bundling those (and the name
+users see) as a :class:`ProviderBackend` (the Strategy pattern) means adding a backend is one entry
+in ``_BACKENDS``, its defaults in :mod:`photo_tagger.config`, and its name in the ``ProviderName``
+Literal (a test keeps the two in step), with no edits scattered across the agent setup, the CLI
+``--provider`` choices, or the model-validation paths.
 
 The shared HTTP plumbing (URL validation, listing fetch, body truncation for logs) lives here once;
 every backend reuses it instead of re-implementing it.
@@ -171,7 +172,7 @@ def _make_ollama(base_url: str, api_key: str | None) -> ChatProvider:
 
 
 def _make_openai(base_url: str, api_key: str | None) -> ChatProvider:
-    """Build an OpenAI-compatible provider (LM Studio and hosted OpenAI both use this)."""
+    """Build an OpenAI-compatible provider (LM Studio, llama.cpp, and hosted OpenAI use this)."""
     return OpenAIProvider(base_url=base_url, api_key=api_key)
 
 
@@ -185,6 +186,8 @@ class ProviderBackend:
     """
 
     name: ProviderName
+    # The human spelling, for anything user-facing (the GUI's combo box, doctor's output).
+    label: str
     default_base_url: str
     default_api_key: str | None
     build_listing_url: Callable[[str], str]
@@ -228,6 +231,7 @@ _BACKENDS: dict[str, ProviderBackend] = {
     for backend in (
         ProviderBackend(
             name="ollama",
+            label="Ollama",
             default_base_url=DEFAULT_OLLAMA_BASE_URL,
             default_api_key=DEFAULT_OLLAMA_API_KEY,
             build_listing_url=_ollama_listing_url,
@@ -236,6 +240,7 @@ _BACKENDS: dict[str, ProviderBackend] = {
         ),
         ProviderBackend(
             name="lmstudio",
+            label="LM Studio",
             default_base_url=DEFAULT_LMSTUDIO_BASE_URL,
             default_api_key=DEFAULT_LMSTUDIO_API_KEY,
             build_listing_url=_openai_listing_url,
@@ -244,6 +249,7 @@ _BACKENDS: dict[str, ProviderBackend] = {
         ),
         ProviderBackend(
             name="llamacpp",
+            label="llama.cpp",
             default_base_url=DEFAULT_LLAMACPP_BASE_URL,
             default_api_key=DEFAULT_LLAMACPP_API_KEY,
             build_listing_url=_openai_listing_url,
@@ -252,6 +258,7 @@ _BACKENDS: dict[str, ProviderBackend] = {
         ),
         ProviderBackend(
             name="openai",
+            label="OpenAI",
             default_base_url=DEFAULT_OPENAI_BASE_URL,
             default_api_key=DEFAULT_OPENAI_API_KEY,
             build_listing_url=_openai_listing_url,
@@ -266,12 +273,7 @@ _BACKENDS: dict[str, ProviderBackend] = {
 PROVIDER_NAMES: tuple[str, ...] = tuple(_BACKENDS)
 
 # Human spellings of the internal names, for anything user-facing (GUI combo, doctor output).
-PROVIDER_LABELS: dict[str, str] = {
-    "ollama": "Ollama",
-    "lmstudio": "LM Studio",
-    "llamacpp": "llama.cpp",
-    "openai": "OpenAI",
-}
+PROVIDER_LABELS: dict[str, str] = {name: backend.label for name, backend in _BACKENDS.items()}
 
 
 def get_backend(name: str) -> ProviderBackend:

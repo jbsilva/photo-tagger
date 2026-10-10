@@ -18,8 +18,9 @@ module owns one part of that pipeline:
   here, not in `main`.
 - `providers.py`: the backend registry. A `ProviderBackend` (Strategy) bundles the parts that differ
   per backend: the listing URL, the listing parser, and the provider factory. The shared HTTP code
-  exists once. To add a backend, add one entry to `_BACKENDS`, its defaults in `config.py`, and a
-  name to the `ProviderName` Literal. A test makes sure that the two stay in sync.
+  exists once. To add a backend, add one entry to `_BACKENDS` (with the label users see), its
+  defaults in `config.py`, and a name to the `ProviderName` Literal. A test makes sure that the two
+  stay in sync.
 - `ai.py`: builds the pydantic-ai `Agent` from a backend and runs inference.
 - `pipeline.py`: the batch runner (serial and thread-pool passes, the retry pass, usage accounting).
   `failures.py` names why a photo failed (a coarse bucket and the exception), for the CLI, the GUI,
