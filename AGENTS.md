@@ -9,12 +9,13 @@ existing metadata → build a prompt → call a vision model → merge keywords 
 module owns one part of that pipeline:
 
 - `main.py`: the cyclopts entry point and the orchestration (the default `tag` command, plus the
-  `doctor`, `watch`, and `undo` commands). Keep it thin. It connects the modules and translates
-  domain errors into exit codes. `_RunSetup` holds what a run builds once (agent, cache, report
-  writers, undo journal). `_process_batch` runs one batch against it, so `tag` and `watch` share one
-  path. `cli_telemetry.py` holds the telemetry of a CLI run (the beacons of a `tag` or `watch`,
-  built from the option groups and the batch totals), so `main` only says when to send.
-- `cli_options.py`: the CLI _schema_. It holds the seven `@dataclass` option groups, their defaults
+  `doctor`, `watch`, `undo`, `show`, `set`, `vocabulary`, and `gui` commands). Keep it thin. It
+  connects the modules and translates domain errors into exit codes. `_RunSetup` holds what a run
+  builds once (agent, cache, report writers, undo journal). `_process_batch` runs one batch against
+  it, so `tag` and `watch` share one path. `cli_telemetry.py` holds the telemetry of a CLI run (the
+  beacons of a `tag` or `watch`, built from the option groups and the batch totals), so `main` only
+  says when to send.
+- `cli_options.py`: the CLI _schema_. It holds the twelve `@dataclass` option groups, their defaults
   from the configuration file (`load_defaults`), and the `ProcessingOptions` mapping. New flags go
   here, not in `main`.
 - `providers.py`: the backend registry. A `ProviderBackend` (Strategy) bundles the parts that differ

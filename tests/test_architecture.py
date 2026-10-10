@@ -1,5 +1,6 @@
 """Keep the import-linter contracts in step with the modules they guard."""
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -41,3 +42,11 @@ def test_the_qt_contract_covers_every_module_but_the_gui_package() -> None:
     contract = _contracts()["Only the gui package imports Qt"]
 
     assert _listed(contract) == _modules() - {"gui"}
+
+
+def test_the_architecture_page_lists_every_module() -> None:
+    """The module table is the map a contributor reads first, so a new module needs a row."""
+    page = (ROOT / "docs" / "architecture" / "index.md").read_text(encoding="utf-8")
+    rows = set(re.findall(r"^\| \[`(\w+)(?:\.py|/)`\]", page, re.MULTILINE))
+
+    assert rows == _modules()
