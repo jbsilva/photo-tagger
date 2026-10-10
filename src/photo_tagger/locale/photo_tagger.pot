@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-09 03:38+0200\n"
+"POT-Creation-Date: 2026-10-09 03:44+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1710,25 +1710,25 @@ msgstr ""
 msgid "Stopped watching."
 msgstr ""
 
-#: src/photo_tagger/gui/main_window.py:3143
+#: src/photo_tagger/gui/main_window.py:3149
 msgid "Unsaved changes"
 msgstr ""
 
-#: src/photo_tagger/gui/main_window.py:3144
+#: src/photo_tagger/gui/main_window.py:3150
 msgid ""
 "Some photos have generated proposals that have not been saved. Close "
 "anyway?"
 msgstr ""
 
-#: src/photo_tagger/gui/main_window.py:3185
+#: src/photo_tagger/gui/main_window.py:3191
 msgid "Anonymous usage telemetry"
 msgstr ""
 
-#: src/photo_tagger/gui/main_window.py:3186
+#: src/photo_tagger/gui/main_window.py:3192
 msgid "Photo Tagger sends anonymous usage stats to guide development."
 msgstr ""
 
-#: src/photo_tagger/gui/main_window.py:3189
+#: src/photo_tagger/gui/main_window.py:3195
 msgid ""
 "It sends the settings and features you use, how runs go, your system, and"
 " crash reports. It never sends your photos, file names, or anything you "
@@ -1738,11 +1738,11 @@ msgid ""
 "Telemetry."
 msgstr ""
 
-#: src/photo_tagger/gui/main_window.py:3194
+#: src/photo_tagger/gui/main_window.py:3200
 msgid "Keep Enabled"
 msgstr ""
 
-#: src/photo_tagger/gui/main_window.py:3195
+#: src/photo_tagger/gui/main_window.py:3201
 msgid "Turn It Off"
 msgstr ""
 

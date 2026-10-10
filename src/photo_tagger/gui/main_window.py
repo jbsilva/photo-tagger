@@ -3100,8 +3100,14 @@ class MainWindow(QMainWindow):
             self._status.setText(_("Stopped watching."))
 
     def _teardown_watch_thread(self) -> None:
-        """Join the watch thread and release both it and its worker."""
+        """
+        Stop waiting on the watch thread (detaching it after a timeout) and release its worker.
+
+        The worker is cut loose first, as the scan's and harmonization's are: a detached one can
+        still deliver a batch, and its finished signal would then stop whatever watch runs by then.
+        """
         if self._watch_worker is not None:
+            self._watch_worker.disconnect(self)
             self._watch_worker.deleteLater()
         if self._watch_thread is not None:
             # A poll of a huge folder, or of a network share that is not answering, can outlast

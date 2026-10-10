@@ -5698,6 +5698,32 @@ def test_watch_worker_emits_a_batch_and_stops(qapp: QApplication, tmp_path: Path
     assert batches == [[photo]]
 
 
+def test_a_detached_watch_cannot_reach_the_next_one(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """A late batch or finish from a watch the timeout let go must not touch a newer watch."""
+    stale = workers.WatchWorker(
+        WatchSettings(folders=(tmp_path,), extensions="jpg", interval=0.0, settle=0.0),
+    )
+    batches: list[object] = []
+    stale.batch.connect(batches.append)  # a slot outside the window stays connected
+    stale.batch.connect(window._on_watch_batch)  # noqa: SLF001
+    stale.finished.connect(window._on_watch_finished)  # noqa: SLF001
+    window._watch_thread = _FakeScanThread(finishes_in_time=False)  # noqa: SLF001
+    window._watch_worker = stale  # noqa: SLF001
+    window._teardown_watch_thread()  # noqa: SLF001
+
+    newer = WatchSettings(folders=(tmp_path,), extensions="jpg", interval=0.0, settle=0.0)
+    window._watch_settings = newer  # noqa: SLF001
+    stale.batch.emit([_jpeg(tmp_path / "a.jpg")])
+    stale.finished.emit()
+
+    assert window._watch_settings is newer  # noqa: SLF001
+    assert window._items == {}  # noqa: SLF001
+    assert len(batches) == 1
+
+
 def test_watching_adds_new_photos_and_generates_them(
     window: gui.MainWindow,
     tmp_path: Path,
