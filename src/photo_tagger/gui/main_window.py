@@ -649,6 +649,18 @@ class MainWindow(QMainWindow):
         ordering, and every other setting survive. A missing file is created from a template.
         """
         self._count("save_defaults")
+        if self._copyright_dialog.fields is None:
+            # The CLI checks the templates when it starts, so a broken one saved here would stop
+            # every later run, a scheduled watch included.
+            QMessageBox.warning(
+                self,
+                _(CONFIG_SAVE_ERROR_TITLE),
+                _(
+                    "Settings > Copyright holds a template with an error, so nothing was saved. "
+                    "Fix it there first.",
+                ),
+            )
+            return
         target = config_target()
         values = self._current_config_values()
         try:

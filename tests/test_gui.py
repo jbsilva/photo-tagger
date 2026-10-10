@@ -4768,6 +4768,30 @@ def test_save_config_writes_the_gui_choices(
     assert data["display"]["notify"] is False
 
 
+def test_save_config_refuses_a_copyright_template_with_an_error(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A template the CLI would refuse is never saved, or every later CLI run would stop."""
+    target = tmp_path / "config.toml"
+    _patch_gui(monkeypatch, "find_config_file", lambda: None)
+    _patch_gui(monkeypatch, "user_config_path", lambda: target)
+    warned: list[str] = []
+    _patch_gui(
+        monkeypatch,
+        "QMessageBox",
+        SimpleNamespace(warning=lambda *args, **_k: warned.append(str(args[-1]))),
+    )
+    _fill_copyright(window, notice="Copyright (c) {shot_at}")
+    assert window._copyright_dialog.fields is None  # noqa: SLF001 - the dialog shows the error
+
+    window._save_config()  # noqa: SLF001
+
+    assert warned
+    assert not target.exists()
+
+
 def test_save_config_merges_into_the_config_in_effect(
     window: gui.MainWindow,
     tmp_path: Path,
