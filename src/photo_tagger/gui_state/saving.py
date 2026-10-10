@@ -31,6 +31,7 @@ from photo_tagger.metadata import (
     FIELD_KEYWORDS,
     FIELD_TITLE,
     FieldSources,
+    write_metadata_everywhere,
 )
 from photo_tagger.models import KeywordSet
 from photo_tagger.prompt_context import select_camera_fields, select_location
@@ -40,6 +41,8 @@ from photo_tagger.write_plan import WriteTarget, parse_sidecar_overrides, plan_w
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
     from pathlib import Path
+
+    from exiftool import ExifToolHelper  # type: ignore[attr-defined]
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +289,35 @@ def writes_nothing(job: SaveJob, extra: Mapping[str, str]) -> bool:
     writer refuses an empty write, but here it is not a failure: the photo is as asked.
     """
     return job.keywords.is_empty() and job.title is None and job.description is None and not extra
+
+
+def write_save_job(
+    job: SaveJob,
+    extra: Mapping[str, str],
+    options: SaveOptions,
+    *,
+    et: ExifToolHelper | None = None,
+) -> tuple[bool, list[WriteTarget]]:
+    """
+    Write one resolved job, the same way for a single save and a batch.
+
+    Returns whether the save worked and the files it wrote, for the undo journal. A job with nothing
+    to write (see :func:`writes_nothing`) succeeds and touches no file. ExifTool failing to start
+    raises, and each caller logs that in its own words.
+    """
+    if writes_nothing(job, extra):
+        return True, []
+    return write_metadata_everywhere(
+        job.path,
+        job.keywords,
+        description=job.description,
+        title=job.title,
+        extra=extra,
+        backup=options.backup,
+        sidecar_mode=options.sidecar_mode,
+        sidecar_overrides=options.sidecar_overrides,
+        et=et,
+    )
 
 
 def load_sidecar_overrides(

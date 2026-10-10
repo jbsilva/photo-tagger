@@ -173,6 +173,7 @@ from photo_tagger.gui_state import (
     watch_status_text,
     with_notice_written,
     wrap_tooltip,
+    write_save_job,
     writes_nothing,
     zoom_label,
 )
@@ -2572,6 +2573,28 @@ def test_writes_nothing_only_when_the_job_and_the_copyright_are_both_empty() -> 
     assert writes_nothing(bare, {})
     assert not writes_nothing(bare, {"EXIF:Artist": "Ada"})
     assert not writes_nothing(replace(bare, title="T"), {})
+
+
+def test_write_save_job_touches_no_file_when_there_is_nothing_to_write() -> None:
+    """A photo that keeps its notice and gets no generated field is a save that worked."""
+    bare = SaveJob(path=Path("/a.jpg"), keywords=KeywordSet(), title=None, description=None)
+    with patch("photo_tagger.gui_state.saving.write_metadata_everywhere") as write:
+        assert write_save_job(bare, {}, SaveOptions()) == (True, [])
+    write.assert_not_called()
+
+
+def test_write_save_job_hands_the_save_options_to_the_writer() -> None:
+    """The single save and the batch write a photo the same way: through these options."""
+    job = SaveJob(path=Path("/a.jpg"), keywords=KeywordSet(), title="T", description=None)
+    options = SaveOptions(sidecar_mode="both", backup=False)
+    with patch(
+        "photo_tagger.gui_state.saving.write_metadata_everywhere",
+        return_value=(True, []),
+    ) as write:
+        assert write_save_job(job, {"EXIF:Artist": "Ada"}, options) == (True, [])
+    kwargs = write.call_args.kwargs
+    assert (kwargs["sidecar_mode"], kwargs["backup"], kwargs["title"]) == ("both", False, "T")
+    assert kwargs["extra"] == {"EXIF:Artist": "Ada"}
 
 
 def test_field_tags_to_read_covers_the_defaults_and_the_templates() -> None:

@@ -135,6 +135,7 @@ from photo_tagger.gui_state.saving import (
     save_targets,
     sidecar_overrides_summary,
     with_notice_written,
+    write_save_job,
     writes_nothing,
 )
 from photo_tagger.gui_state.selection import (
@@ -371,6 +372,7 @@ __all__ = [
     "watch_status_text",
     "with_notice_written",
     "wrap_tooltip",
+    "write_save_job",
     "writes_nothing",
     "zoom_label",
 ]

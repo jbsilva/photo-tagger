@@ -40,6 +40,7 @@ from photo_tagger.gui_state import (
     pacing_status_text,
     resolve_extra_tags,
     with_notice_written,
+    write_save_job,
     writes_nothing,
 )
 from photo_tagger.gui_usage import GUI_GENERATE_RETRIES
@@ -51,7 +52,6 @@ from photo_tagger.metadata import (
     managed_helper,
     read_field_sources,
     read_image_context,
-    write_metadata_everywhere,
 )
 from photo_tagger.pacing import Pacer, PacingPlan, build_pacer
 from photo_tagger.prompt_context import build_contextual_prompt, prompt_with_hint
@@ -516,22 +516,8 @@ class SaveWorker(QObject):
                 self.resolved[str(job.path)] = with_notice_written(job, extra)
                 if writes_nothing(job, extra):
                     self.kept.add(str(job.path))
-                ok, targets = (
-                    (True, [])
-                    if writes_nothing(job, extra)
-                    else write_metadata_everywhere(
-                        job.path,
-                        job.keywords,
-                        description=job.description,
-                        title=job.title,
-                        extra=extra,
-                        backup=self._options.backup,
-                        sidecar_mode=self._options.sidecar_mode,
-                        sidecar_overrides=self._options.sidecar_overrides,
-                        et=helper,
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
+                ok, targets = write_save_job(job, extra, self._options, et=helper)
+            except Exception as exc:  # noqa: BLE001 - one photo's failure never stops the batch.
                 logger.exception("gui_save_failed", file=job.path.name, error=str(exc))
                 ok, targets = False, []
             if self._journal is not None:

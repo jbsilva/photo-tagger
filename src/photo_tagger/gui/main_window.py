@@ -164,7 +164,7 @@ from photo_tagger.gui_state import (
     vocabulary_summary,
     watch_status_text,
     with_notice_written,
-    writes_nothing,
+    write_save_job,
 )
 from photo_tagger.gui_usage import (
     GUI_BASELINE,
@@ -193,7 +193,6 @@ from photo_tagger.metadata import (
     read_field_sources,
     read_image_context,
     read_metadata_sources,
-    write_metadata_everywhere,
 )
 from photo_tagger.pacing import SECONDS_PER_MINUTE, Pacer, build_pacer
 from photo_tagger.providers import get_backend
@@ -2295,20 +2294,7 @@ class MainWindow(QMainWindow):
         try:
             extra = self._copyright_tags_for(options, item)
             job = with_notice_written(job, extra)
-            ok, targets = (
-                (True, [])
-                if writes_nothing(job, extra)
-                else write_metadata_everywhere(
-                    job.path,
-                    job.keywords,
-                    description=job.description,
-                    title=job.title,
-                    extra=extra,
-                    backup=options.backup,
-                    sidecar_mode=options.sidecar_mode,
-                    sidecar_overrides=options.sidecar_overrides,
-                )
-            )
+            ok, targets = write_save_job(job, extra, options)
         except Exception as exc:  # noqa: BLE001 - exiftool itself failing to start must surface
             # as a failed save, not an uncaught exception Qt swallows into the log unseen.
             logger.exception("gui_save_single_failed", error=str(exc), file=str(job.path))
