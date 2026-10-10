@@ -81,6 +81,7 @@ from photo_tagger.pacing import (
 )
 from photo_tagger.pipeline import MAX_TRACKED_DROPPED_TERMS
 from photo_tagger.programs import find_program
+from photo_tagger.script_guard import find_foreign_script
 from photo_tagger.sessions import build_session_vocabulary, plan_sessions
 from photo_tagger.templates import ARTIST_TAGS, YEAR_TAGS, format_date
 from photo_tagger.undo import (
@@ -942,6 +943,25 @@ def foreign_terms_note(terms: Iterable[str]) -> str:
     if not listed:
         return ""
     return _("Mixed script, worth a look: {terms}").format(terms=", ".join(listed))
+
+
+def recheck_foreign_terms(item: PhotoItem) -> bool:
+    """
+    Run the script check again on a flagged photo's text as it stands now, and say if that changed.
+
+    The flag comes with the proposal, but a hand edit or harmonization can fix the words it named.
+    Left on, it would keep the photo in the Mixed writing systems filter and in the pass that asks
+    the model again, which would throw the fix away. Only a flag is checked again: text a person
+    typed is theirs, so the check never raises a new flag on it.
+    """
+    if not item.foreign_terms:
+        return False
+    finding = find_foreign_script([item.title, item.description, *item.keywords])
+    terms = list(finding.terms) if finding is not None else []
+    if terms == item.foreign_terms:
+        return False
+    item.foreign_terms = terms
+    return True
 
 
 def photo_item_to_report_row(

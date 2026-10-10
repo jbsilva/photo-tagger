@@ -152,6 +152,7 @@ from photo_tagger.gui_state import (
     photos_for_pass,
     photos_to_save,
     photos_to_write,
+    recheck_foreign_terms,
     record_dropped_terms,
     reports_status,
     resolve_extra_tags,
@@ -1866,6 +1867,12 @@ class MainWindow(QMainWindow):
     def _commit_current(self) -> None:
         """Copy the visible editable fields back onto the photo on show."""
         self._detail.commit()
+        item = self._current
+        if item is not None and recheck_foreign_terms(item):
+            # A hand fix of the flagged words clears the flag, and with it the photo's place in the
+            # mixed-script filter and in the pass that would generate it again.
+            self._detail.refresh_review_note()
+            self._refresh_status_cell(item)
 
     # --- back, forward, and up --------------------------------------------------------------------
 
@@ -2651,7 +2658,7 @@ class MainWindow(QMainWindow):
         parts = [
             failure_summary(sum(1 for item in self._batch_items() if item.status == FAILED)),
             vocabulary_summary(self._vocabulary_mapped, self._vocabulary_dropped),
-            review_summary(sum(1 for item in self._items.values() if item.foreign_terms)),
+            review_summary(sum(1 for item in self._batch_items() if item.foreign_terms)),
         ]
         return " ".join(part for part in parts if part)
 
@@ -2908,11 +2915,14 @@ class MainWindow(QMainWindow):
                 item.keywords = list(keywords)
                 # The shoot's own agreement, not a change made by hand.
                 item.proposed_keywords = list(keywords)
+                if recheck_foreign_terms(item):
+                    self._refresh_status_cell(item)
         if self._usage.run is not None:
             self._usage.run.harmonized += len(result.keywords)
         if self._current is not None and str(self._current.path) in result.keywords:
             # The open photo's keyword box is showing what harmonization just replaced.
             self._detail.set_keywords(self._current.keywords)
+            self._detail.refresh_review_note()
         self._status.setText(harmonize_summary(result))
 
     def _on_harmonize_finished(self) -> None:

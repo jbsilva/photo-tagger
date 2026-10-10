@@ -6404,6 +6404,40 @@ def test_the_detail_pane_says_when_the_text_mixes_writing_systems(
     assert window._detail._review_note.text() == ""  # noqa: SLF001
 
 
+def test_a_hand_fix_of_the_flagged_words_clears_the_flag(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """Fixing the words by hand takes the note away, and the photo out of the mixed-script pass."""
+    img = _jpeg(tmp_path / "a.jpg")
+    window._add_inputs([img])  # noqa: SLF001 - exercising the window's own state
+    item = window._items[str(img)]  # noqa: SLF001
+    item.title = "Decorated陶笛"
+    item.foreign_terms = ["陶笛"]
+    _select(window, window._tree.leaf_for(img))  # noqa: SLF001
+    assert window._current is item  # noqa: SLF001
+
+    window._detail._title.setText("Decorated Ocarina")  # noqa: SLF001
+    window._commit_current()  # noqa: SLF001
+
+    assert item.foreign_terms == []
+    assert window._detail._review_note.text() == ""  # noqa: SLF001
+
+
+def test_the_closing_line_counts_only_the_run_s_mixed_photos(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """A photo flagged by an earlier run is not this run's to report."""
+    old = _jpeg(tmp_path / "a.jpg")
+    new = _jpeg(tmp_path / "b.jpg")
+    window._add_inputs([old, new])  # noqa: SLF001
+    window._items[str(old)].foreign_terms = ["陶笛"]  # noqa: SLF001
+    window._generated_keys = [str(new)]  # noqa: SLF001
+
+    assert "mix" not in window._generation_notes()  # noqa: SLF001
+
+
 def test_the_repair_toggle_lands_in_the_saved_settings(window: gui.MainWindow) -> None:
     """Flipping the Settings entry is what a config save then writes."""
     window._settings_menu._repair_action.setChecked(True)  # noqa: SLF001

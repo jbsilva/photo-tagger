@@ -407,6 +407,11 @@ class DetailPane(QScrollArea):
         item.keywords = parse_keyword_lines(self._keywords.toPlainText())
         item.hint = self._hint.text().strip()
 
+    def refresh_review_note(self) -> None:
+        """Say again which words mix writing systems, once the check ran on the edited text."""
+        if self._item is not None:
+            self._review_note.setText(foreign_terms_note(self._item.foreign_terms))
+
     def set_keywords(self, keywords: list[str]) -> None:
         """Put *keywords* in the editable field, for a change made elsewhere (harmonization)."""
         self._keywords.setPlainText(keywords_to_text(keywords))

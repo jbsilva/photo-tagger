@@ -145,6 +145,7 @@ from photo_tagger.gui_state import (
     planned_copyright,
     progress_timing_text,
     rank_vision_models,
+    recheck_foreign_terms,
     record_dropped_terms,
     reports_status,
     resolve_extra_tags,
@@ -1887,6 +1888,38 @@ def test_foreign_terms_note_names_the_words_to_check() -> None:
     assert foreign_terms_note([]) == ""
     note = foreign_terms_note(["陶笛", "居酒屋"])
     assert "陶笛, 居酒屋" in note
+
+
+def test_recheck_foreign_terms_clears_a_flag_the_edit_fixed() -> None:
+    """A hand fix of the flagged words takes the photo out of the filter and the re-run pass."""
+    item = PhotoItem(path=Path("/a.jpg"), title="Decorated陶笛", foreign_terms=["陶笛"])
+
+    assert recheck_foreign_terms(item) is False  # nothing changed yet
+    item.title = "Decorated Ocarina"
+
+    assert recheck_foreign_terms(item) is True
+    assert item.foreign_terms == []
+
+
+def test_recheck_foreign_terms_names_what_is_still_mixed() -> None:
+    """A partial fix keeps the flag, naming only the words still left."""
+    item = PhotoItem(
+        path=Path("/a.jpg"),
+        title="Decorated Ocarina",
+        keywords=["居酒屋<Restaurant", "Ocarina"],
+        foreign_terms=["陶笛", "居酒屋"],
+    )
+
+    assert recheck_foreign_terms(item) is True
+    assert item.foreign_terms == ["居酒屋"]
+
+
+def test_recheck_foreign_terms_never_flags_what_a_person_typed() -> None:
+    """Only a flag the model's answer raised is checked again: typed text is the person's own."""
+    item = PhotoItem(path=Path("/a.jpg"), title="Decorated陶笛 Ocarina in a Garden")
+
+    assert recheck_foreign_terms(item) is False
+    assert item.foreign_terms == []
 
 
 def test_apply_proposal_carries_the_review_flag() -> None:
