@@ -6420,6 +6420,7 @@ def test_a_watch_batch_s_extra_pass_keeps_the_watch_trigger(
     window._generated_keys = [str(img)]  # noqa: SLF001
     window._usage.run = SimpleNamespace(trigger=TRIGGER_WATCH)  # noqa: SLF001
     window._pending_pass = RERUN_FAILED  # noqa: SLF001
+    window._autosave_action.setChecked(True)  # noqa: SLF001 - the passes serve a chained save
     started: list[str] = []
     monkeypatch.setattr(
         window,
@@ -6431,6 +6432,58 @@ def test_a_watch_batch_s_extra_pass_keeps_the_watch_trigger(
     window._usage.run = None  # noqa: SLF001 - the stand-in cannot be closed like a real run
 
     assert started == [TRIGGER_WATCH]
+
+
+def test_a_pending_pass_is_dropped_when_autosave_was_turned_off_meanwhile(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The passes exist for a run that saves by itself; switched off in the pause, none runs."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": img})
+    window._items[str(img)].status = FAILED  # noqa: SLF001
+    window._generated_keys = [str(img)]  # noqa: SLF001
+    window._pending_pass = RERUN_FAILED  # noqa: SLF001
+    monkeypatch.setattr(window, "_run_generation", lambda *_a, **_k: pytest.fail("no pass"))
+    monkeypatch.setattr(window, "_after_generation", lambda: None)
+
+    window._run_pending_pass()  # noqa: SLF001
+
+
+def test_retry_stays_off_while_a_chain_holds_the_window(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """A click in the pause before an extra pass would be ignored, so the button says so."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": img})
+    window._items[str(img)].status = FAILED  # noqa: SLF001
+    window._run_bar.retry_button.setEnabled(False)  # noqa: SLF001
+    window._pending_pass = RERUN_FAILED  # noqa: SLF001
+
+    window._update_status()  # noqa: SLF001
+    window._pending_pass = None  # noqa: SLF001
+
+    assert window._run_bar.retry_button.isEnabled() is False  # noqa: SLF001
+
+
+def test_a_cancelled_generation_lets_the_watch_queue_go_ahead(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Photos the watch queued during the run were not part of what Cancel stopped."""
+    window._watch_settings = WatchSettings(folders=(tmp_path,), extensions="jpg")  # noqa: SLF001
+    window._watch_pending = ["queued.jpg"]  # noqa: SLF001
+    window._cancelling = True  # noqa: SLF001
+    drained: list[int] = []
+    monkeypatch.setattr(window, "_generate_watched", lambda: drained.append(1))
+
+    window._on_generate_finished()  # noqa: SLF001
+    window._watch_settings = None  # noqa: SLF001
+
+    assert drained == [1]
 
 
 def test_worker_marks_a_proposal_that_mixes_writing_systems(
@@ -7576,6 +7629,7 @@ def test_an_extra_pass_follows_the_batch_choice_to_skip_the_cache(
     window._generated_keys = [str(img)]  # noqa: SLF001
     window._batch_uses_cache = False  # noqa: SLF001
     window._pending_pass = "failed"  # noqa: SLF001 - the retry pass (RERUN_FAILED)
+    window._autosave_action.setChecked(True)  # noqa: SLF001 - the passes serve a chained save
     runs: list[dict[str, object]] = []
     monkeypatch.setattr(window, "_run_generation", lambda _items, **kwargs: runs.append(kwargs))
 

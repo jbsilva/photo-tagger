@@ -1096,8 +1096,9 @@ class MainWindow(QMainWindow):
                 shown = search_summary(self._tree.shown_count(), len(self._items))
                 summary = f"{shown} · {summary}"
             self._status.setText(summary)
-        # Retry only makes sense when something actually failed (and no run is in flight).
-        if self._thread is None and self._save_thread is None:
+        # Retry only makes sense when something actually failed, and no run (or chain) holds the
+        # window: a click in the pause before an extra pass would be ignored.
+        if not self._busy():
             self._run_bar.retry_button.setEnabled(self._has_failures())
 
     # --- right-click menus, in the list and in the grid -------------------------------------------
@@ -1130,7 +1131,7 @@ class MainWindow(QMainWindow):
                 label,
                 lambda: self._run_generation([item], trigger=trigger),
             )
-            generate.setEnabled(self._thread is None)
+            generate.setEnabled(not self._busy())
             fresh = menu.addAction(
                 _("Generate (Skip Cache)"),
                 lambda: self._run_generation([item], use_cache=False, trigger=TRIGGER_SINGLE),
@@ -1138,7 +1139,7 @@ class MainWindow(QMainWindow):
             fresh.setToolTip(
                 tooltip("Call the model even when a cached result exists for this photo."),
             )
-            fresh.setEnabled(self._thread is None)
+            fresh.setEnabled(not self._busy())
             menu.addSeparator()
         menu.addAction(reveal_label(sys.platform), lambda: self._reveal(Path(path)))
         menu.addSeparator()
@@ -1183,7 +1184,7 @@ class MainWindow(QMainWindow):
             ngettext("Generate {n} Photo", "Generate {n} Photos", n).format(n=n),
             lambda: self._run_generation(items),
         )
-        generate.setEnabled(self._thread is None)
+        generate.setEnabled(not self._busy())
         fresh = menu.addAction(
             ngettext(
                 "Generate {n} Photo (Skip Cache)",
@@ -1193,7 +1194,7 @@ class MainWindow(QMainWindow):
             lambda: self._run_generation(items, use_cache=False),
         )
         fresh.setToolTip(tooltip("One-time: call the model even for photos with cached results."))
-        fresh.setEnabled(self._thread is None)
+        fresh.setEnabled(not self._busy())
         menu.addSeparator()
         menu.addAction(
             _("Remove From List"),
@@ -2463,9 +2464,10 @@ class MainWindow(QMainWindow):
         if cancelled:
             # _reset_working just put the photos this batch never reached back to READY, which is
             # exactly what a chained save looks for. Chaining on would rewrite the photos the
-            # user stopped it from writing. The watch itself keeps running: whatever lands next
-            # still queues normally.
+            # user stopped it from writing. The watch itself keeps running, so what it queued
+            # meanwhile goes ahead, as after a Cancel between the steps of a chain.
             self._finish_run(telemetry.OUTCOME_CANCELLED)
+            self._continue_watch()
             return
         # Same as a finished generation: the alert is for the run nobody was watching.
         self._settings_menu.notify_run_finished(self._status.text())
@@ -2678,8 +2680,9 @@ class MainWindow(QMainWindow):
         self._teardown_thread()
         if cancelled:
             # Same reasoning as the cancelled save: harmonizing and then saving unattended is
-            # more work on the batch the user just stopped.
+            # more work on the batch the user just stopped. What the watch queued meanwhile is not.
             self._finish_run(telemetry.OUTCOME_CANCELLED)
+            self._continue_watch()
             return
         self._after_generation()
 
@@ -2783,7 +2786,8 @@ class MainWindow(QMainWindow):
         if self._closing or self._pending_pass is None:
             return  # closing, or Cancel already ended the chain during the pause
         name, self._pending_pass = self._pending_pass, None
-        targets = photos_for_pass(name, self._batch_items()) if name else []
+        # Asked again: Save After Generating may have been turned off during the pause.
+        targets = photos_for_pass(name, self._batch_items()) if self._wants_chained_save() else []
         if targets and not self._busy():
             # A mixed-script pass reads past the cache: the answer it is unhappy with is the one
             # stored there, so replaying it would not be asking again at all.
