@@ -8,137 +8,69 @@ This file lists all notable changes to this project. The format follows the
 
 ### Added
 
-- Each save names photo-tagger and its version in the file, as digiKam and Lightroom do. The photo
-  gets `EXIF:ProcessingSoftware`, and the photo and the sidecar get an `xmpMM:History` event.
-
-- `--sidecar-override EXT=TARGET` (`sidecar_overrides` in the configuration file) sends one file
-  type elsewhere, whatever `--sidecar-mode` says. `dng=photo` writes into each DNG, as Lightroom
-  Classic does.
-
-- `--duty` and `--battery-floor` pace a long run. The run works for a window, then rests, so the
-  battery charges back and the fans wind down. This means a library of hundreds of thousands of
-  photos no longer needs the machine at full tilt for days. Rests happen at photo boundaries and
-  `--max-pause-minutes` caps them. The summary reports what the rests cost. There is also a
-  `[pacing]` configuration table.
-
-- GUI: **Settings > Pacing...** sets the same thing for the window's own runs. The status bar says
-  why a run is resting and for how long.
-
-- `--artist` and `--copyright` write your credit and copyright notice alongside the AI fields, into
-  EXIF, XMP, and IPTC. `{year}` comes from each photo's own capture date. Also `--rights`,
-  `--marked`, `--set TAG=VALUE`, `--no-write-copyright`, and a `[copyright]` configuration table.
-
-- `photo-tagger set` writes those same fields on already-tagged photos, with no model call.
-
-- `photo-tagger show` prints what a photo carries. It names the ExifTool tag behind every value.
-  `--all` dumps every tag, and `--json` pipes it elsewhere.
-
-- GUI: **Save After Generating** writes each run's photos as soon as it finishes, so an overnight
-  batch is one click. The toggle sits on the arrow of either **Generate** button, which then reads
-  **Generate and Save**. The one set of **Save Options** sits beside it, because the write it makes
-  is the write **Save** makes. Before saving, the run retries the photos that failed. Then it asks
-  again for the photos whose text came back in two writing systems, where a second answer usually
-  comes back in one. That call reads past the result cache and replaces what it finds. The closing
-  line counts any photo still failing. The choice persists to `[gui]`.
-
-- GUI: **Settings > Copyright...** sets the same credit and notice, previews the tags a save writes,
-  and persists them to `[copyright]`. A copyright alone is enough to save a photo, and **Insert**
-  buttons type `©`, `{year}`, and `{artist}` into the field holding the cursor. The save menu's
-  **Write Copyright** skips the block without clearing it.
-
-- GUI: **No copyright** joins the **Select > Status** criteria and the grid's **Show** box. It finds
-  the photos that have no copyright notice in EXIF, IPTC, or XMP.
-
-- GUI: with a copyright set, **Save Selected** also stamps it on the checked photos that you did not
-  generate, and leaves their text alone. You can add a notice to tagged photos without a model call.
-
-- GUI: a `C` in the **Tagged** column and a `C` badge on the thumbnail mark a photo that has a
-  copyright notice. A **Copyright** row in the detail pane shows the notice on the file next to the
-  one that a save writes.
-
-- `--otel` exports an OpenTelemetry trace of every model call (timings, tokens, failures) to a
-  collector you run, so a slow or expensive batch is something you can read rather than guess at.
-  Off by default and pointed only where `--otel-endpoint` says. The photo itself is never exported.
-  Generated text needs `--otel-content`. Needs the new `[otel]` extra.
-
-- When a batch ends, `--notify` raises a desktop notification that carries its tally
-  (`38 of 42 photos tagged, 4 failed.`). `--notify-sound` adds an audible alert, and `watch` alerts
-  per batch. In the GUI: **Settings > Notify When a Run Ends**. It uses the notifier the OS already
-  ships (`osascript`, `notify-send`, or a PowerShell toast). That means no new dependency and no
-  failure where there is none.
-
-- Every run now checks the generated text for mixed writing systems and flags the photos that have
-  them, so a stray `陶笛` in English output is something you are told about instead of something you
-  find in the catalog later. The photo is still tagged: the flag names the words in a
-  `foreign_terms` CSV column and `--json` key, a line in the log, and `flagged_files` in the
-  `--summary-file`. No language list is involved, so it works for any `--output-language`. In the
-  GUI a flagged photo gets an amber note over its editable fields and a `⚠` in the **Status**
-  column. Its thumbnail gets an amber `!`. **Mixed writing systems** joins the **Select > Status**
-  criteria and the folder grid's **Show** box, so the closing count turns into rows you can open.
-
-- `--repair-language` asks the model again, with the same photo, for the flagged photos only, so
-  `Decorated陶笛` comes back as `Decorated Ocarina`. It makes one extra call per affected photo and
-  nothing on the rest, so it is off by default. A repair that fails or comes back mixed keeps the
-  original answer and the flag. In the GUI: **Settings > Rewrite Mixed-Language Output**.
-
-- GUI: the **Remove** button's arrow offers **Remove Checked** and **Remove Unchecked**, so you can
-  take photos off the list by checkbox, not only by selection.
-
-- Telemetry now reports the configuration and features you use, as switches, counts, and mode names,
-  and how each run ends. In the GUI, each generation and save is a run of its own. The session tells
-  how long the window was busy, in use, or idle. [docs/telemetry.md](docs/telemetry.md) lists every
-  field. You see the notice once more.
-
-- Crash reports now carry the stack trace as modules, functions, and lines (never a path or the
-  message), and a failed photo reports its error class and HTTP status.
+- `--artist`, `--copyright`, `--rights`, `--marked`, and `--set TAG=VALUE` write your credit and
+  notice into EXIF, XMP, and IPTC. `{year}` comes from each photo's capture date. `--set` takes only
+  metadata tags (not `FileName` or `Directory`), and `--no-write-copyright` skips the whole block
+  for one run. The configuration table is `[copyright]`.
+- `photo-tagger set` writes those fields with no model call. `photo-tagger show` prints what a photo
+  carries and names the tag behind each value.
+- GUI: **Settings > Copyright...** sets the notice, and **Save Selected** stamps it on photos that
+  you did not generate. The **No copyright** filter and a `C` mark show which photos have a notice.
+- `--duty` and `--battery-floor` rest a long run between work windows, so the battery charges and
+  the fans wind down. `--max-pause-minutes` caps a rest, and the `[pacing]` table holds them. In the
+  GUI: **Settings > Pacing...**.
+- Each run flags the photos whose text mixes writing systems (a stray `陶笛` in English output), in a
+  `foreign_terms` CSV column and `--json` key and in `flagged_files` of `--summary-file`.
+  `--repair-language` asks the model again for those photos only.
+- GUI: **Save After Generating** writes each run's photos when it ends. First it retries the failed
+  photos and the ones with mixed writing systems.
+- `--sidecar-override EXT=TARGET` sends one file type elsewhere. `dng=photo` writes into each DNG,
+  as Lightroom Classic expects. The configuration key is `sidecar_overrides`.
+- `--notify` shows a desktop notification with the tally when a batch ends, and `--notify-sound`
+  adds a sound. In the GUI: **Settings > Notify When a Run Ends**.
+- `--otel` sends an OpenTelemetry trace of each model call to the collector at `--otel-endpoint`. It
+  needs the `[otel]` extra, and it never sends the photo. The generated text goes only with
+  `--otel-content`.
+- GUI: the arrow of the **Remove** button offers **Remove Checked** and **Remove Unchecked**.
+- Each save records photo-tagger in the file (`EXIF:ProcessingSoftware` and an `xmpMM:History`
+  event), as digiKam and Lightroom do.
+- Telemetry reports the configuration and the outcome of each run, and GUI runs and sessions. Crash
+  reports carry the stack trace, without paths or messages, and a failed photo reports its error
+  class and HTTP status. See [docs/telemetry.md](docs/telemetry.md). You see the notice once more.
 
 ### Changed
 
-- `PHOTO_TAGGER_TELEMETRY` replaces `PHOTO_TAGGER_NO_TELEMETRY`. `0` turns telemetry off, and `1`
-  sends it even with `DO_NOT_TRACK=1` set. A GUI toggle checked by hand also overrules
-  `DO_NOT_TRACK`, and the toggle now shows what is actually sent.
-
-- The telemetry collector now keeps events with no expiry date. Before, they expired after three
-  months.
-
-- The telemetry dashboard reads the whole D1 history and filters by install. It leaves out the
-  machine it runs on, and it charts GUI runs, sessions, and configuration.
-
-- `--jpeg-dimensions` now defaults to 640 px instead of 1280. Prefill scales with the pixel count,
-  so this is about a second less per photo on a local 30B model. 640 px carries everything but small
-  text in the frame. Raise it to 896 or 1024 for photos of signs, documents, or labels. A run at a
-  new size starts a fresh cache namespace. Pin `jpeg_dimensions = 1280` in your configuration to
-  keep both the old detail level and your existing cache.
+- `--jpeg-dimensions` defaults to 640 px instead of 1280. This saves about a second per photo on a
+  local 30B model. For small text in the frame, use 896 or 1024.
+- `max_tokens` is no longer part of the cache namespace, so a new cap keeps the cache. The cache
+  starts fresh once after the upgrade.
+- `PHOTO_TAGGER_TELEMETRY` replaces `PHOTO_TAGGER_NO_TELEMETRY`, which still turns telemetry off.
+  `0`, or any value that is not a "yes", turns telemetry off. `1` sends it even with
+  `DO_NOT_TRACK=1` set, and so does the GUI toggle when you check it by hand.
+- The telemetry collector keeps events with no expiry date. Before, they expired after three months.
+- A save leaves out a tag that the file type cannot hold, such as IPTC in WebP.
+- photo-tagger needs cyclopts 5.2.0 and pydantic-ai 2.54.0 or later.
 
 ### Fixed
 
-- A save writes only the tags whose value changed. If the photo already has every value, the file is
-  not touched, so its timestamp stays and a backup tool such as rsync does not copy it again.
-- The desktop window now sends the configured `jpeg_dimensions` to the model instead of its own
-  hardcoded 640 px preview size, so a GUI run and a CLI run ask the same question about a photo.
-  Windows left on the default are unaffected, cache included.
-- `max_tokens` no longer takes part in the cache namespace. A call that hits the cap yields nothing
-  to store, so the cap never shaped any cached answer. Raising the cap to escape a repetition loop
-  no longer throws the cache away.
-- A photo whose answer ran past `--max-tokens` is now asked again automatically, twice, instead of
-  failing. The cap is only ever reached by a model that fell into a repetition loop, an endless
-  `Animal<Animal` chain in its hierarchies. The next attempt almost never repeats it.
-- The schema handed to the model now states the keyword and hierarchy caps it already enforced. The
-  prompt also rules out repeated chains, a term as its own parent, and climbing past a broad
-  category.
-- pydantic-ai's first-run observability banner no longer prints. It landed on stderr in the middle
-  of a batch, between the log lines, and in the terminal behind the GUI window.
-- The system prompt now rules out a foreign word used *as* the concept name. When the output
-  language is English, a title cannot read `Decorated陶笛 with Geometric Pattern`. Its language rule
-  only covered mixed spelling before.
-- GUI: **Uncheck Already Tagged** no longer freezes the window. It now uses the **Tagged** column's
-  background scan instead of reading every photo from the click handler. If the scan is still
-  running, it waits for the scan to finish.
-- GUI: the metadata scan behind the **Tagged** column reads in small batches, so the column fills in
-  as it goes. A long scan (thousands of photos, or a network share) shows a progress bar with a
-  **Stop** button under the list.
-- GUI: removing a folder while that scan is running stops it from reading that folder, and takes
-  those photos out of the progress bar's total.
+- A save writes only the tags whose value changed. If no value changed, the file stays untouched.
+- IPTC is written as UTF-8. A name like Łukasz no longer becomes `?ukasz`, and a long value is cut
+  between characters.
+- A value with a line break is written as one value. Before, the rest of the line ran as ExifTool
+  arguments.
+- Undo no longer restores a `*_original` backup that an earlier run left behind.
+- On Windows, photo-tagger never runs ExifTool or another helper program from the current folder.
+- A crash report no longer goes out before you see the telemetry notice.
+- A typed `--embed-in-photo` now beats a `sidecar_mode` saved in the configuration file.
+- Ctrl-C in `watch` now stops the watch.
+- An answer that runs past `--max-tokens` (a model in a repetition loop) is asked again, twice,
+  instead of failing.
+- GUI: the window uses `jpeg_dimensions` from the configuration, not a fixed 640 px.
+- GUI: **Uncheck Already Tagged** no longer freezes the window. The **Tagged** scan reads in
+  batches, shows a progress bar with **Stop**, skips folders you remove, and no longer restarts
+  forever on a photo it cannot read.
+- The prompt forbids a foreign word as the name of the subject.
+- pydantic-ai's first-run banner no longer prints.
 
 ## [0.9.0] - 2026-09-18
 
@@ -256,7 +188,7 @@ This file lists all notable changes to this project. The format follows the
 
 - GUI: a **Keep ExifTool Backup** toggle in the Save options menu (the CLI's `--no-backup-xmp`).
   Saving used to always leave a `*_original` copy of every photo behind, which on a large batch
-  doubles the disk space used. It defaults to on and persists via *Save Settings as Defaults*.
+  doubles the disk space used. It defaults to on and persists via _Save Settings as Defaults_.
 
 ### Changed
 
@@ -269,7 +201,7 @@ This file lists all notable changes to this project. The format follows the
 
 ### Added
 
-- Anonymous crash reports: an unhandled exception sends the exception *type* and its code location
+- Anonymous crash reports: an unhandled exception sends the exception _type_ and its code location
   inside photo-tagger (`module:function:line`), never the error message (messages can embed paths).
   Same opt-outs as the usage telemetry. It is capped per process. The one-time telemetry notice
   re-shows once for existing installs so the expanded disclosure is seen.
