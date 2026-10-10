@@ -441,6 +441,8 @@ class MainWindow(QMainWindow):
         # _on_scan_finished): those are not handed out again until they leave the list.
         self._scan_batch: set[str] = set()
         self._scan_tried: set[str] = set()
+        # Photos of the running scan's batch that an undo rewrote: what it reads of them is stale.
+        self._scan_stale: set[str] = set()
         self._harmonize_thread: QThread | None = None
         self._harmonize_worker: HarmonizeWorker | None = None
         self._watch_thread: QThread | None = None
@@ -1312,6 +1314,7 @@ class MainWindow(QMainWindow):
         for key in keys:
             self._items.pop(key, None)
             self._scan_tried.discard(key)  # added again later, it deserves a fresh read
+            self._scan_batch.discard(key)  # the scan in flight skips it, so it has not tried it
             self._detail.forget(key)
             self._folder_grid.forget(key)
             if self._current is not None and str(self._current.path) == key:
@@ -1534,6 +1537,7 @@ class MainWindow(QMainWindow):
         if not pending:
             return
         self._scan_batch = {str(path) for path in pending}
+        self._scan_stale = set()
         self._scan_worker = MetadataScanWorker(pending)
         self._scan_worker.done.connect(self._on_scan_done)
         self._scan_worker.progress.connect(self._on_scan_progress)
@@ -1570,7 +1574,7 @@ class MainWindow(QMainWindow):
         """Record the scanned field sets and repaint the Tagged column."""
         for key, fields in presence.items():
             item = self._items.get(key)
-            if item is not None:
+            if item is not None and key not in self._scan_stale:
                 # Merge rather than replace: a save may have added fields while the scan ran.
                 item.known_fields = set(fields) | (item.known_fields or set())
                 self._refresh_status_cell(item)
@@ -2156,6 +2160,10 @@ class MainWindow(QMainWindow):
             item.status = READY if item.has_proposal else PENDING
             item.known_fields = None
             self._scan_tried.discard(key)  # the file changed, so read it again
+            if key in self._scan_batch:
+                # What the scan in flight read of it, or is about to deliver, is stale too.
+                self._scan_batch.discard(key)
+                self._scan_stale.add(key)
             item.loaded = False
             item.sources_read = False
             self._refresh_status_cell(item)

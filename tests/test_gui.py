@@ -7503,6 +7503,46 @@ def test_a_finished_scan_marks_what_it_could_not_read(
     assert str(img) in window._scan_tried  # noqa: SLF001
 
 
+def test_a_photo_added_again_while_the_scan_ran_is_read_again(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scan in flight skips a removed photo, so the finish must not count it as tried."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    key = str(img)
+    window._scan_batch = {key}  # noqa: SLF001 - the scan in flight had it
+
+    window._forget_items([key])  # noqa: SLF001 - removed mid-scan...
+    _add_dir(window, {"a": img})  # ...and added back before the scan ended
+    window._items[key].known_fields = None  # noqa: SLF001
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert key not in window._scan_tried  # noqa: SLF001
+
+
+def test_a_photo_undone_while_the_scan_ran_is_read_again(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What the scan in flight read of a photo an undo then rewrote is stale, not a fresh try."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    key = str(img)
+    window._scan_batch = {key}  # noqa: SLF001
+
+    window._on_undone([key])  # noqa: SLF001
+    _scan_reports(window, {"a.jpg": {FIELD_TITLE}})  # read before the undo, delivered after it
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert window._items[key].known_fields is None  # noqa: SLF001
+    assert key not in window._scan_tried  # noqa: SLF001
+
+
 def test_uncheck_already_tagged_settles_when_only_unreadable_photos_are_left(
     window: gui.MainWindow,
     tmp_path: Path,
