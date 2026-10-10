@@ -2622,6 +2622,33 @@ def test_set_exits_1_when_no_field_was_asked_for(tmp_path: Path) -> None:
     assert exit_info.value.code == 1
 
 
+def test_set_refuses_exif_tags_that_only_sidecars_would_get(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """EXIF in a sidecar-only run would fail on every photo, so it stops first and says why."""
+    image = _make_jpeg(tmp_path / "img.jpg")
+    with (
+        patch.object(main_module, "write_metadata_everywhere") as write,
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        main_module.app(["set", "--input", str(image), "--set", "EXIF:Copyright=(c) Ada"])
+
+    assert exit_info.value.code == 1
+    assert "--embed-in-photo" in capsys.readouterr().out
+    write.assert_not_called()
+
+
+def test_set_lets_exif_tags_through_when_the_photo_is_written(tmp_path: Path) -> None:
+    """With the photo among the targets, the same EXIF tag has somewhere to go."""
+    image = _make_jpeg(tmp_path / "img.jpg")
+    with patch.object(main_module, "write_metadata_everywhere", return_value=(True, [])) as write:
+        _run_app(
+            ["set", "--input", str(image), "--embed-in-photo", "--set", "EXIF:Copyright=(c) Ada"],
+        )
+    write.assert_called_once()
+
+
 def test_set_exits_1_on_a_template_it_cannot_fill(tmp_path: Path) -> None:
     """A typo in the notice stops the run before the first photo is touched."""
     image = _make_jpeg(tmp_path / "img.cr3")

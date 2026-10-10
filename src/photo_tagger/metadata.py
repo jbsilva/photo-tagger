@@ -1132,19 +1132,21 @@ def build_contextual_prompt(  # noqa: PLR0913 - each kwarg renders an independen
     return "\n\n".join(sections)
 
 
-# Tag groups an XMP sidecar cannot hold. ExifTool drops them without complaint, but a payload left
-# with nothing in it fails the write outright ("Nothing to write"), which is what a --set of EXIF
-# tags under the default sidecar mode would otherwise do to every photo in the run.
-_NON_XMP_GROUPS = ("EXIF", "IPTC")
+# The tag families an XMP sidecar can hold: XMP, and a tag with no group, which ExifTool places
+# itself. It drops any other group without complaint, but a payload left with nothing in it fails
+# the write outright ("Nothing to write"), which is what a --set of EXIF tags under the default
+# sidecar mode would otherwise do to every photo in the run.
+_SIDECAR_FAMILIES = frozenset({"XMP", ""})
 
 
 def _sidecar_writable[V](tags: Mapping[str, V]) -> dict[str, V]:
-    """Keep the extra tags an XMP sidecar can actually carry (see :data:`_NON_XMP_GROUPS`)."""
-    return {
-        tag: value
-        for tag, value in tags.items()
-        if tag.split(":", 1)[0].upper() not in _NON_XMP_GROUPS
-    }
+    """Keep the extra tags an XMP sidecar can actually carry (see :data:`_SIDECAR_FAMILIES`)."""
+    return {tag: value for tag, value in tags.items() if _tag_family(tag) in _SIDECAR_FAMILIES}
+
+
+def sidecar_can_hold(tags: Mapping[str, str]) -> bool:
+    """Say whether an XMP sidecar can carry any of *tags* (EXIF and IPTC it cannot)."""
+    return bool(_sidecar_writable(tags))
 
 
 def _build_write_payload(
@@ -1570,9 +1572,21 @@ def write_metadata_everywhere(  # noqa: PLR0913 - distinct optional fields are c
     left out. A partial failure under "both" still reports what landed, so undo can revert it.
     """
     targets = plan_writes(image_path, sidecar_mode, sidecar_overrides)
+    # A --set of EXIF tags under "both": the photo takes them, and the sidecar has nothing to hold.
+    # That is not a failure, and there is no file to write or to journal.
+    idle_sidecar = len(targets) > 1 and not _build_write_payload(
+        keywords,
+        description,
+        title,
+        use_sidecar=True,
+        extra=extra,
+    )
     saved = 0
     written: list[WriteTarget] = []
     for target in targets:
+        if target.use_sidecar and idle_sidecar:
+            saved += 1
+            continue
         result = write_metadata(
             image_path,
             keywords,

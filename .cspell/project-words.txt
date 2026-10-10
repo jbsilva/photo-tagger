@@ -61,6 +61,7 @@ excepthook
 executescript
 exif
 Exif
+EXIFIFD
 exiftool
 Exiftool
 filelock
@@ -103,6 +104,7 @@ importorskips
 imread
 inlinehilite
 internvl
+INTEROPIFD
 iptc
 IPTC
 isort
@@ -250,6 +252,7 @@ subapp
 subapps
 subcontrol
 subfolders
+SUBIFD
 superfences
 sysctl
 sysfs

@@ -93,12 +93,14 @@ from photo_tagger.logging_setup import setup_logging
 from photo_tagger.metadata import (
     SOURCE_SIDECAR,
     managed_helper,
+    plan_writes,
     prompt_with_hint,
     read_all_tags,
     read_capture_years,
     read_fields,
     select_camera_fields,
     select_location,
+    sidecar_can_hold,
     write_metadata_everywhere,
 )
 from photo_tagger.models import KeywordSet
@@ -608,6 +610,7 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
         sidecar_overrides=sidecar_overrides,
     )
     telemetry.note(photos=len(image_files))
+    _refuse_fields_no_target_can_hold(console, image_files, fields, output)
     if dry_run:
         _preview_fields(console, image_files, fields)
         return
@@ -622,6 +625,33 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
     console.print(f"[green]Wrote {written} of {len(image_files)} photo(s).[/green]")
     if failed:
         console.print(f"[red]{len(failed)} failed; see the log for what ExifTool said.[/red]")
+        raise SystemExit(1)
+
+
+def _refuse_fields_no_target_can_hold(
+    console: Console,
+    image_files: list[Path],
+    fields: ExtraFields,
+    output: OutputConfig,
+) -> None:
+    """
+    Stop before the first photo when every write goes to a sidecar and no tag fits in one.
+
+    A sidecar holds XMP only, so a --set of EXIF or IPTC tags would fail on every photo, one log
+    line at a time, and end in a count of failures that does not say why.
+    """
+    mode = resolve_sidecar_mode(output)
+    overrides = resolve_sidecar_overrides(output)
+    only_sidecars = all(
+        target.use_sidecar
+        for image_file in image_files
+        for target in plan_writes(image_file, mode, overrides)
+    )
+    if only_sidecars and not sidecar_can_hold(fields.resolve(datetime.now(tz=UTC).year)):
+        console.print(
+            "[red]Every tag asked for is EXIF or IPTC, and an XMP sidecar holds neither. Write "
+            "into the photos with --embed-in-photo or --sidecar-mode both.[/red]",
+        )
         raise SystemExit(1)
 
 

@@ -353,6 +353,27 @@ def test_write_metadata_everywhere_writes_both_targets(tmp_path: Path) -> None:
     assert TAG_EXIF_IMAGE_DESCRIPTION not in payloads[1]
 
 
+def test_write_metadata_everywhere_saves_exif_tags_under_both_without_the_sidecar(
+    tmp_path: Path,
+) -> None:
+    """Under "both", a sidecar with nothing it can hold is skipped, not counted as a failure."""
+    img = tmp_path / "a.dng"
+    img.write_text("x")
+    helper = _fake_helper()
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        ok, written = write_metadata_everywhere(
+            img,
+            KeywordSet(),
+            extra={"EXIF:Copyright": "(c) Ana"},
+            sidecar_mode="both",
+        )
+
+    assert ok is True
+    assert [t.path.name for t in written] == ["a.dng"]
+    assert helper.set_tags.call_count == 1
+
+
 def test_write_metadata_everywhere_reports_a_half_written_photo(tmp_path: Path) -> None:
     """One target failing is not a clean save, but what did land still has to reach the journal."""
     img = tmp_path / "a.dng"
@@ -1959,3 +1980,12 @@ def test_managed_helper_searches_path_for_a_configured_bare_name(
         pass
     found.assert_called_once_with("exiftool")
     ctor.assert_called_once_with(executable="/usr/bin/exiftool")
+
+
+def test_sidecar_can_hold_knows_the_exif_family_one_groups() -> None:
+    """IFD0 and ExifIFD are EXIF too, so a sidecar can hold none of them."""
+    from photo_tagger.metadata import sidecar_can_hold  # noqa: PLC0415
+
+    assert not sidecar_can_hold({"IFD0:Copyright": "c", "ExifIFD:Artist": "a", "IPTC:City": "x"})
+    assert not sidecar_can_hold({"IFD2:Copyright": "c", "MakerNotes:OwnerName": "o"})
+    assert sidecar_can_hold({"IFD0:Copyright": "c", "XMP-dc:Rights": "r"})
