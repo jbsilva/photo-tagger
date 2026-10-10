@@ -5,8 +5,8 @@
 """
 Copy the events Analytics Engine still holds into the D1 table, as SQL for wrangler to run.
 
-AE keeps three months; D1 keeps everything. Run it once, after the Worker starts writing to D1: step
-5 of "Keep every event" in README.md has the two commands.
+AE keeps three months; D1 keeps everything. Run it once, after the Worker starts writing to D1:
+"Copy the Analytics Engine history into D1" in README.md has the two commands.
 
 Only rows older than the first D1 row are copied, so no event is stored twice and a second run
 copies nothing. Needs CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN (Account Analytics: Read and D1:

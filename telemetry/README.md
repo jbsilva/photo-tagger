@@ -26,9 +26,10 @@ make it send, and the ways to turn it off. The client code is in
 Each beacon is one event: `run`, `crash`, `session`, `command`, or `launch`.
 [docs/telemetry.md](../docs/telemetry.md) lists the fields. The Worker stores every event in two
 places. Analytics Engine (AE) keeps it for three months, in one shared column layout. The map of the
-columns is in [`queries.sql`](queries.sql), and column `blob19` holds the whole beacon as JSON. D1
-keeps it with no expiry date, as one row of the `events` table, with the same JSON in the `payload`
-column. The dashboard reads D1, so it can look back further than three months.
+columns is in [`queries.sql`](queries.sql). Column `blob19` holds the whole beacon as JSON when it
+fits in the 16 KB that AE allows for a row. Otherwise `blob19` is empty. D1 keeps it with no expiry
+date, as one row of the `events` table, with the same JSON in the `payload` column. The dashboard
+reads D1, so it can look back further than three months.
 
 Before it stores a beacon, the Worker removes each key that is not `snake_case` and each list. It
 also removes each object nested more than one level deep, and it cuts every string to a fixed
@@ -55,7 +56,8 @@ Wrangler deploys the Worker from [`wrangler.toml`](wrangler.toml), with its bind
 [`migrations/`](migrations/) to the D1 table. The
 [`deploy-telemetry.yml`](../.github/workflows/deploy-telemetry.yml) workflow does both steps after
 the Worker tests pass. It runs on each push to `main` that changes the Worker, its tests,
-`wrangler.toml`, or a migration.
+`wrangler.toml`, a migration, or the workflow itself. You can also start it by hand from the Actions
+tab.
 
 Analytics Engine needs no setup. The `photo_tagger_telemetry` dataset starts to exist with the first
 write.
@@ -112,8 +114,8 @@ then, every workflow can read the old repository-level secret.
 
 ### Deploy from your machine
 
-CI deploys the Worker on each push. To deploy from your machine, put the deploy token in
-`CLOUDFLARE_API_TOKEN`. Then run these commands from this directory:
+CI deploys the Worker on each push to `main` that changes it. To deploy from your machine, put the
+deploy token in `CLOUDFLARE_API_TOKEN`. Then run these commands from this directory:
 
 ```bash
 npx wrangler d1 migrations apply DB --remote

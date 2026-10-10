@@ -195,7 +195,7 @@ GROUP BY app_version
 ORDER BY crashes DESC;
 
 
--- 15. D1: the long-term table (see README.md, "Keep every event"). Run with
+-- 15. D1: the long-term table (see README.md, "What it stores"). Run with
 --   wrangler d1 execute photo-tagger-telemetry --remote --command "..."
 -- or through the dashboard's SQL console. payload is the beacon as JSON; read a field with ->>.
 -- Settings popularity, all time: which sidecar mode do runs use?
