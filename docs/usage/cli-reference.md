@@ -20,7 +20,7 @@ Running `photo-tagger` with image inputs tags them (the default command). Seven 
 | Command                   | Description                                                                                                 |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `photo-tagger`            | Tag the given images (default). Documented by the option groups below.                                      |
-| `photo-tagger doctor`     | Pre-flight check: makes sure that ExifTool is on `PATH` and the provider serves the model, then exits 0/1.  |
+| `photo-tagger doctor`     | Pre-flight check: makes sure that ExifTool can be found and the provider serves the model, then exits 0/1.  |
 | `photo-tagger show`       | Print the metadata a photo already carries (see [Copyright and other fields](#copyright-and-other-fields)). |
 | `photo-tagger set`        | Write copyright and other fields without calling a model (same section).                                    |
 | `photo-tagger vocabulary` | Build a keyword file from a library's own keywords (see [Building a vocabulary](#building-a-vocabulary)).   |
@@ -34,10 +34,10 @@ run `doctor` first:
 
 ```console
 $ photo-tagger doctor --provider lmstudio --model qwen/qwen3-vl-30b
-photo-tagger 0.5.0 environment check
+photo-tagger 0.9.0 environment check
 
   OK    ExifTool: /usr/bin/exiftool
-  OK    Model 'qwen/qwen3-vl-30b' on lmstudio: available at http://localhost:1234/v1
+  OK    Model 'qwen/qwen3-vl-30b' on LM Studio: available at http://localhost:1234/v1
 
 All checks passed.
 ```
@@ -60,30 +60,30 @@ All checks passed.
 The provider group selects the backend and how to reach it. Prefer the API-key environment variables
 over `--api-key` so the key never lands in your shell history.
 
-| Flag                  | Default                                                                                                            | Env var                                                                             | Description                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `--provider` NAME     | `lmstudio`                                                                                                         | `-`                                                                                 | Backend: `ollama`, `lmstudio`, `llamacpp`, or `openai`.                         |
-| `-m`, `--model` NAME  | `qwen/qwen3-vl-30b`                                                                                                | `MODEL_NAME`                                                                        | Vision-language model identifier.                                               |
-| `-u`, `--url` URL     | `http://localhost:1234/v1` (lmstudio), `http://localhost:11434/v1` (ollama), `http://localhost:8080/v1` (llamacpp) | `LM_STUDIO_BASE_URL` / `OLLAMA_BASE_URL` / `LLAMA_CPP_BASE_URL` / `OPENAI_BASE_URL` | Provider API base URL.                                                          |
-| `-k`, `--api-key` KEY | none                                                                                                               | `OLLAMA_API_KEY` / `LM_STUDIO_API_KEY` / `LLAMA_CPP_API_KEY` / `OPENAI_API_KEY`     | API key. Prefer the environment variables over the flag. Required for `openai`. |
-| `--retries` N         | `5`                                                                                                                | `RETRIES`                                                                           | Automatic retries after the model's output fails schema validation.             |
+| Flag                  | Default                                                                                                                                                  | Env var                                                                             | Description                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `--provider` NAME     | `lmstudio`                                                                                                                                               | `-`                                                                                 | Backend: `ollama`, `lmstudio`, `llamacpp`, or `openai`.                         |
+| `-m`, `--model` NAME  | `qwen/qwen3-vl-30b`                                                                                                                                      | `MODEL_NAME`                                                                        | Vision-language model identifier.                                               |
+| `-u`, `--url` URL     | `http://localhost:1234/v1` (lmstudio), `http://localhost:11434/v1` (ollama), `http://localhost:8080/v1` (llamacpp), `https://api.openai.com/v1` (openai) | `LM_STUDIO_BASE_URL` / `OLLAMA_BASE_URL` / `LLAMA_CPP_BASE_URL` / `OPENAI_BASE_URL` | Provider API base URL.                                                          |
+| `-k`, `--api-key` KEY | none                                                                                                                                                     | `OLLAMA_API_KEY` / `LM_STUDIO_API_KEY` / `LLAMA_CPP_API_KEY` / `OPENAI_API_KEY`     | API key. Prefer the environment variables over the flag. Required for `openai`. |
+| `--retries` N         | `5`                                                                                                                                                      | `RETRIES`                                                                           | Automatic retries after the model's output fails schema validation.             |
 
 ## Inference
 
 These flags tune the sampling and the image sent to the model. A lower temperature and a frequency
 penalty keep the output focused. The JPEG flags control how much detail the model sees.
 
-| Flag                                         | Default   | Env var             | Description                                                                                                                                                                                                                                                           |
-| -------------------------------------------- | --------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--output-language`, `--lang` NAME           | `English` | `-`                 | Language of the generated title, description, and keywords. Use any language name the model understands, for example `German` or `"Brazilian Portuguese"`.                                                                                                            |
-| `--hint` TEXT                                | none      | `-`                 | A note about every photo in the run that the model trusts over its own reading of the image, for example `"The animal in these photos is a deer"`. Changes the cache namespace, so hinted runs never replay hint-less results.                                        |
-| `--repair-language` / `--no-repair-language` | `false`   | `-`                 | When the generated text mixes writing systems, spend one more model call to ask for it in `--output-language` (`Ocarina` for a stray `陶笛`). It is off by default. Either way, the affected photos are flagged. See [Mixed-language output](#mixed-language-output). |
-| `--temperature` FLOAT                        | `0.2`     | `TEMPERATURE`       | Sampling temperature.                                                                                                                                                                                                                                                 |
-| `--max-tokens` N                             | `1200`    | `MAX_TOKENS`        | Maximum tokens to generate.                                                                                                                                                                                                                                           |
-| `--timeout-seconds` FLOAT                    | `60.0`    | `TIMEOUT_SECONDS`   | Timeout of one model request. If a request times out, the retry loop takes over.                                                                                                                                                                                      |
-| `--frequency-penalty` FLOAT                  | `0.5`     | `FREQUENCY_PENALTY` | Penalty on repeated tokens. It discourages repetitive output loops.                                                                                                                                                                                                   |
-| `--jpeg-dimensions` N                        | `640`     | `JPEG_DIMENSIONS`   | Longest edge (px) of the JPEG sent to the model, and the biggest lever on speed. See [Image size](#image-size).                                                                                                                                                       |
-| `--jpeg-quality` N                           | `80`      | `JPEG_QUALITY`      | JPEG quality (1-100) of the image sent to the model.                                                                                                                                                                                                                  |
+| Flag                                         | Default   | Env var             | Description                                                                                                                                                                                                                                                                                                  |
+| -------------------------------------------- | --------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--output-language`, `--lang` NAME           | `English` | `-`                 | Language of the generated title, description, and keywords. Use any language name the model understands, for example `German` or `"Brazilian Portuguese"`.                                                                                                                                                   |
+| `--hint` TEXT                                | none      | `-`                 | A note about every photo in the run that the model trusts over its own reading of the image, for example `"The animal in these photos is a deer"`. Changes the cache namespace, so hinted runs never replay hint-less results.                                                                               |
+| `--repair-language` / `--no-repair-language` | `false`   | `-`                 | When the generated text mixes writing systems, spend one more model call to ask for it in `--output-language` (`Ocarina` for a stray `陶笛`). It is off by default. A photo whose text still mixes writing systems is flagged. A repaired photo is not. See [Mixed-language output](#mixed-language-output). |
+| `--temperature` FLOAT                        | `0.2`     | `TEMPERATURE`       | Sampling temperature.                                                                                                                                                                                                                                                                                        |
+| `--max-tokens` N                             | `1200`    | `MAX_TOKENS`        | Maximum tokens to generate.                                                                                                                                                                                                                                                                                  |
+| `--timeout-seconds` FLOAT                    | `60.0`    | `TIMEOUT_SECONDS`   | Timeout of one model request. If a request times out, the retry loop takes over.                                                                                                                                                                                                                             |
+| `--frequency-penalty` FLOAT                  | `0.5`     | `FREQUENCY_PENALTY` | Penalty on repeated tokens. It discourages repetitive output loops.                                                                                                                                                                                                                                          |
+| `--jpeg-dimensions` N                        | `640`     | `JPEG_DIMENSIONS`   | Longest edge (px) of the JPEG sent to the model, and the biggest lever on speed. See [Image size](#image-size).                                                                                                                                                                                              |
+| `--jpeg-quality` N                           | `80`      | `JPEG_QUALITY`      | JPEG quality (1-100) of the image sent to the model.                                                                                                                                                                                                                                                         |
 
 ### Image size
 
@@ -517,11 +517,12 @@ gathers everything extracted and computed for each image:
 
 - `filename`, `file`, `status`
 - `title`, `description`, `keywords` (the keywords actually written), `hierarchical_keywords`
-- `existing_keywords` (what was already on the file)
+- `existing_keywords`, `existing_title`, `existing_description` (what was already on the file)
 - `camera_model`, `lens_model`, `capture_date`, `gps_position`, `city`, `country` (read EXIF)
 - `input_tokens`, `output_tokens`, `total_tokens`, `seconds`, `from_cache`, `retry`
 - `foreign_terms`: the words in the odd script, for output that mixes writing systems (see
     [Mixed-language output](#mixed-language-output))
+- `error`: why the photo failed, empty for a photo that did not fail
 
 Multi-value cells (the keyword lists) are joined with a semicolon and a space. Rows are flushed as
 each photo completes, so interrupting the run with Ctrl-C still leaves a complete, openable CSV of
@@ -615,8 +616,8 @@ Applied in this order, each one reported in `--report`:
 2. Rarity. `--min-uses` drops the one-offs. In a catalog an AI writes to, this is the rule that does
     the work: most keywords are used exactly once.
 3. Variants. One concept keeps one spelling, the most-used one. Nothing is lost by this, since
-    vocabulary matching folds case, punctuation, and plurals anyway: a photo tagged `Animals` still
-    snaps onto `Animal`.
+    vocabulary matching folds case, punctuation, and (for English) plurals anyway: a photo tagged
+    `Animals` still snaps onto `Animal`.
 4. The cap. `--max-terms` runs last, on the terms the other rules kept, and removes the least-used
     of them.
 
@@ -640,10 +641,11 @@ asks the model for exactly those two, over the keywords that already survived:
 photo-tagger vocabulary -i ~/Pictures -r -o vocabulary.txt --organize --organize-workers 4
 ```
 
-- Synonyms. Matching already folds case, punctuation, and plurals, so `Animal` and `Animals` are one
-    keyword without any help. It cannot know that `Golden Light` is `Golden Hour`. The winner keeps
-    the entry, and the others are written as `{braces}` on it. So a photo tagged with a folded
-    spelling still matches. Each fold is listed in `--report` with the reason `synonym`.
+- Synonyms. Matching already folds case, punctuation, and (for English) plurals, so `Animal` and
+    `Animals` are one keyword without any help. It cannot know that `Golden Light` is `Golden Hour`.
+    The winner keeps the entry, and the others are written as `{braces}` on it. So a photo tagged
+    with a folded spelling still matches. Each fold is listed in `--report` with the reason
+    `synonym`.
 - A hierarchy. The categories are chosen once, from the most-used keywords, and every chunk of the
     list is then filed against that one fixed set. Letting each chunk invent its own gives `Animal`
     in one chunk and `Animals` in the next: exactly the sprawl this command exists to end.
