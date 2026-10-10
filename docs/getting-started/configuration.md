@@ -21,38 +21,54 @@ variable, and an environment variable beats the built-in default. This lets you 
 baseline in a configuration file or your shell profile. You can still override one value per run on
 the command line.
 
+Three settings do not follow this order. In each of them, the environment beats the configuration
+file:
+
+- An exported `PHOTO_TAGGER_EXIFTOOL` beats the `exiftool_path` key.
+- An exported `PHOTO_TAGGER_LANG` beats the `language` key.
+- A telemetry opt-out in the environment (`PHOTO_TAGGER_TELEMETRY=0` or
+    `PHOTO_TAGGER_NO_TELEMETRY=1`) beats `[telemetry] enabled = true` and the `--telemetry` flag.
+    See [telemetry](../telemetry.md).
+
 ## Environment variables
 
 These variables set defaults. Any matching CLI flag still overrides them. See
 [CLI reference](../usage/cli-reference.md) for the flags they pair with.
 
-| Variable              | Default                     | Purpose                                                                            |
-| --------------------- | --------------------------- | ---------------------------------------------------------------------------------- |
-| `PHOTO_TAGGER_CONFIG` | none                        | Explicit path to a configuration file (the highest-priority configuration source). |
-| `MODEL_NAME`          | `qwen/qwen3-vl-30b`         | Vision-language model identifier.                                                  |
-| `OLLAMA_BASE_URL`     | `http://localhost:11434/v1` | Ollama API base URL.                                                               |
-| `OLLAMA_API_KEY`      | none                        | API key for Ollama.                                                                |
-| `LM_STUDIO_BASE_URL`  | `http://localhost:1234/v1`  | LM Studio API base URL.                                                            |
-| `LM_STUDIO_API_KEY`   | none                        | API key for LM Studio.                                                             |
-| `LLAMA_CPP_BASE_URL`  | `http://localhost:8080/v1`  | llama.cpp `llama-server` API base URL.                                             |
-| `LLAMA_CPP_API_KEY`   | none                        | API key for llama.cpp. If `llama-server` runs with `--api-key`, set this key.      |
-| `OPENAI_BASE_URL`     | `https://api.openai.com/v1` | Base URL for the `openai` provider (the real OpenAI API or a drop-in gateway).     |
-| `OPENAI_API_KEY`      | none                        | Required API key for the `openai` provider. LM Studio never reads it.              |
-| `TEMPERATURE`         | `0.2`                       | Sampling temperature.                                                              |
-| `MAX_TOKENS`          | `1200`                      | Maximum tokens to generate.                                                        |
-| `TIMEOUT_SECONDS`     | `60.0`                      | Timeout of one model request, in seconds.                                          |
-| `FREQUENCY_PENALTY`   | `0.5`                       | Penalty on repeated tokens.                                                        |
-| `JPEG_DIMENSIONS`     | `640`                       | Longest edge (px) of the JPEG sent to the model.                                   |
-| `JPEG_QUALITY`        | `80`                        | JPEG quality (1-100) of the image sent to the model.                               |
-| `RETRIES`             | `5`                         | Number of retries after the model output fails schema validation.                  |
-| `DUTY_PERCENT`        | `100`                       | Default of `--duty` (1-100).                                                       |
-| `BATTERY_FLOOR`       | `0`                         | Default of `--battery-floor` (0-99).                                               |
-| `BATTERY_RESUME`      | `0`                         | Default of `--battery-resume` (0-100).                                             |
-| `WORK_MINUTES`        | `10`                        | Default of `--work-minutes`.                                                       |
-| `MAX_PAUSE_MINUTES`   | `15`                        | Default of `--max-pause-minutes`.                                                  |
+| Variable                    | Default                     | Purpose                                                                            |
+| --------------------------- | --------------------------- | ---------------------------------------------------------------------------------- |
+| `PHOTO_TAGGER_CONFIG`       | none                        | Explicit path to a configuration file (the highest-priority configuration source). |
+| `MODEL_NAME`                | `qwen/qwen3-vl-30b`         | Vision-language model identifier.                                                  |
+| `OLLAMA_BASE_URL`           | `http://localhost:11434/v1` | Ollama API base URL.                                                               |
+| `OLLAMA_API_KEY`            | none                        | API key for Ollama.                                                                |
+| `LM_STUDIO_BASE_URL`        | `http://localhost:1234/v1`  | LM Studio API base URL.                                                            |
+| `LM_STUDIO_API_KEY`         | none                        | API key for LM Studio.                                                             |
+| `LLAMA_CPP_BASE_URL`        | `http://localhost:8080/v1`  | llama.cpp `llama-server` API base URL.                                             |
+| `LLAMA_CPP_API_KEY`         | none                        | API key for llama.cpp. If `llama-server` runs with `--api-key`, set this key.      |
+| `OPENAI_BASE_URL`           | `https://api.openai.com/v1` | Base URL for the `openai` provider (the real OpenAI API or a drop-in gateway).     |
+| `OPENAI_API_KEY`            | none                        | Required API key for the `openai` provider. LM Studio never reads it.              |
+| `TEMPERATURE`               | `0.2`                       | Sampling temperature.                                                              |
+| `MAX_TOKENS`                | `1200`                      | Maximum tokens to generate.                                                        |
+| `TIMEOUT_SECONDS`           | `60.0`                      | Timeout of one model request, in seconds.                                          |
+| `FREQUENCY_PENALTY`         | `0.5`                       | Penalty on repeated tokens.                                                        |
+| `JPEG_DIMENSIONS`           | `640`                       | Longest edge (px) of the JPEG sent to the model.                                   |
+| `JPEG_QUALITY`              | `80`                        | JPEG quality (1-100) of the image sent to the model.                               |
+| `RETRIES`                   | `5`                         | Number of retries after the model output fails schema validation.                  |
+| `DUTY_PERCENT`              | `100`                       | Default of `--duty` (1-100).                                                       |
+| `BATTERY_FLOOR`             | `0`                         | Default of `--battery-floor` (0-99).                                               |
+| `BATTERY_RESUME`            | `0`                         | Default of `--battery-resume` (0-100).                                             |
+| `WORK_MINUTES`              | `10`                        | Default of `--work-minutes`.                                                       |
+| `MAX_PAUSE_MINUTES`         | `15`                        | Default of `--max-pause-minutes`.                                                  |
+| `PHOTO_TAGGER_EXIFTOOL`     | none                        | Path to the ExifTool program. Beats the `exiftool_path` key.                       |
+| `PHOTO_TAGGER_LANG`         | none                        | Language of the desktop window (`en` or `pt_BR`). Beats the `language` key.        |
+| `PHOTO_TAGGER_TELEMETRY`    | none                        | `0` turns telemetry off. `1` sends even when `DO_NOT_TRACK` is set.                |
+| `PHOTO_TAGGER_NO_TELEMETRY` | none                        | `1` turns telemetry off (the older switch).                                        |
+| `DO_NOT_TRACK`              | none                        | `1` turns telemetry off, unless `PHOTO_TAGGER_TELEMETRY=1`.                        |
+| `XDG_STATE_HOME`            | `~/.local/state`            | Parent folder of the state of photo-tagger: the install id and the undo journals.  |
 
-A value that is not a number, or is outside its range, is ignored with a warning, and the built-in
-default applies.
+A value that is not a number is ignored with a warning, and the built-in default applies. The five
+pacing variables (`DUTY_PERCENT` to `MAX_PAUSE_MINUTES`) must also be in their range. A pacing value
+outside its range is ignored in the same way.
 
 If you turn on `--otel`, photo-tagger also honors the standard OpenTelemetry variables:
 `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
@@ -73,10 +89,16 @@ looks for one in this order and uses the **first match**:
 2. `.photo-tagger.toml` in the current directory
 3. `~/.config/photo-tagger/config.toml`
 
-If none of these exist, photo-tagger runs with environment-informed and built-in defaults only.
+If `$PHOTO_TAGGER_CONFIG` names a file that does not exist, photo-tagger logs a warning and reads no
+configuration file at all. It does not try the other two places. If none of these files exist,
+photo-tagger runs with the environment variables and the built-in defaults only.
 
-The sections below mirror the internal option groups. The example shows every section with its
-default value, so you can copy it and change only what you need.
+The sections below mirror the internal option groups. The example shows every section. Most keys
+show their default value. A key in a comment has no fixed default, or shows an example value.
+
+Copy only the keys that you change. Do not copy the whole block: a key in the file beats the
+matching environment variable (see [precedence](#precedence)). For example, a copied `model_name`
+hides `MODEL_NAME`.
 
 ```toml
 # .photo-tagger.toml
@@ -86,11 +108,12 @@ extensions = "cr3,jpg"   # Comma-separated extensions used when scanning directo
 recursive = false        # Recurse into subdirectories while scanning input directories.
 workers = 1              # Process N photos concurrently with a thread pool.
 language = "auto"        # GUI interface language: "auto" (OS default), "en", or "pt_BR".
+# exiftool_path = "/opt/homebrew/bin/exiftool"  # ExifTool program. Default: found on PATH.
 
 [provider]
 model_name = "qwen/qwen3-vl-30b"          # Vision-language model identifier.
 provider_name = "lmstudio"                # Backend: "ollama", "lmstudio", "llamacpp", or "openai".
-api_base_url = "http://localhost:1234/v1" # Provider API base URL.
+# api_base_url = "http://localhost:1234/v1" # Default: the URL of the provider (see above).
 # api_key = "..."                         # Prefer the API-key env vars instead.
 retries = 5                               # Retries when output fails schema validation.
 
@@ -98,7 +121,7 @@ retries = 5                               # Retries when output fails schema val
 output_language = "English"  # Language of generated titles, descriptions, and keywords.
 temperature = 0.2        # Sampling temperature.
 max_tokens = 1200        # Maximum tokens to generate.
-timeout_seconds = 60.0   # Per-image inference timeout in seconds.
+timeout_seconds = 60.0   # Timeout of one model request, in seconds.
 frequency_penalty = 0.5  # Penalty on repeated tokens; discourages output loops.
 jpeg_dimensions = 640    # Longest edge (px) sent to the model; 896 or 1024 to read text.
 jpeg_quality = 80        # JPEG quality (1-100) of the image sent to the model.
@@ -134,19 +157,23 @@ file_log_level = "DEBUG"     # DEBUG/INFO/WARNING/ERROR/CRITICAL/OFF.
 console_log_level = "INFO"   # Same levels; OFF disables.
 log_folder = "logs"          # Folder for timestamped log files.
 otel = false                 # Export an OpenTelemetry trace of every model call.
-# otel_endpoint = "http://localhost:4318/v1/traces"  # Where to send them. Required by otel.
+# otel_endpoint = "http://localhost:4318/v1/traces"  # Where to send them.
+# otel needs otel_endpoint, or an OTEL_EXPORTER_OTLP_* variable from the list above.
 otel_content = false         # Also export prompts and generated text. Photos never go either way.
 
 [display]
 progress_bar = true   # Live progress bar; auto-disabled when stderr is not a TTY.
 json_output = false   # Emit one NDJSON line per processed photo to stdout.
-notify = false        # Desktop notification when the batch ends.
+# notify = true       # Desktop notification when the batch ends. Unset: on with notify_sound.
 notify_sound = false  # Play a sound with it (implies notify).
 
 [filter]
 skip_tagged = false   # Skip files that already have keywords, a title, or a description.
 # newer_than = "2024-01-01"        # Drop files whose mtime is on/before this timestamp.
 # older_than = "2024-01-01T14:30"  # Drop files whose mtime is on/after this timestamp.
+
+[telemetry]
+enabled = true         # Anonymous usage stats. false turns them off.
 
 [pacing]
 duty = 100             # Percent of the time the run may work; it rests for the remainder.
