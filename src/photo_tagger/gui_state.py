@@ -67,11 +67,6 @@ from photo_tagger.metadata import (
     TAGGED_FIELDS,
     CaptionValue,
     FieldSources,
-    WriteTarget,
-    parse_sidecar_overrides,
-    plan_writes,
-    select_camera_fields,
-    select_location,
 )
 from photo_tagger.models import KeywordSet
 from photo_tagger.pacing import (
@@ -83,6 +78,7 @@ from photo_tagger.pacing import (
 )
 from photo_tagger.pipeline import MAX_TRACKED_DROPPED_TERMS
 from photo_tagger.programs import find_program
+from photo_tagger.prompt_context import select_camera_fields, select_location
 from photo_tagger.script_guard import find_foreign_script
 from photo_tagger.sessions import build_session_vocabulary, plan_sessions
 from photo_tagger.templates import ARTIST_TAGS, YEAR_TAGS, format_date
@@ -96,6 +92,7 @@ from photo_tagger.undo import (
 )
 from photo_tagger.vocabulary import Vocabulary, VocabularyError, load_vocabulary
 from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
+from photo_tagger.write_plan import WriteTarget, parse_sidecar_overrides, plan_writes
 
 
 if TYPE_CHECKING:

@@ -30,16 +30,12 @@ from photo_tagger.errors import BatchError
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
 from photo_tagger.language_repair import RepairStatus, repair_mixed_script, repair_replay
-from photo_tagger.metadata import (
-    build_contextual_prompt,
-    managed_helper,
-    plan_writes,
-    read_image_context,
-    write_metadata_everywhere,
-)
+from photo_tagger.metadata import managed_helper, read_image_context, write_metadata_everywhere
 from photo_tagger.models import InferenceResult, KeywordSet
+from photo_tagger.prompt_context import build_contextual_prompt
 from photo_tagger.script_guard import find_in_result
 from photo_tagger.sessions import build_session_vocabulary
+from photo_tagger.write_plan import plan_writes
 
 
 if TYPE_CHECKING:

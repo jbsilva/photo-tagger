@@ -344,6 +344,7 @@ source_modules = [
     "photo_tagger.pacing",
     "photo_tagger.pipeline",
     "photo_tagger.programs",
+    "photo_tagger.prompt_context",
     "photo_tagger.progress",
     "photo_tagger.providers",
     "photo_tagger.script_guard",
@@ -356,6 +357,7 @@ source_modules = [
     "photo_tagger.vocabulary_build",
     "photo_tagger.vocabulary_organize",
     "photo_tagger.watch",
+    "photo_tagger.write_plan",
     "photo_tagger.cli_options",
     "photo_tagger.main",
 ]
@@ -390,6 +392,7 @@ source_modules = [
     "photo_tagger.pacing",
     "photo_tagger.pipeline",
     "photo_tagger.programs",
+    "photo_tagger.prompt_context",
     "photo_tagger.progress",
     "photo_tagger.providers",
     "photo_tagger.script_guard",
@@ -402,6 +405,7 @@ source_modules = [
     "photo_tagger.vocabulary_build",
     "photo_tagger.vocabulary_organize",
     "photo_tagger.watch",
+    "photo_tagger.write_plan",
 ]
 forbidden_modules = ["photo_tagger.cli_options", "photo_tagger.gui", "photo_tagger.main"]
 
@@ -417,6 +421,7 @@ type = "forbidden"
 source_modules = [
     "photo_tagger.keywords",
     "photo_tagger.models",
+    "photo_tagger.prompt_context",
     "photo_tagger.script_guard",
     "photo_tagger.templates",
 ]

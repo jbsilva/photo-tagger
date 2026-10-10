@@ -25,7 +25,6 @@ from photo_tagger.metadata import (
     _coerce_to_list,
     _dedup_preserving_first_case,
     _value_is_present,
-    build_contextual_prompt,
     find_field_presence,
     find_tagged_images,
     first_caption,
@@ -33,9 +32,6 @@ from photo_tagger.metadata import (
     history_event_param,
     iter_field_presence,
     managed_helper,
-    parse_sidecar_overrides,
-    plan_writes,
-    prompt_with_hint,
     read_all_tags,
     read_caption_values,
     read_capture_times,
@@ -43,11 +39,12 @@ from photo_tagger.metadata import (
     read_image_context,
     read_keyword_sets,
     read_metadata_sources,
-    use_sidecar_for,
     write_metadata,
     write_metadata_everywhere,
 )
 from photo_tagger.models import KeywordSet
+from photo_tagger.prompt_context import build_contextual_prompt, prompt_with_hint
+from photo_tagger.write_plan import parse_sidecar_overrides, plan_writes, use_sidecar_for
 
 
 if TYPE_CHECKING:
@@ -1612,14 +1609,14 @@ def test_read_caption_returns_none_on_exiftool_error(tmp_path: Path) -> None:
 
 def test_format_location_returns_none_for_empty_tags() -> None:
     """Empty location tags produce None, not a spurious 'None' string."""
-    from photo_tagger.metadata import _format_location  # noqa: PLC0415
+    from photo_tagger.prompt_context import _format_location  # noqa: PLC0415
 
     assert _format_location({}) is None
 
 
 def test_camera_lines_renders_partial_info() -> None:
     """Only present camera fields appear; missing ones are skipped."""
-    from photo_tagger.metadata import _camera_lines  # noqa: PLC0415
+    from photo_tagger.prompt_context import _camera_lines  # noqa: PLC0415
 
     lines = _camera_lines({"EXIF:Model": "Canon EOS R5"})
     assert lines == ["- Camera: Canon EOS R5"]
@@ -1630,7 +1627,7 @@ def test_camera_lines_renders_partial_info() -> None:
 
 def test_select_camera_fields_extracts_model_lens_date() -> None:
     """The camera selector pulls model/lens/date, returning None for any that are absent."""
-    from photo_tagger.metadata import select_camera_fields  # noqa: PLC0415
+    from photo_tagger.prompt_context import select_camera_fields  # noqa: PLC0415
 
     info = {
         "EXIF:Model": "Canon EOS R5",
@@ -1652,7 +1649,7 @@ def test_select_camera_fields_extracts_model_lens_date() -> None:
 
 def test_select_location_prefers_xmp_then_falls_back_to_iptc() -> None:
     """City/country come from XMP-photoshop first, then the IPTC variants."""
-    from photo_tagger.metadata import select_location  # noqa: PLC0415
+    from photo_tagger.prompt_context import select_location  # noqa: PLC0415
 
     xmp = {"XMP-photoshop:City": "Hamburg", "XMP-photoshop:Country": "Germany"}
     assert select_location(xmp) == ("Hamburg", "Germany")
@@ -1925,7 +1922,8 @@ def test_field_sources_written_reads_only_the_target_files() -> None:
     """Preserve looks at what the save writes: the photo, its sidecar, or both."""
     from pathlib import Path  # noqa: PLC0415
 
-    from photo_tagger.metadata import FieldSources, WriteTarget  # noqa: PLC0415
+    from photo_tagger.metadata import FieldSources  # noqa: PLC0415
+    from photo_tagger.write_plan import WriteTarget  # noqa: PLC0415
 
     found = FieldSources(image={"EXIF:Copyright": "a"}, sidecar={"XMP:Rights": "b"})
     photo = WriteTarget(path=Path("a.jpg"), use_sidecar=False, existed=True)
@@ -2044,7 +2042,7 @@ def test_plan_writes_notes_a_backup_that_predates_the_write(tmp_path: Path) -> N
     ExifTool keeps it and writes the file anyway, so undo must not restore it: that would drop every
     run in between.
     """
-    from photo_tagger.metadata import plan_writes  # noqa: PLC0415
+    from photo_tagger.write_plan import plan_writes  # noqa: PLC0415
 
     photo = tmp_path / "img.jpg"
     photo.write_bytes(b"x")

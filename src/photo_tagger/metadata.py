@@ -23,10 +23,7 @@ if TYPE_CHECKING:
 from photo_tagger import __version__
 from photo_tagger.config import (
     CAMERA_TAGS,
-    CITY_TAGS,
-    COUNTRY_TAGS,
     LOCATION_TAGS,
-    NON_RAW_EXTENSIONS,
     TAG_EXIF_DATE_TIME_ORIGINAL,
     TAG_EXIF_IMAGE_DESCRIPTION,
     TAG_IPTC_KEYWORDS,
@@ -37,7 +34,6 @@ from photo_tagger.config import (
     TAG_XMP_SUBJECT,
     TAG_XMP_TITLE,
     TAG_XMP_WEIGHTED_FLAT_SUBJECT,
-    FileTypeTarget,
     SidecarMode,
     SidecarOverrides,
     exiftool_executable,
@@ -45,6 +41,7 @@ from photo_tagger.config import (
 from photo_tagger.fields import COPYRIGHT_READ_TAGS
 from photo_tagger.models import KeywordSet
 from photo_tagger.programs import find_program
+from photo_tagger.write_plan import WriteTarget, plan_writes, write_target
 
 
 # Exception types that pyexiftool raises on bad inputs or subprocess failures.
@@ -1086,122 +1083,6 @@ def read_field_sources(
     return {path: field_values(found, tags) for path, found in per_photo.items()}
 
 
-def _first_present(values: dict[str, str], *tags: str) -> str | None:
-    """Return the first non-empty value in *values* lookup-ordered by *tags*."""
-    for tag in tags:
-        if (raw := values.get(tag)) and (stripped := raw.strip()):
-            return stripped
-    return None
-
-
-def select_camera_fields(
-    camera_info: dict[str, str],
-) -> tuple[str | None, str | None, str | None]:
-    """Return ``(model, lens, capture_date)`` from a :data:`CAMERA_TAGS` mapping."""
-    return (
-        camera_info.get("EXIF:Model"),
-        camera_info.get("EXIF:LensModel"),
-        camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL),
-    )
-
-
-def select_location(location_tags: dict[str, str]) -> tuple[str | None, str | None]:
-    """
-    Return ``(city, country)`` from a :data:`LOCATION_TAGS` mapping.
-
-    XMP-photoshop and IPTC each define their own city/country fields, so this picks the first
-    present in each category, the same fallback order :func:`_format_location` uses for the prompt
-    hint and the CSV report uses for its columns.
-    """
-    return (
-        _first_present(location_tags, *CITY_TAGS),
-        _first_present(location_tags, *COUNTRY_TAGS),
-    )
-
-
-def _format_location(location_tags: dict[str, str]) -> str | None:
-    """
-    Build a "City, Country" hint, falling back to whichever single field is set.
-
-    Returning both means the model gets the full place name (e.g. "Barcelona, Spain") instead of
-    silently losing the city under the older "first hit wins" logic.
-    """
-    city, country = select_location(location_tags)
-    if city and country:
-        return f"{city}, {country}"
-    return city or country
-
-
-def _camera_lines(camera_info: dict[str, str]) -> list[str]:
-    """Render ``EXIF:Model`` / ``EXIF:LensModel`` / ``EXIF:DateTimeOriginal`` lines."""
-    lines: list[str] = []
-    if model := camera_info.get("EXIF:Model"):
-        lines.append(f"- Camera: {model}")
-    if lens := camera_info.get("EXIF:LensModel"):
-        lines.append(f"- Lens: {lens}")
-    if captured := camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL):
-        lines.append(f"- Captured: {captured}")
-    return lines
-
-
-def prompt_with_hint(base_prompt: str, hint: str | None) -> str:
-    """
-    Append a photographer's note to *base_prompt*; return it unchanged when *hint* is blank.
-
-    The note is framed as authoritative, unlike the Existing Metadata block (which the system prompt
-    tells the model to distrust on conflict): a hint exists precisely because the model misread the
-    image ("that animal is a deer, not a boar"), so on conflict the note must win.
-    """
-    hint = (hint or "").strip()
-    if not hint:
-        return base_prompt
-    return (
-        f"{base_prompt.strip()}\n\n"
-        f"Photographer's note about this photo: {hint}\n"
-        "The photographer knows what is in the photo. If this note conflicts with your own "
-        "identification, trust the note."
-    )
-
-
-def build_contextual_prompt(  # noqa: PLR0913 - each kwarg renders an independent section.
-    base_prompt: str,
-    flat_keywords: list[str],
-    location_tags: dict[str, str],
-    gps_info: dict[str, str],
-    max_prompt_flat_keywords: int = 4,
-    *,
-    camera_info: dict[str, str] | None = None,
-) -> str:
-    """
-    Create a concise user prompt that surfaces existing photo metadata.
-
-    *camera_info* is a mapping of ExifTool tag names (``EXIF:Model`` etc.) to their string values.
-    When present, equipment and capture-date hints are appended so the model can take cues from the
-    gear used (macro lens, telephoto, wide angle) and the time of year.
-    """
-    metadata_lines: list[str] = []
-
-    if unique_keywords := list(dict.fromkeys(flat_keywords)):
-        selected = unique_keywords[:max_prompt_flat_keywords]
-        line = "- Existing Keywords: " + ", ".join(selected)
-        if len(unique_keywords) > max_prompt_flat_keywords:
-            line += ", ..."
-        metadata_lines.append(line)
-
-    if location_value := _format_location(location_tags):
-        metadata_lines.append(f"- Location: {location_value}")
-
-    if gps_position := (gps_info or {}).get("position"):
-        metadata_lines.append(f"- GPS: {gps_position}")
-
-    metadata_lines.extend(_camera_lines(camera_info or {}))
-
-    sections = [base_prompt.strip()]
-    if metadata_lines:
-        sections.append("Existing Metadata:\n" + "\n".join(metadata_lines))
-    return "\n\n".join(sections)
-
-
 # The tag families an XMP sidecar can hold: XMP, and a tag with no group, which ExifTool places
 # itself. It drops any other group without complaint, but a payload left with nothing in it fails
 # the write outright ("Nothing to write"), which is what a --set of EXIF tags under the default
@@ -1465,158 +1346,6 @@ def history_event_param(when: datetime) -> str:
         f"-XMP-xmpMM:History+={{Action=saved,When={when.isoformat(timespec='seconds')},"
         f"SoftwareAgent={SOFTWARE_AGENT},Changed=/metadata}}"
     )
-
-
-def is_raw_file(image_path: Path) -> bool:
-    """
-    Report whether *image_path* looks like a camera RAW file, by extension alone.
-
-    Decided by exclusion: a suffix Pillow reads natively is not RAW, anything else is. An unknown
-    extension counting as RAW is the cautious answer for the caller that matters here, the "raw"
-    sidecar mode, which then leaves the file's own bytes alone.
-    """
-    return image_path.suffix.lower() not in NON_RAW_EXTENSIONS
-
-
-def use_sidecar_for(image_path: Path, mode: SidecarMode) -> bool:
-    """
-    Report whether *image_path* gets an XMP sidecar under *mode*.
-
-    True for "both", which also writes the photo: ask :func:`plan_writes` for the full answer.
-
-    Examples:
-        >>> use_sidecar_for(Path("/photos/image.dng"), "raw")
-        True
-        >>> use_sidecar_for(Path("/photos/image.jpg"), "raw")
-        False
-    """
-    match mode:
-        case "none":
-            return False
-        case "raw":
-            return is_raw_file(image_path)
-        case _:
-            return True
-
-
-def write_target(image_path: Path, *, use_sidecar: bool) -> Path:
-    """
-    Return the file :func:`write_metadata` will modify for *image_path*.
-
-    Shared so callers that need to inspect the target before the write (the undo journal, which
-    must know whether the sidecar already existed) cannot drift from the writer's own choice.
-
-    Examples:
-        >>> write_target(Path("/photos/image.cr3"), use_sidecar=True).name
-        'image.xmp'
-        >>> write_target(Path("/photos/image.cr3"), use_sidecar=False).name
-        'image.cr3'
-    """
-    return image_path.with_suffix(".xmp") if use_sidecar else image_path
-
-
-@dataclass(slots=True, frozen=True)
-class WriteTarget:
-    """One file a save writes for a photo."""
-
-    path: Path
-    # Whether this target is the sidecar, which decides the payload: a sidecar holds XMP only.
-    use_sidecar: bool
-    # Whether the file was there before the write. Undo needs it to tell "restore the backup" from
-    # "delete what the run created", and it can only be known beforehand.
-    existed: bool
-    # Whether a *_original backup was there before the write. ExifTool keeps an existing backup and
-    # writes the file anyway, so that backup holds an older state, not what this write replaced.
-    had_backup: bool = False
-
-    def made_backup(self, *, backup: bool) -> bool:
-        """Say whether a write with backups set to *backup* left a backup of its own behind."""
-        return backup and not self.had_backup
-
-
-# What each --sidecar-override target writes, as use_sidecar values: photo before sidecar, the
-# order metadata_targets reads them in.
-_TARGET_SIDECARS: dict[FileTypeTarget, tuple[bool, ...]] = {
-    "photo": (False,),
-    "sidecar": (True,),
-    "both": (False, True),
-}
-# The same keys by their spelling, so a parsed string comes out typed without a cast.
-_TARGET_NAMES: dict[str, FileTypeTarget] = {name: name for name in _TARGET_SIDECARS}
-
-
-def parse_sidecar_overrides(entries: Iterable[str] | None) -> dict[str, FileTypeTarget]:
-    """
-    Parse ``EXT=TARGET`` entries into overrides keyed by lowercase suffix.
-
-    The extension takes any case and an optional dot, so ``DNG=photo`` and ``.dng=photo`` agree. A
-    later entry for the same extension wins, like a repeated flag. Raises :class:`ValueError` on an
-    entry that is not ``EXT=TARGET``, or that names the sidecar extension itself.
-
-    Examples:
-        >>> parse_sidecar_overrides(["DNG=photo", "tif=both"])
-        {'.dng': 'photo', '.tif': 'both'}
-    """
-    overrides: dict[str, FileTypeTarget] = {}
-    for entry in entries or ():
-        extension, _, name = entry.partition("=")
-        suffix = "." + extension.strip().lstrip(".").lower()
-        target = _TARGET_NAMES.get(name.strip().lower())
-        if target is None or suffix == ".":
-            msg = (
-                f"--sidecar-override {entry!r} must be EXT=TARGET, where TARGET is sidecar, "
-                f"photo, or both. For example: dng=photo"
-            )
-            raise ValueError(msg)
-        if suffix == ".xmp":
-            msg = f"--sidecar-override {entry!r}: an XMP sidecar cannot get a sidecar of its own"
-            raise ValueError(msg)
-        overrides[suffix] = target
-    return overrides
-
-
-def _sidecar_choices(
-    image_path: Path,
-    mode: SidecarMode,
-    overrides: SidecarOverrides | None,
-) -> tuple[bool, ...]:
-    """Return the use_sidecar value of each file a save writes, photo first."""
-    if overrides and (target := overrides.get(image_path.suffix.lower())) is not None:
-        return _TARGET_SIDECARS[target]
-    return (False, True) if mode == "both" else (use_sidecar_for(image_path, mode),)
-
-
-def plan_writes(
-    image_path: Path,
-    mode: SidecarMode,
-    overrides: SidecarOverrides | None = None,
-) -> list[WriteTarget]:
-    """
-    List the files a save under *mode* writes for *image_path*, as they are before the write.
-
-    One target for every mode but "both", which writes the photo *and* a sidecar beside it: the
-    photo travels with its metadata, and the sidecar is what a catalog edits without touching the
-    photo again. An entry in *overrides* for the photo's extension wins over *mode*, so a DNG can
-    carry its own metadata (as Lightroom Classic expects) while every other file gets a sidecar.
-
-    Examples:
-        >>> [t.path.name for t in plan_writes(Path("/photos/image.cr3"), "both")]
-        ['image.cr3', 'image.xmp']
-        >>> [t.path.name for t in plan_writes(Path("/photos/image.dng"), "all", {".dng": "photo"})]
-        ['image.dng']
-    """
-    targets: list[WriteTarget] = []
-    for use_sidecar in _sidecar_choices(image_path, mode, overrides):
-        path = write_target(image_path, use_sidecar=use_sidecar)
-        targets.append(
-            WriteTarget(
-                path=path,
-                use_sidecar=use_sidecar,
-                existed=path.exists(),
-                had_backup=path.with_name(path.name + "_original").exists(),
-            ),
-        )
-    return targets
 
 
 def write_metadata_everywhere(  # noqa: PLR0913 - distinct optional fields are clearer as kwargs.

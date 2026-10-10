@@ -94,13 +94,9 @@ from photo_tagger.metadata import (
     SOURCE_SIDECAR,
     FieldSources,
     managed_helper,
-    plan_writes,
-    prompt_with_hint,
     read_all_tags,
     read_field_sources,
     read_fields,
-    select_camera_fields,
-    select_location,
     sidecar_can_hold,
     write_metadata_everywhere,
 )
@@ -110,6 +106,7 @@ from photo_tagger.observability import configure_tracing
 from photo_tagger.pacing import Pacer, build_pacer
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
+from photo_tagger.prompt_context import prompt_with_hint, select_camera_fields, select_location
 
 # Runtime import (not type-only): cyclopts evaluates the Annotated[ProviderName, ...] field
 # on the doctor command to validate the --provider choices, so it must exist at definition time.
@@ -148,6 +145,7 @@ from photo_tagger.vocabulary_organize import OrganizeStats, organize
 from photo_tagger.watch import (
     watch_batches,
 )
+from photo_tagger.write_plan import plan_writes
 
 
 if TYPE_CHECKING:

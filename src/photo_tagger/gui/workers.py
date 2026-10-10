@@ -46,16 +46,15 @@ from photo_tagger.i18n import _, ngettext
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.language_repair import Ask, RepairStatus, repair_mixed_script, repair_replay
 from photo_tagger.metadata import (
-    build_contextual_prompt,
     iter_field_presence,
     managed_helper,
-    prompt_with_hint,
     read_field_sources,
     read_image_context,
     write_metadata_everywhere,
 )
 from photo_tagger.pacing import Pacer, PacingPlan, build_pacer
 from photo_tagger.pipeline import classify_failure, failure_type
+from photo_tagger.prompt_context import build_contextual_prompt, prompt_with_hint
 from photo_tagger.script_guard import find_in_result
 from photo_tagger.vocabulary import prompt_with_vocabulary
 from photo_tagger.vocabulary_build import (

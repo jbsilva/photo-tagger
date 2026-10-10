@@ -188,7 +188,6 @@ from photo_tagger.metadata import (
     SOURCE_SIDECAR,
     CaptionValue,
     FieldSources,
-    WriteTarget,
 )
 from photo_tagger.models import KeywordSet
 from photo_tagger.pacing import PacingPlan
@@ -196,6 +195,7 @@ from photo_tagger.pipeline import MAX_TRACKED_DROPPED_TERMS
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES
 from photo_tagger.undo import CHANGED, DELETED, RESTORED, UndoResult, WriteRecord
 from photo_tagger.vocabulary import Vocabulary
+from photo_tagger.write_plan import WriteTarget
 
 
 def test_expand_inputs_walks_folders_and_keeps_files(tmp_path: Path) -> None:

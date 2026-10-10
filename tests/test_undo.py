@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 import pytest
 
-from photo_tagger.metadata import WriteTarget
 from photo_tagger.undo import (
     BACKUP_SUFFIX,
     CHANGED,
@@ -28,6 +27,7 @@ from photo_tagger.undo import (
     runs_dir,
     undo_run,
 )
+from photo_tagger.write_plan import WriteTarget
 
 
 _STARTED_AT = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)

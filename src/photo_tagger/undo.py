@@ -32,7 +32,7 @@ from photo_tagger.errors import PhotoTaggerError
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from photo_tagger.metadata import WriteTarget
+    from photo_tagger.write_plan import WriteTarget
 
 
 # ExifTool's backup suffix. It appends this to the full name, so "IMG.xmp" backs up to

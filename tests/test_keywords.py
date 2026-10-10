@@ -11,8 +11,8 @@ from photo_tagger.keywords import (
     merge_keywords,
     parse_hierarchical_keyword,
 )
-from photo_tagger.metadata import build_contextual_prompt
 from photo_tagger.models import KeywordSet
+from photo_tagger.prompt_context import build_contextual_prompt
 
 
 def test_parse_hierarchical_keyword_handles_flat_and_hierarchical() -> None:

@@ -53,7 +53,6 @@ from photo_tagger.config import (
 )
 from photo_tagger.config_file import apply_overrides, find_config_file, load_config
 from photo_tagger.fields import ExtraFields, build_extra_fields
-from photo_tagger.metadata import parse_sidecar_overrides
 from photo_tagger.pacing import MAX_BATTERY_FLOOR, SECONDS_PER_MINUTE, PacingPlan
 from photo_tagger.pipeline import ProcessingOptions
 
@@ -64,6 +63,7 @@ from photo_tagger.telemetry_facts import endpoint_kind, extension_list
 from photo_tagger.vocabulary import folds_plurals
 from photo_tagger.vocabulary_build import TrimRules
 from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
+from photo_tagger.write_plan import parse_sidecar_overrides
 
 
 if TYPE_CHECKING:

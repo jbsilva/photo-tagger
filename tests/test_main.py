@@ -35,12 +35,13 @@ from photo_tagger.cli_options import (
     to_telemetry_settings,
 )
 from photo_tagger.errors import BatchError, DiscoveryError, ProviderError
-from photo_tagger.metadata import SOURCE_SIDECAR, FieldReading, FieldSources, WriteTarget
+from photo_tagger.metadata import SOURCE_SIDECAR, FieldReading, FieldSources
 from photo_tagger.pacing import SECONDS_PER_MINUTE
 from photo_tagger.pipeline import BatchTotals, ImageOutcome
 from photo_tagger.undo import UndoError, UndoJournal, read_journal
 from photo_tagger.vocabulary_build import KeywordCensus, TrimResult
 from photo_tagger.vocabulary_organize import OrganizeStats
+from photo_tagger.write_plan import WriteTarget
 
 
 if TYPE_CHECKING:
