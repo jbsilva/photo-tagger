@@ -327,6 +327,13 @@ write just the open photo. Press **Save Selected** (bottom bar) to write every *
 that has a proposal. The save scope matches *Generate Selected*: the same checkboxes decide both.
 Check every photo to save every photo.
 
+If **Settings > Copyright** has anything to write (a name, a notice, or the rights flag), **Save
+Selected** also writes it on the checked photos that you did not generate. On those photos, it does
+not change the title, the description, or the keywords. Thus, to add your copyright to photos that
+are already tagged, use **Select > Check Only > Status > No copyright**, and then press **Save
+Selected**. You do not generate the photos again. To save a hand edit on a photo that you did not
+generate, use **Save This Photo**.
+
 The arrow on either **Save** button opens the save options. These options choose what every save
 writes, and there is only one set of them. Both **Save** buttons share it, and so does the **Save
 Options** submenu on either **Generate** button's arrow: it is the same menu again. Every one of

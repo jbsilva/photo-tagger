@@ -387,3 +387,13 @@ def test_window_settings_report_the_retries_a_window_run_uses() -> None:
     from photo_tagger.gui_usage import GUI_BASELINE, GUI_GENERATE_RETRIES  # noqa: PLC0415
 
     assert GUI_BASELINE.retries == GUI_GENERATE_RETRIES
+
+
+def test_a_stamp_counts_as_copyright_only_not_as_a_plain_edit(tmp_path: Path) -> None:
+    """Stamping a notice on photos never generated is a feature of its own in the review tally."""
+    tally = ReviewTally()
+    item = PhotoItem(path=tmp_path / "a.jpg")
+    tally.add(item, now=1.0, stamp_only=True)
+    tally.add(item, now=2.0)
+    stats = tally.stats()
+    assert (stats.saved, stats.copyright_only, stats.manual_only) == (2, 1, 1)

@@ -212,6 +212,7 @@ from photo_tagger.gui_state import (
     apply_proposal,
     apply_selection,
     apply_vocabulary,
+    apply_write_result,
     ascii_warning,
     build_copyright_fields,
     build_save_job,
@@ -259,15 +260,18 @@ from photo_tagger.gui_state import (
     photo_item_to_report_row,
     photo_matches_filter,
     photos_for_pass,
+    photos_to_save,
     photos_to_write,
     planned_copyright,
     progress_timing_text,
     rank_vision_models,
     record_dropped_terms,
+    reports_status,
     resolve_extra_tags,
     reveal_command,
     reveal_label,
     review_summary,
+    save_options_for,
     search_summary,
     sort_photos,
     source_label,
@@ -4062,7 +4066,8 @@ class MainWindow(QMainWindow):
         )
         self._save_selected_button.setToolTip(
             tooltip(
-                "Write the checked photos that have a generated proposal. {summary} "
+                "Write the checked photos that have a generated proposal. With a copyright set, "
+                "also stamp it on the other checked photos, leaving their text alone. {summary} "
                 "Change what is written with the arrow.",
                 summary=summary,
             ),
@@ -5319,11 +5324,7 @@ class MainWindow(QMainWindow):
 
     def _apply_write_result(self, item: PhotoItem, job: SaveJob, *, ok: bool) -> None:
         """Fold one finished write into its item: the status word and the Tagged column."""
-        item.status = SAVED if ok else FAILED
-        if ok:
-            # The saved fields are now on the file, so the Tagged column can update without a
-            # rescan.
-            item.known_fields = (item.known_fields or set()) | job.fields
+        apply_write_result(item, job, ok=ok)
         self._refresh_status_cell(item)
 
     def _save_current(self) -> None:
@@ -5351,9 +5352,15 @@ class MainWindow(QMainWindow):
             self._status.setText(_(_PICK_A_FIELD))
             return
         self._commit_current()
-        targets = [item for item in self._items.values() if item.selected and item.has_proposal]
+        options = self._save_options()
+        targets = photos_to_save(self._items.values(), options)
         if not targets:
-            self._status.setText(_("No checked photos have a proposal to save."))
+            self._status.setText(
+                _(
+                    "No checked photos have a proposal to save. To stamp only a copyright, fill in "
+                    "Settings > Copyright.",
+                ),
+            )
             return
         self._run_save(targets)
 
@@ -5374,12 +5381,15 @@ class MainWindow(QMainWindow):
             # The save a finished generation chains: part of that run.
             self._usage.run.save_begun(time.monotonic())
         options = self._save_options()
-        jobs = [build_save_job(item, options) for item in items]
+        jobs = [build_save_job(item, save_options_for(item, options)) for item in items]
         self._save_jobs = {str(job.path): job for job in jobs}
         self._saved_ok = 0
         for item in items:
-            item.status = WORKING
-            self._refresh_status_cell(item)
+            # A stamp on a photo that was never generated keeps its status (see reports_status),
+            # so a cancelled save cannot turn a FAILED photo into a PENDING one either.
+            if reports_status(item, self._save_jobs[str(item.path)]):
+                item.status = WORKING
+                self._refresh_status_cell(item)
         self._cancelling = False
         self._set_running(running=True, total=len(jobs))
         self._status.setText(
@@ -5401,7 +5411,8 @@ class MainWindow(QMainWindow):
         job = self._save_jobs.get(path)
         if item is None or job is None:
             return
-        self._usage.saved(item, ok=ok, now=time.monotonic())
+        stamp_only = not reports_status(item, job)
+        self._usage.saved(item, ok=ok, now=time.monotonic(), stamp_only=stamp_only)
         self._apply_write_result(item, job, ok=ok)
         self._saved_ok += int(ok)
         self._advance_progress()

@@ -16,7 +16,7 @@ import textwrap
 
 # Imported at runtime, not under TYPE_CHECKING: _config_table isinstance-checks against it.
 from collections.abc import MutableMapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -480,6 +480,61 @@ def build_save_job(item: PhotoItem, options: SaveOptions) -> SaveJob:
             overwrite=options.overwrite_description,
         ),
         copyright=options.writes_notice,
+    )
+
+
+def reports_status(item: PhotoItem, job: SaveJob) -> bool:
+    """
+    Say whether saving *item* with *job* is news for its status word.
+
+    It is for a photo with a proposal, and for text written by hand (Save This Photo on a photo that
+    was never generated). A copyright stamp alone is not: see :func:`apply_write_result`.
+    """
+    return item.has_proposal or bool(fields_written(job.title, job.description, job.keywords))
+
+
+def apply_write_result(item: PhotoItem, job: SaveJob, *, ok: bool) -> None:
+    """
+    Fold one finished write into *item*: its status, and what the Tagged column knows.
+
+    A write that put only a copyright on the file says nothing about the photo's generation, so its
+    status stays: a stamped photo that was never generated is not FAILED (Retry Failed would then
+    run the model on it), and a failed generation is not hidden behind SAVED. Its outcome still
+    counts in the save's tally. A photo the scan has not read yet keeps its unknown fields, so the
+    scan still reads it rather than trusting the few fields this write happened to touch.
+    """
+    if reports_status(item, job):
+        item.status = SAVED if ok else FAILED
+    if ok and item.known_fields is not None:
+        item.known_fields = item.known_fields | job.fields
+
+
+def photos_to_save(items: Iterable[PhotoItem], options: SaveOptions) -> list[PhotoItem]:
+    """
+    Pick the photos Save Selected writes: the checked ones that have a proposal.
+
+    With a copyright set, the checked photos that were never generated come too, so the window can
+    stamp a notice on photos that are already tagged without generating them again.
+    """
+    return [
+        item for item in items if item.selected and (item.has_proposal or options.writes_copyright)
+    ]
+
+
+def save_options_for(item: PhotoItem, options: SaveOptions) -> SaveOptions:
+    """
+    Narrow *options* to the copyright block for a photo that was never generated.
+
+    Its text fields hold at most what the file already carries, so writing them back would only
+    rewrite the file's own values. Save This Photo still writes a hand edit.
+    """
+    if item.has_proposal:
+        return options
+    return replace(  # NOSONAR S5886 - replace() returns the type of options
+        options,
+        write_title=False,
+        write_description=False,
+        write_keywords=False,
     )
 
 

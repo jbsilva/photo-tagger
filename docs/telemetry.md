@@ -223,16 +223,17 @@ network), `tailnet`, `public`, or the name of a known service, such as `api.open
 This group tells what happens between generating photos and saving them. The edits are counts. The
 edited text is never sent.
 
-| Field                                                   | What it is                                                       |
-| ------------------------------------------------------- | ---------------------------------------------------------------- |
-| `saved`                                                 | Photos saved.                                                    |
-| `edited`                                                | Photos with a manual change to the proposal.                     |
-| `edited_title`, `edited_description`, `edited_keywords` | Which fields were changed.                                       |
-| `keywords_added`, `keywords_removed`                    | Keywords added to, or removed from, the proposals.               |
-| `hinted`, `from_cache`                                  | Saved photos that had a hint, or came from the cache.            |
-| `flagged`                                               | Photos saved while their text still mixed writing systems.       |
-| `manual_only`                                           | Photos saved without a proposal: the GUI used as a plain editor. |
-| `review_seconds_median`, `review_seconds_max`           | The time from the proposal to the save.                          |
+| Field                                                   | What it is                                                                  |
+| ------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `saved`                                                 | Photos saved.                                                               |
+| `edited`                                                | Photos with a manual change to the proposal.                                |
+| `edited_title`, `edited_description`, `edited_keywords` | Which fields were changed.                                                  |
+| `keywords_added`, `keywords_removed`                    | Keywords added to, or removed from, the proposals.                          |
+| `hinted`, `from_cache`                                  | Saved photos that had a hint, or came from the cache.                       |
+| `flagged`                                               | Photos saved while their text still mixed writing systems.                  |
+| `manual_only`                                           | Photos saved without a proposal: the GUI used as a plain editor.            |
+| `copyright_only`                                        | Photos whose save wrote only the copyright fields, without being generated. |
+| `review_seconds_median`, `review_seconds_max`           | The time from the proposal to the save.                                     |
 
 ### Display
 

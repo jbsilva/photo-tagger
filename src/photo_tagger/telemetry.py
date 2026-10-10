@@ -409,6 +409,7 @@ class ReviewStats:
     flagged: int = 0  # saved while the text still mixed writing systems
     from_cache: int = 0
     manual_only: int = 0  # saved without ever being generated: the GUI as a plain editor
+    copyright_only: int = 0  # copyright fields stamped on a photo that was never generated
     review_seconds_median: float = 0.0  # from proposal to save
     review_seconds_max: float = 0.0
 

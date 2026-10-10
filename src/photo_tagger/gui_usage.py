@@ -207,11 +207,17 @@ class ReviewTally:
     flagged: int = 0
     from_cache: int = 0
     manual_only: int = 0
+    copyright_only: int = 0
     review_seconds: list[float] = field(default_factory=list)
 
-    def add(self, item: PhotoItem, *, now: float) -> None:
-        """Count one saved photo."""
+    def add(self, item: PhotoItem, *, now: float, stamp_only: bool = False) -> None:
+        """Count one saved photo; *stamp_only* is a save that wrote nothing but the copyright."""
         self.saved += 1
+        if stamp_only:
+            # A notice stamped on a photo that was never generated: a feature of its own, not the
+            # window used as a plain metadata editor.
+            self.copyright_only += 1
+            return
         if not item.has_proposal:
             # Saved without ever being generated: the window used as a plain metadata editor.
             self.manual_only += 1
@@ -243,6 +249,7 @@ class ReviewTally:
             flagged=self.flagged,
             from_cache=self.from_cache,
             manual_only=self.manual_only,
+            copyright_only=self.copyright_only,
             review_seconds_median=quantile(self.review_seconds, 0.5),
             review_seconds_max=max(self.review_seconds, default=0.0),
         )
@@ -503,13 +510,13 @@ class GuiUsage:
         if self.run is not None:
             self.run.generated(key, proposal)
 
-    def saved(self, item: PhotoItem, *, ok: bool, now: float) -> None:
+    def saved(self, item: PhotoItem, *, ok: bool, now: float, stamp_only: bool = False) -> None:
         """Count one photo a save wrote (or failed to), in the run and in the session."""
         if self.run is not None:
             self.run.photo_saved(item, ok=ok, now=now)
         if ok:
             self._saved.add(str(item.path))
-            self.review.add(item, now=now)
+            self.review.add(item, now=now, stamp_only=stamp_only)
 
     def saved_single(self, item: PhotoItem, *, ok: bool, now: float) -> None:
         """Count a photo saved on its own from the detail pane: part of the session, not a run."""

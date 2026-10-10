@@ -64,6 +64,7 @@ from photo_tagger.gui_state import (
     NavigationHistory,
     PhotoItem,
     Proposal,
+    SaveJob,
     SaveOptions,
     SelectionChange,
     TaggedCriterion,
@@ -72,6 +73,7 @@ from photo_tagger.gui_state import (
     apply_proposal,
     apply_selection,
     apply_vocabulary,
+    apply_write_result,
     ascii_warning,
     build_copyright_fields,
     build_save_job,
@@ -130,15 +132,18 @@ from photo_tagger.gui_state import (
     photo_matches_filter,
     photo_sort_key,
     photos_for_pass,
+    photos_to_save,
     photos_to_write,
     planned_copyright,
     progress_timing_text,
     rank_vision_models,
     record_dropped_terms,
+    reports_status,
     resolve_extra_tags,
     reveal_command,
     reveal_label,
     review_summary,
+    save_options_for,
     search_summary,
     sort_photos,
     source_label,
@@ -2274,6 +2279,25 @@ def test_save_job_does_not_count_a_name_alone_as_a_notice() -> None:
     assert rights_only.writes_notice
 
 
+def test_photos_to_save_adds_the_photos_never_generated_only_for_a_copyright() -> None:
+    """Without a notice to stamp, a photo that was never generated has nothing to save."""
+    generated = PhotoItem(path=Path("/a.jpg"), has_proposal=True)
+    tagged = PhotoItem(path=Path("/b.jpg"))
+    unchecked = PhotoItem(path=Path("/c.jpg"), selected=False, has_proposal=True)
+    photos = [generated, tagged, unchecked]
+    assert photos_to_save(photos, SaveOptions()) == [generated]
+    assert photos_to_save(photos, _copyright_options()) == [generated, tagged]
+
+
+def test_save_options_for_keeps_only_the_copyright_on_a_photo_never_generated() -> None:
+    """Its text fields are the file's own values, so they are not written back."""
+    options = _copyright_options()
+    narrowed = save_options_for(PhotoItem(path=Path("/a.jpg")), options)
+    assert not narrowed.any_field
+    assert narrowed.writes_copyright
+    assert save_options_for(PhotoItem(path=Path("/a.jpg"), has_proposal=True), options) is options
+
+
 def test_resolve_extra_tags_dates_the_notice_by_the_photo() -> None:
     """The year comes from the batch read, so one photo's notice is not another's."""
     old, new = Path("/photos/old.jpg"), Path("/photos/new.jpg")
@@ -2567,3 +2591,62 @@ def test_apply_proposal_records_the_proposal_it_showed(tmp_path: Path) -> None:
     assert (item.proposed_at, item.hinted) == (12.5, True)
     item.title = "Grey Heron"
     assert item.proposed_title == "Heron", "editing the field leaves the baseline alone"
+
+
+def _job(
+    path: Path,
+    *,
+    title: str | None = None,
+    copyright_notice: bool = False,
+) -> SaveJob:
+    """Build a save job for *path*: copyright only unless a title is given."""
+    return SaveJob(
+        path=path,
+        keywords=KeywordSet(),
+        title=title,
+        description=None,
+        copyright=copyright_notice,
+    )
+
+
+def test_a_copyright_only_save_leaves_the_generation_status_alone(tmp_path: Path) -> None:
+    """
+    A stamp says nothing about generation: a failed stamp is not a failed photo, and vice versa.
+
+    Marking a never-generated photo FAILED would send it to Retry Failed, and the model with it.
+    """
+    stamp = _job(tmp_path / "a.jpg", copyright_notice=True)
+    fresh = PhotoItem(path=tmp_path / "a.jpg")
+    apply_write_result(fresh, stamp, ok=False)
+    assert fresh.status == PENDING
+
+    failed = PhotoItem(path=tmp_path / "a.jpg", status=FAILED)
+    apply_write_result(failed, stamp, ok=True)
+    assert failed.status == FAILED
+
+
+def test_a_text_save_sets_the_status(tmp_path: Path) -> None:
+    """Writing the generated text is what a status word reports."""
+    item = PhotoItem(path=tmp_path / "a.jpg")
+    apply_write_result(item, _job(tmp_path / "a.jpg", title="T"), ok=True)
+    assert item.status == SAVED
+
+
+def test_a_save_keeps_an_unscanned_photo_unknown(tmp_path: Path) -> None:
+    """The scan has not read it, so a few written fields must not pass for all it carries."""
+    item = PhotoItem(path=tmp_path / "a.jpg")
+    apply_write_result(item, _job(tmp_path / "a.jpg", copyright_notice=True), ok=True)
+    assert item.known_fields is None
+
+    scanned = PhotoItem(path=tmp_path / "b.jpg", known_fields={FIELD_TITLE})
+    apply_write_result(scanned, _job(tmp_path / "b.jpg", copyright_notice=True), ok=True)
+    assert scanned.known_fields is not None
+    assert FIELD_TITLE in scanned.known_fields
+    assert len(scanned.known_fields) > 1
+
+
+def test_a_hand_edit_on_a_photo_never_generated_is_a_save(tmp_path: Path) -> None:
+    """Save This Photo writes a hand edit, which is news for the status word."""
+    item = PhotoItem(path=tmp_path / "a.jpg")
+    assert reports_status(item, _job(tmp_path / "a.jpg", title="Typed")) is True
+    assert reports_status(item, _job(tmp_path / "a.jpg", copyright_notice=True)) is False

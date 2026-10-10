@@ -1398,6 +1398,8 @@ def test_save_current_writes_and_marks_saved(
     _select(window, window._leaf_for(img))  # noqa: SLF001
     window._title.setText("New Title")  # noqa: SLF001
     window._keywords.setPlainText("Eagle\nSky")  # noqa: SLF001
+    # Scanned and found bare, so the column may trust what the save wrote.
+    window._items[str(img)].known_fields = set()  # noqa: SLF001
     window._save_current()  # noqa: SLF001
 
     item = window._items[str(img)]  # noqa: SLF001
@@ -1848,6 +1850,8 @@ def _two_ready_photos(
         item.has_proposal = True
         item.title = "T"
         item.keywords = ["Eagle"]
+        # Scanned and found bare, so the Tagged column may trust what a save writes.
+        item.known_fields = set()
     return a, b
 
 
@@ -6282,6 +6286,61 @@ def test_a_copyright_alone_is_enough_to_save(
 
     assert captured["title"] is None
     assert captured["extra"]["EXIF:Artist"] == "Ada Lovelace"  # type: ignore[index]
+
+
+def test_save_selected_stamps_a_copyright_on_photos_never_generated(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An already-tagged photo gets the notice alone; the generated one gets its text as well."""
+    fresh = _jpeg(tmp_path / "a.jpg")
+    tagged = _jpeg(tmp_path / "b.jpg")
+    _stub_reads(monkeypatch, keywords=["Old"])
+    _stub_save_helper(monkeypatch)
+    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2011))
+    written: dict[str, dict[str, object]] = {}
+
+    def fake_write(path: Path, keywords: KeywordSet, **kwargs: object) -> bool:
+        written[path.name] = {"keywords": keywords, **kwargs}
+        return True
+
+    monkeypatch.setattr(metadata, "write_metadata", fake_write)
+    _add_dir(window, {"a": fresh, "b": tagged})
+    item = window._items[str(fresh)]  # noqa: SLF001
+    item.has_proposal = True
+    item.title = "New Title"
+    _select(window, window._leaf_for(tagged))  # noqa: SLF001 - opened, so its fields are seeded
+    _fill_copyright(window)
+
+    window._save_selected()  # noqa: SLF001
+    _drain_save(window)
+
+    assert written["a.jpg"]["title"] == "New Title"
+    assert written["b.jpg"]["title"] is None
+    assert written["b.jpg"]["description"] is None
+    assert written["b.jpg"]["keywords"].is_empty()  # type: ignore[attr-defined]
+    extra = written["b.jpg"]["extra"]
+    assert extra["EXIF:Copyright"] == "Copyright (c) 2011 Ada Lovelace"  # type: ignore[index]
+    # A stamp says nothing about generation, so the tagged photo keeps its status word.
+    assert window._items[str(tagged)].status != SAVED  # noqa: SLF001
+    assert window._items[str(fresh)].status == SAVED  # noqa: SLF001
+
+
+def test_save_selected_without_a_copyright_still_needs_a_proposal(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With nothing to stamp, a photo never generated has nothing to save, and the line says how."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+
+    window._save_selected()  # noqa: SLF001
+
+    assert window._save_thread is None  # noqa: SLF001
+    assert "Settings > Copyright" in window._status.text()  # noqa: SLF001
 
 
 def test_save_worker_dates_each_photo_in_the_batch(
