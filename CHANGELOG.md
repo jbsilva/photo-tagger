@@ -63,6 +63,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- A photo whose answer ran past `--max-tokens` is now asked again automatically, twice, instead of
+  failing. The cap is only ever reached by a model that fell into a repetition loop (an endless
+  `Animal<Animal` chain in its hierarchies), which the next attempt almost never repeats.
+- The schema handed to the model now states the keyword and hierarchy caps it already enforced, and
+  the prompt rules out repeated chains, a term as its own parent, and climbing past a broad
+  category.
 - pydantic-ai's first-run observability banner no longer prints. It landed in the middle of a batch,
   in the stdout stream `--json` consumers parse, and in the terminal behind the GUI window.
 - The system prompt now rules out a foreign word used *as* the concept name (a title reading

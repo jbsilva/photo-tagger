@@ -161,7 +161,7 @@ class InferenceConfig:
         float,
         Parameter(
             name=("--timeout-seconds",),
-            help="Per-image inference timeout in seconds; aborts and lets the retry loop step in",
+            help="Timeout of one model request, in seconds; aborts it and lets the retries step in",
         ),
     ] = DEFAULT_TIMEOUT_SECONDS
     frequency_penalty: Annotated[
@@ -1088,6 +1088,7 @@ def to_processing_options(
     inference: InferenceConfig,
     *,
     vocabulary: Vocabulary | None = None,
+    retries: int = DEFAULT_RETRIES,
 ) -> ProcessingOptions:
     """
     Combine the CLI's output + inference groups into the pipeline's options dataclass.
@@ -1108,6 +1109,7 @@ def to_processing_options(
         temperature=inference.temperature,
         max_tokens=inference.max_tokens,
         timeout_seconds=inference.timeout_seconds,
+        retries=retries,
         frequency_penalty=inference.frequency_penalty,
         jpeg_dimensions=inference.jpeg_dimensions,
         jpeg_quality=inference.jpeg_quality,

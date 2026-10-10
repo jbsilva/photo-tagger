@@ -1427,7 +1427,12 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         )
         cache = open_cache(artifacts.cache_file, namespace=cache_namespace)
         return _RunSetup(
-            options=to_processing_options(output, inference, vocabulary=vocabulary),
+            options=to_processing_options(
+                output,
+                inference,
+                vocabulary=vocabulary,
+                retries=provider.retries,
+            ),
             agent=agent,
             user_prompt=user_prompt,
             workers=max(1, workers),

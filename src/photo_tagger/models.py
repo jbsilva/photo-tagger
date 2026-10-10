@@ -57,12 +57,16 @@ class GeneratedMetadata(BaseModel):
 
     title: str = Field(min_length=1, max_length=_MAX_TITLE_CHARS)
     description: str = Field(min_length=1, max_length=_MAX_DESCRIPTION_CHARS)
-    keywords: list[_Keyword] = Field(default_factory=list)
+    # The caps are declared on the fields, not only enforced by the validators below, so the JSON
+    # schema the model is handed carries a maxItems. Nothing on the serving side is obliged to
+    # honor it (LM Studio does not constrain tool-call arguments to it), but a schema that states
+    # the limit it enforces is the one the model has a chance of following.
+    keywords: list[_Keyword] = Field(default_factory=list, max_length=_MAX_KEYWORDS)
     # A dedicated field so structured output gives the model an explicit place for taxonomy.
     # Each entry is specific-to-general with '<' separators, e.g. "Golden Eagle<Bird of Prey".
     # Without this field the model, constrained to the schema, just emits flat keywords and the
     # hierarchy is lost.
-    hierarchies: list[_Hierarchy] = Field(default_factory=list)
+    hierarchies: list[_Hierarchy] = Field(default_factory=list, max_length=_MAX_HIERARCHIES)
 
     @field_validator("keywords", mode="before")
     @classmethod

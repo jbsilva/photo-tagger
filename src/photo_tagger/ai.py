@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING
 import pydantic_ai
 from loguru import logger
 from pydantic_ai import Agent, AgentRunResult, ModelSettings
+from pydantic_ai.exceptions import IncompleteToolCall, UnexpectedModelBehavior
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from photo_tagger.config import (
     DEFAULT_FREQUENCY_PENALTY,
@@ -147,6 +148,80 @@ def partial_usage_from(exc: BaseException) -> tuple[int, int, int] | None:
     return getattr(exc, _PARTIAL_USAGE_ATTR, None)
 
 
+# How often a run that died on the token limit is simply asked again. The cap is only ever
+# reached by a model that fell into a repetition loop (an endless "Animal<Animal" chain in the
+# hierarchies field is the shape that shows up), which is a sampling accident: the very next
+# attempt on the same photo almost always answers normally. pydantic-ai deliberately does not
+# retry this one ("Don't retry if the token limit was exceeded, possibly during thinking"), so
+# without this every loop costs the user a failed photo to notice and retry by hand.
+_LENGTH_RETRIES = 2
+
+# The attempts share one usage counter, so pydantic-ai's default cap of 50 requests per run could
+# stop a photo whose own retries are well within bounds (3 attempts x 17 tries at --retries 16).
+# The retries and the attempts already bound the calls, so the cap is off.
+_NO_REQUEST_CAP = UsageLimits(request_limit=None)
+
+
+def requests_per_photo(retries: int) -> int:
+    """
+    Return the most model requests one photo can take.
+
+    Each attempt retries a bad answer *retries* times, and a photo that ran past the token limit
+    gets :data:`_LENGTH_RETRIES` more attempts.
+    """
+    return (retries + 1) * (_LENGTH_RETRIES + 1)
+
+
+def _is_token_limit_failure(exc: BaseException) -> bool:
+    """
+    Say whether *exc* is the model running out of output budget mid-answer.
+
+    Two shapes reach here. A cut-off tool call raises pydantic-ai's own ``IncompleteToolCall``. A
+    server that drops the unparsable call before answering (LM Studio does) leaves nothing to point
+    at, and pydantic-ai raises a plain ``UnexpectedModelBehavior`` whose message is the only thing
+    distinguishing it, hence the text match. A miss costs nothing: the failure is raised as it is
+    today.
+    """
+    if isinstance(exc, IncompleteToolCall):
+        return True
+    return isinstance(exc, UnexpectedModelBehavior) and "token limit" in str(exc)
+
+
+def _run_with_length_retries(
+    agent: Agent[None, GeneratedMetadata],
+    message: list[str | BinaryContent],
+    *,
+    settings: ModelSettings,
+    usage: RunUsage,
+) -> AgentRunResult[GeneratedMetadata]:
+    """
+    Run the agent, asking again when the answer ran past the token limit.
+
+    Every attempt shares one :class:`RunUsage`, so the tokens a discarded answer burned still reach
+    the batch summary instead of vanishing with it.
+    """
+    for attempt in range(_LENGTH_RETRIES + 1):
+        try:
+            return agent.run_sync(
+                message,
+                model_settings=settings,
+                output_type=GeneratedMetadata,
+                usage=usage,
+                usage_limits=_NO_REQUEST_CAP,
+            )
+        except Exception as exc:
+            if attempt >= _LENGTH_RETRIES or not _is_token_limit_failure(exc):
+                raise
+            logger.warning(
+                "inference_token_limit_retry",
+                attempt=attempt + 1,
+                max_tokens=settings.get("max_tokens"),
+                error=str(exc),
+            )
+    # Unreachable: the loop either returns or raises on its last attempt.
+    raise AssertionError
+
+
 def analyze_image_with_ai(  # noqa: PLR0913 - each kwarg is a distinct sampling knob; bundling adds indirection
     image_bytes: BinaryContent,
     agent: Agent[None, GeneratedMetadata],
@@ -171,16 +246,17 @@ def analyze_image_with_ai(  # noqa: PLR0913 - each kwarg is a distinct sampling 
     # Passed in (rather than left to default) so tokens from every internal attempt land here,
     # in place, even if the run as a whole raises: see _attach_partial_usage.
     run_usage = RunUsage()
+    settings = ModelSettings(
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout_seconds,
+        frequency_penalty=frequency_penalty,
+    )
     try:
-        result: AgentRunResult[GeneratedMetadata] = agent.run_sync(
+        result = _run_with_length_retries(
+            agent,
             [prompt, image_bytes],
-            model_settings=ModelSettings(
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout_seconds,
-                frequency_penalty=frequency_penalty,
-            ),
-            output_type=GeneratedMetadata,
+            settings=settings,
             usage=run_usage,
         )
     except Exception as exc:

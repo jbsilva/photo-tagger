@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from loguru import logger
 from pydantic_ai.exceptions import ModelHTTPError
 
-from photo_tagger.ai import analyze_image_with_ai, partial_usage_from
+from photo_tagger.ai import analyze_image_with_ai, partial_usage_from, requests_per_photo
 from photo_tagger.cache import InferenceCache, content_cache_key, safe_cache_get, safe_cache_put
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
@@ -18,6 +18,7 @@ from photo_tagger.config import (
     DEFAULT_JPEG_QUALITY,
     DEFAULT_MAX_TOKENS,
     DEFAULT_OUTPUT_LANGUAGE,
+    DEFAULT_RETRIES,
     DEFAULT_SIDECAR_MODE,
     DEFAULT_TEMPERATURE,
     DEFAULT_TIMEOUT_SECONDS,
@@ -146,6 +147,8 @@ class ProcessingOptions:
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_MAX_TOKENS
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    # The agent's own retry budget, for bounding how long a photo can take (see requests_per_photo).
+    retries: int = DEFAULT_RETRIES
     frequency_penalty: float = DEFAULT_FREQUENCY_PENALTY
     jpeg_dimensions: int = DEFAULT_DIMENSIONS
     jpeg_quality: int = DEFAULT_JPEG_QUALITY
@@ -514,9 +517,11 @@ def _resolve_inference(
             ctx.inflight[content_key] = threading.Event()
 
     if leader_event is not None:
-        # Another worker is already inferring these pixels; wait (bounded by its model timeout
-        # plus slack for image preparation) and replay its cached result.
-        leader_event.wait(timeout=ctx.options.timeout_seconds + 30.0)
+        # Another worker is already inferring these pixels; wait (bounded by every request it may
+        # make, a repair included, plus slack for image preparation) and replay its cached result.
+        repairs = 2 if ctx.options.repair_language else 1
+        requests = requests_per_photo(ctx.options.retries) * repairs
+        leader_event.wait(timeout=ctx.options.timeout_seconds * requests + 30.0)
         cached = _cache_replay(ctx, content_key, file_name=image_path.name)
         if cached is not None:
             return cached, True

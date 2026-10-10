@@ -32,6 +32,7 @@ class StubAgent:
         model_settings: ModelSettings,
         output_type: type[GeneratedMetadata],
         usage: object = None,
+        usage_limits: object = None,  # noqa: ARG002 - accepted as the real agent does.
     ) -> SimpleNamespace:
         """Mimic Agent.run_sync by validating the canned payload through the output schema."""
         self.calls.append(
@@ -119,6 +120,7 @@ class _NoUsageAgent(StubAgent):
         model_settings: ModelSettings,
         output_type: type[GeneratedMetadata],
         usage: object = None,
+        usage_limits: object = None,  # noqa: ARG002 - accepted as the real agent does.
     ) -> SimpleNamespace:
         """Reuse StubAgent's parsing/recording, then drop the usage attribute."""
         result = super().run_sync(items, model_settings, output_type, usage)

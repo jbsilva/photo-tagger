@@ -193,6 +193,7 @@ class _StubAgent:
         model_settings: Any,  # noqa: ANN401
         output_type: Any,  # noqa: ANN401
         usage: Any = None,  # noqa: ANN401
+        usage_limits: Any = None,  # noqa: ANN401, ARG002 - accepted as the real agent does.
     ) -> Any:  # noqa: ANN401
         self.calls.append(
             {
@@ -359,3 +360,110 @@ def test_extract_usage_handles_none_attributes() -> None:
     """None attribute values are coerced to 0."""
     usage = MagicMock(input_tokens=None, output_tokens=None, total_tokens=None)
     assert ai_module._extract_usage(usage) == (0, 0, 0)  # noqa: SLF001
+
+
+# The two shapes a run that outgrew its output budget arrives in; see _is_token_limit_failure.
+_LENGTH_MESSAGE = (
+    "Model token limit (1200) exceeded before any response was generated. Increase the "
+    "`max_tokens` model setting, or simplify the prompt to result in a shorter response."
+)
+
+
+class _LoopingAgent(_StubAgent):
+    """Runs out of output budget *failures* times, then answers normally."""
+
+    def __init__(self, output: Any, failures: int, error: BaseException) -> None:  # noqa: ANN401
+        super().__init__(output)
+        self.failures = failures
+        self.error = error
+        self.attempts = 0
+
+    def run_sync(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        self.attempts += 1
+        if self.attempts <= self.failures:
+            usage = kwargs.get("usage")
+            if usage is not None:
+                # Every discarded attempt still burned its whole budget.
+                usage.output_tokens = getattr(usage, "output_tokens", 0) + 1200
+            raise self.error
+        return super().run_sync(*args, **kwargs)
+
+
+def _metadata() -> GeneratedMetadata:
+    """Build a plain, valid model answer."""
+    return GeneratedMetadata(
+        title="A Title",
+        description="A description.",
+        keywords=["Duck"],
+        hierarchies=["Duck<Bird<Animal"],
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pydantic_ai.exceptions.UnexpectedModelBehavior(_LENGTH_MESSAGE),
+        pydantic_ai.exceptions.IncompleteToolCall("Model token limit (1200) exceeded while ..."),
+    ],
+)
+def test_analyze_image_retries_a_run_that_hit_the_token_limit(error: BaseException) -> None:
+    """
+    A repetition loop is a sampling accident, so the photo is simply asked again.
+
+    pydantic-ai refuses to retry this one itself, which left every loop as a failed photo for the
+    user to spot and retry by hand.
+    """
+    agent = _LoopingAgent(_metadata(), failures=1, error=error)
+
+    result = ai_module.analyze_image_with_ai(image_bytes=_stub_image(), agent=agent)  # type: ignore[arg-type]
+
+    assert agent.attempts == 2  # noqa: PLR2004 - one loop, then the answer.
+    assert result.title == "A Title"
+
+
+def test_analyze_image_gives_up_after_the_retry_budget() -> None:
+    """A photo that fails every time still reports the failure rather than looping forever."""
+    error = pydantic_ai.exceptions.UnexpectedModelBehavior(_LENGTH_MESSAGE)
+    agent = _LoopingAgent(_metadata(), failures=99, error=error)
+    image = _stub_image()
+
+    with pytest.raises(pydantic_ai.exceptions.UnexpectedModelBehavior):
+        ai_module.analyze_image_with_ai(image_bytes=image, agent=agent)  # type: ignore[arg-type]
+
+    assert agent.attempts == ai_module._LENGTH_RETRIES + 1  # noqa: SLF001 - the budget under test.
+
+
+def test_analyze_image_counts_the_tokens_a_retried_loop_burned() -> None:
+    """The discarded attempt's tokens reach the summary; they were spent either way."""
+    error = pydantic_ai.exceptions.UnexpectedModelBehavior(_LENGTH_MESSAGE)
+    agent = _LoopingAgent(_metadata(), failures=99, error=error)
+    image = _stub_image()
+
+    with pytest.raises(pydantic_ai.exceptions.UnexpectedModelBehavior) as exc_info:
+        ai_module.analyze_image_with_ai(image_bytes=image, agent=agent)  # type: ignore[arg-type]
+
+    partial = ai_module.partial_usage_from(exc_info.value)
+    assert partial is not None
+    # Three attempts, each burning the full budget.
+    assert partial[1] == 3 * 1200
+
+
+def test_analyze_image_does_not_retry_an_unrelated_failure() -> None:
+    """Only the token-limit shape is retried; everything else fails on the first attempt."""
+    agent = _LoopingAgent(_metadata(), failures=1, error=ValueError("connection reset"))
+    image = _stub_image()
+
+    with pytest.raises(ValueError, match="connection reset"):
+        ai_module.analyze_image_with_ai(image_bytes=image, agent=agent)  # type: ignore[arg-type]
+
+    assert agent.attempts == 1
+
+
+def test_requests_per_photo_counts_retries_and_length_attempts() -> None:
+    """Five retries per attempt, three attempts: eighteen requests at most."""
+    assert ai_module.requests_per_photo(5) == 18  # noqa: PLR2004 - (5 + 1) x (2 + 1)
+
+
+def test_a_run_is_not_capped_by_pydantic_ai_request_limit() -> None:
+    """The attempts share one usage counter, so the default cap of 50 must not stop a photo."""
+    assert ai_module._NO_REQUEST_CAP.request_limit is None  # noqa: SLF001 - the setting under test.

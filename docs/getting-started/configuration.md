@@ -39,7 +39,7 @@ These variables set defaults. Any matching CLI flag still overrides them. See
 | `OPENAI_API_KEY`      | none                        | API key for the `openai` provider (required); also the fallback key for LM Studio. |
 | `TEMPERATURE`         | `0.2`                       | Sampling temperature.                                                              |
 | `MAX_TOKENS`          | `1200`                      | Maximum tokens to generate.                                                        |
-| `TIMEOUT_SECONDS`     | `60.0`                      | Per-image inference timeout in seconds.                                            |
+| `TIMEOUT_SECONDS`     | `60.0`                      | Timeout of one model request, in seconds.                                          |
 | `FREQUENCY_PENALTY`   | `0.5`                       | Penalty on repeated tokens.                                                        |
 | `JPEG_DIMENSIONS`     | `1280`                      | Max dimension (px) of the JPEG sent to the model.                                  |
 | `JPEG_QUALITY`        | `80`                        | JPEG quality (1-100) of the image sent to the model.                               |
