@@ -64,13 +64,16 @@ This file lists all notable changes to this project. The format follows the
 - On Windows, photo-tagger never runs ExifTool or another helper program from the current folder.
 - A crash report no longer goes out before you see the telemetry notice.
 - A typed `--embed-in-photo` now beats a `sidecar_mode` saved in the configuration file.
-- Ctrl-C in `watch` now stops the watch.
+- Ctrl-C in `watch` now stops the watch, and `watch` now takes `--lock-file` as `tag` does.
+- A photo whose sidecar ExifTool cannot read keeps its own keywords and title. Before, it was tagged
+  as if it had none, and its keywords were replaced instead of merged.
+- `vocabulary --organize` folds plurals only for English, as the trim step does.
 - An answer that runs past `--max-tokens` (a model in a repetition loop) is asked again, twice,
   instead of failing.
 - GUI: the window uses `jpeg_dimensions` from the configuration, not a fixed 640 px.
 - GUI: **Uncheck Already Tagged** no longer freezes the window. The **Tagged** scan reads in
   batches, shows a progress bar with **Stop**, skips folders you remove, and no longer restarts
-  forever on a photo it cannot read.
+  forever on a photo it cannot read, or skips a photo you add back while it runs.
 - The prompt forbids a foreign word as the name of the subject.
 - pydantic-ai's first-run banner no longer prints.
 
