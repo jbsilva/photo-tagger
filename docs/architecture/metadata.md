@@ -24,9 +24,12 @@ class ImageContext:
     existing_keywords: KeywordSet  # typed subject / hierarchical / weighted views
     existing_title: str | None  # what --preserve-title would keep
     existing_description: str | None  # what --preserve-description would keep
+    existing_copyright: str | None  # the notice the GUI shows beside the one a save writes
+    field_sources: FieldSources  # the tags the copyright templates read
     location_tags: dict[str, str]  # city/country from XMP-photoshop and IPTC
     gps_position: str | None  # Composite:GPSPosition, if present
     camera_info: dict[str, str]  # EXIF Model, LensModel, DateTimeOriginal
+    content_hash: str | None  # ImageDataHash, the cache key, when a cache asks for it
 ```
 
 `KeywordSet` (in [`models.py`][models]) is a small dataclass with `subject`, `hierarchical`, and
@@ -71,8 +74,9 @@ parse_hierarchical_keyword("Landscape")
 # ('Landscape', ['Landscape'])
 ```
 
-A plain keyword with no `<` separator passes through unchanged as a single-level entry. Stray `>`
-characters the model sometimes emits are dropped before parsing.
+A plain keyword with no `<` separator passes through unchanged as a single-level entry. The model
+sometimes writes `>` instead of `<`. Each `>` is converted to `<` before parsing, so
+`Duck>Bird>Animal` gives the same chain as `Duck<Bird<Animal`.
 
 ### Merging with existing tags
 
@@ -84,11 +88,15 @@ three parallel buckets and preserves the hierarchy:
 - `hierarchical`: cumulative pipe paths. Lightroom needs each prefix, so a `Animal|Bird|Duck` leaf
     also contributes `Animal|Bird`.
 
-- `weighted`: a flat list that mirrors `subject`.
+- `weighted`: a flat list with the same new keywords as `subject`. It keeps its own existing
+    entries, so it can hold a term that `subject` does not.
 
 Deduplication is case-insensitive (compared with `casefold`), so a photo that already carries `Bird`
-will not gain a second `bird`. The first-seen casing wins. When a leaf appears in more than one
-chain, the longest observed chain is kept.
+will not gain a second `bird`. The first-seen casing wins, and the existing keywords come first. A
+new segment in all lowercase is capitalized (`bird` becomes `Bird`). A segment with any capital
+letter (`NYC`, `iPhone`) stays as it is, and a `--vocabulary` spelling always wins. When a leaf
+appears in more than one chain, the longest observed chain is added. The existing hierarchical paths
+always stay. Only existing paths with a `|` are kept in `hierarchical`.
 
 Two flag pairs control the merge:
 
@@ -112,10 +120,12 @@ the field is empty, which is how a hand-written caption survives a re-run.
 
 ## Writing metadata
 
-`write_metadata()` builds one ExifTool payload and applies it in a single `set_tags` call. Each
-piece of generated metadata is written to both an XMP tag and its IPTC or EXIF counterpart. This way
-different tools agree on the value. Lightroom prioritizes `IPTC:Keywords` for JPEGs, which is why
-the flat subject list is mirrored there.
+`write_metadata()` builds one ExifTool payload and applies it in a single `set_tags` call. When the
+target is the photo itself, each piece of generated metadata is written to both an XMP tag and its
+IPTC or EXIF counterpart. This way different tools agree on the value. A sidecar gets the XMP tags
+only. Some formats cannot hold IPTC (WebP, HEIC and HEIF, AVIF, CR3, and JPEG XL) or EXIF (GIF), so
+photo-tagger leaves those tags out of the payload for them. Lightroom prioritizes `IPTC:Keywords`
+for JPEGs, which is why the flat subject list is mirrored there.
 
 | Generated field    | Tags written                                                                 |
 | ------------------ | ---------------------------------------------------------------------------- |
@@ -131,7 +141,8 @@ mirror back to IFD0, but a direct write does not touch IFD0. Writing the EXIF ta
 a camera's placeholder from surviving underneath the new description.
 
 When `--write-title` and `--write-description` are enabled (both are on by default), title and
-description are written. If the payload is empty, nothing is written.
+description are written. If the payload is empty, nothing is written, and the write counts as failed
+(`WriteResult.FAILED`).
 
 Before the write, `write_metadata()` reads the target's current values of the payload tags. It drops
 each tag that already has the value, and it writes only the rest. If no tag is left, it does not
