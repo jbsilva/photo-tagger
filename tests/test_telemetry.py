@@ -9,6 +9,7 @@ never escape to the caller.
 import errno
 import json
 import platform
+import re
 import threading
 import time
 import uuid
@@ -867,3 +868,42 @@ def test_install_id_file_never_appears_empty(tmp_path: Path) -> None:
     folder = tmp_path / "state" / "photo-tagger"
     assert (folder / "install-id").read_text(encoding="utf-8").strip()
     assert not list(folder.glob("install-id.*.tmp"))
+
+
+def _documented_names() -> set[str]:
+    """Return every name docs/telemetry.md spells as code, the page's list of what is sent."""
+    page = (Path(__file__).parent.parent / "docs" / "telemetry.md").read_text(encoding="utf-8")
+    return set(re.findall(r"`([a-z_0-9]+)`", page))
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        telemetry.Settings,
+        telemetry.Setup,
+        telemetry.GuiJob,
+        telemetry.ReviewStats,
+        telemetry.Display,
+        telemetry.RunInfo,
+        telemetry.SessionInfo,
+        telemetry.CommandInfo,
+        telemetry.LaunchInfo,
+    ],
+    ids=lambda event: event.__name__,
+)
+def test_every_event_field_is_documented(event: type) -> None:
+    """A new field needs a line in docs/telemetry.md, which lists all that leaves the machine."""
+    missing = [spec.name for spec in fields(event) if spec.name not in _documented_names()]
+
+    assert missing == []
+
+
+def test_every_envelope_and_crash_key_is_documented() -> None:
+    """The keys the payload builders add, beside the dataclasses, are on the page too."""
+    run = telemetry.build_payload(_sample_run())
+    try:
+        raise ValueError("boom")  # noqa: EM101, TRY301 - a real traceback for the crash payload
+    except ValueError as exc:
+        crash = telemetry.build_crash_payload(exc, interface="cli")
+
+    assert sorted((set(run) | set(crash)) - _documented_names()) == []
