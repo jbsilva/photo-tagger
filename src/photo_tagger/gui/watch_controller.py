@@ -56,7 +56,7 @@ class WatchController(QObject):
         *,
         recursive: bool,
         extensions: Callable[[], str],
-        add_photos: Callable[[list[Path]], list[Path]],
+        add_photos: Callable[[list[Path], str], list[Path]],
         photo: Callable[[str], PhotoItem | None],
         busy: Callable[[], bool],
         closing: Callable[[], bool],
@@ -66,9 +66,9 @@ class WatchController(QObject):
         Build the watch and its dialog; nothing polls until :meth:`start`.
 
         *recursive* seeds the dialog's subfolder toggle. *extensions* reads the folder-scan file
-        types, *add_photos* adds paths to the list and returns the new ones, *photo* looks one up by
-        key, *busy* says whether a run holds the window, *closing* whether the window is going away,
-        and *pacing_plan* reads the plan a watch batch rests by.
+        types, *add_photos* adds paths of the given types to the list and returns the new ones,
+        *photo* looks one up by key, *busy* says whether a run holds the window, *closing* whether
+        the window is going away, and *pacing_plan* reads the plan a watch batch rests by.
         """
         super().__init__(parent)
         self._extensions = extensions
@@ -159,7 +159,7 @@ class WatchController(QObject):
         if settings is None or self._closing():
             # A batch delivered while the window is going away has nothing left to be added to.
             return
-        fresh = self._add_photos(list(paths))
+        fresh = self._add_photos(list(paths), settings.extensions)
         if not fresh:
             return
         self._added += len(fresh)

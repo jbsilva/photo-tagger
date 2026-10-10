@@ -5755,6 +5755,23 @@ def test_watching_adds_new_photos_and_generates_them(
     assert "1 photo added" in window._status.text()  # noqa: SLF001
 
 
+def test_a_watch_batch_keeps_the_file_types_the_watch_started_with(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Emptying the File types field mid-watch must not drop every photo the watch finds."""
+    photo = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    monkeypatch.setattr(window, "_run_generation", lambda _items, **_k: None)
+    window._watch._settings = WatchSettings(folders=(tmp_path,), extensions="jpg")  # noqa: SLF001
+    window._extensions.setText("")  # noqa: SLF001 - edited after the watch started
+
+    window._watch._on_batch([photo])  # noqa: SLF001
+
+    assert str(photo) in window._items  # noqa: SLF001
+
+
 def test_watching_queues_photos_that_land_mid_run(
     window: gui.MainWindow,
     tmp_path: Path,

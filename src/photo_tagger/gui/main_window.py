@@ -1241,11 +1241,16 @@ class MainWindow(QMainWindow):
         if folder:
             self._add_inputs([Path(folder)])
 
-    def _add_inputs(self, paths: list[Path]) -> list[Path]:
-        """Add the photos under *paths* to the list, returning the ones that were not there yet."""
+    def _add_inputs(self, paths: list[Path], extensions: str | None = None) -> list[Path]:
+        """
+        Add the photos under *paths* to the list, returning the ones that were not there yet.
+
+        *extensions* overrides the File types field: a watch filters by the types it started with,
+        so editing the field while it runs cannot drop what it finds.
+        """
         found = expand_inputs(
             paths,
-            self._extensions.text().strip(),
+            self._extensions.text().strip() if extensions is None else extensions,
             recursive=self._recursive.isChecked(),
         )
         fresh = new_paths([Path(p) for p in self._items], found)
