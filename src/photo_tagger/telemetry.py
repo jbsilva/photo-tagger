@@ -150,6 +150,7 @@ _GUI_PREF_OPT_IN = "opt-in"
 _GUI_PREF_OFF = "0"
 _GUI_PREF_LEGACY_ON = "1"
 _HARDWARE_CACHE_FILE = "hardware.json"
+_INSTALL_ID_LOCK = threading.Lock()
 
 # Bumped whenever the disclosure below materially changes (new data categories), so existing
 # installs see the updated notice once. v2: hardware and crash reports. v3: settings and features,
@@ -696,18 +697,59 @@ def install_id() -> str:
     The id is a random UUID4 persisted under the state directory. If it cannot be read or written
     (read-only home, permission denied), a fresh ephemeral id is returned instead so the run is
     still counted; only the across-runs "same install" linkage is lost in that rare case.
-    """
-    path = _state_dir() / _INSTALL_ID_FILE
-    try:
-        existing = path.read_text(encoding="utf-8").strip()
-        return str(uuid.UUID(existing))
-    except OSError, ValueError:
-        # Missing, empty, or corrupt: mint a new one below.
-        pass
 
-    new_id = str(uuid.uuid4())
+    Two beacons of one first run are sent from two threads, and a CLI and a window can start at the
+    same moment, so the id is minted under a lock and created exclusively: whoever loses the race
+    reads the winner's id instead of writing its own.
+    """
+    with _INSTALL_ID_LOCK:
+        path = _state_dir() / _INSTALL_ID_FILE
+        if (existing := _read_install_id(path)) is not None:
+            return existing
+        new_id = str(uuid.uuid4())
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _create_whole(path, new_id + "\n")
+        except FileExistsError:
+            return _read_install_id(path) or _replace_install_id(path, new_id)
+        except OSError as exc:
+            logger.debug("telemetry_install_id_persist_failed", error=str(exc))
+        return new_id
+
+
+def _create_whole(path: Path, text: str) -> None:
+    """
+    Create *path* holding *text*, or raise FileExistsError; never a moment with the file empty.
+
+    Opening exclusively and then writing leaves an instant where another process finds the file
+    empty, reads it as corrupt, and writes its own id. Writing a private file first and linking it
+    into place makes the file appear whole. A filesystem without hard links (exFAT, some SMB shares)
+    falls back to the exclusive create: a rare race beats a new install id on every run.
+    """
+    temp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    temp.write_text(text, encoding="utf-8")
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        os.link(temp, path)
+    except FileExistsError:
+        raise
+    except OSError:
+        with path.open("x", encoding="utf-8") as handle:
+            handle.write(text)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _read_install_id(path: Path) -> str | None:
+    """Return the id stored at *path*, or None when it is missing, empty, or corrupt."""
+    try:
+        return str(uuid.UUID(path.read_text(encoding="utf-8").strip()))
+    except OSError, ValueError:
+        return None
+
+
+def _replace_install_id(path: Path, new_id: str) -> str:
+    """Overwrite a corrupt id file with *new_id*, and return it."""
+    try:
         path.write_text(new_id + "\n", encoding="utf-8")
     except OSError as exc:
         logger.debug("telemetry_install_id_persist_failed", error=str(exc))

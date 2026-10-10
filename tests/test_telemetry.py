@@ -6,13 +6,16 @@ These prove the three things that actually matter: telemetry is off when the use
 never escape to the caller.
 """
 
+import errno
 import json
 import platform
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields, replace
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx2
 import pytest
@@ -191,6 +194,28 @@ def test_install_id_degrades_when_state_dir_unwritable(
 
 
 # --- first-run notice --------------------------------------------------------------------------
+
+
+def test_install_id_is_one_id_when_first_beacons_race() -> None:
+    """Two threads minting the first id at once end up with the same id, not two installs."""
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        ids = set(pool.map(lambda _: telemetry.install_id(), range(16)))
+    assert len(ids) == 1
+
+
+def test_install_id_reads_the_winner_when_another_process_wrote_first(tmp_path: Path) -> None:
+    """Losing the exclusive create to another process means using that process's id."""
+    path = tmp_path / "state" / "photo-tagger" / "install-id"
+    winner = "12345678-1234-4321-8765-123456789abc"
+
+    def other_process_wins(_path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(winner, encoding="utf-8")
+
+    with patch.object(telemetry, "_read_install_id", side_effect=[None, winner]) as read:
+        other_process_wins(path)
+        assert telemetry.install_id() == winner
+    assert read.call_count == 2  # noqa: PLR2004 - once before the create, once after losing it.
 
 
 def test_first_run_notice_shows_once() -> None:
@@ -816,3 +841,29 @@ def test_emit_swallows_send_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(httpx2, "post", boom)
     # block=True joins the worker; the test passes simply by not raising.
     telemetry.emit(_sample_run(), enabled=True, block=True)
+
+
+def test_install_id_persists_where_hard_links_are_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ExFAT and some SMB shares refuse os.link; the id must still be the same on the next run."""
+
+    def refuse(*_args: object) -> None:
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr("os.link", refuse)
+    first = telemetry.install_id()
+
+    assert telemetry.install_id() == first
+    folder = tmp_path / "state" / "photo-tagger"
+    assert (folder / "install-id").read_text(encoding="utf-8").strip() == first
+    assert not list(folder.glob("install-id.*.tmp"))
+
+
+def test_install_id_file_never_appears_empty(tmp_path: Path) -> None:
+    """The id file is linked into place whole, so a reader never finds it empty."""
+    telemetry.install_id()
+    folder = tmp_path / "state" / "photo-tagger"
+    assert (folder / "install-id").read_text(encoding="utf-8").strip()
+    assert not list(folder.glob("install-id.*.tmp"))
