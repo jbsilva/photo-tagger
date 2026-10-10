@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -35,7 +35,12 @@ from photo_tagger.failures import (
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
 from photo_tagger.language_repair import RepairStatus, repair_mixed_script, repair_replay
-from photo_tagger.metadata import managed_helper, read_image_context, write_metadata_everywhere
+from photo_tagger.metadata import (
+    ImageContext,
+    managed_helper,
+    read_image_context,
+    write_metadata_everywhere,
+)
 from photo_tagger.models import InferenceResult, KeywordSet
 from photo_tagger.prompt_context import build_contextual_prompt
 from photo_tagger.script_guard import find_in_result
@@ -51,7 +56,6 @@ if TYPE_CHECKING:
     from pydantic_ai import Agent, BinaryContent
 
     from photo_tagger.fields import ExtraFields
-    from photo_tagger.metadata import ImageContext
     from photo_tagger.models import GeneratedMetadata
     from photo_tagger.pacing import Pacer
     from photo_tagger.sessions import SessionPlan
@@ -62,19 +66,6 @@ if TYPE_CHECKING:
     ProgressCallback = Callable[[Path, bool], None]
     OnComplete = Callable[["BatchTotals"], None]
     OnImageResult = Callable[["ImageOutcome"], None]
-
-    # Only ever named in annotations, which PEP 649 leaves unevaluated, so it costs nothing at
-    # runtime to keep it here. It also has to stay here: as a runtime class its member types
-    # (InferenceResult, ImageContext) resolve to nothing, and pycroscope errors out trying to
-    # evaluate them, which silently degrades its analysis of the whole module.
-    class _InferenceScratch(TypedDict, total=False):
-        """Typed scratch pad passed between process_photo and _emit_outcome."""
-
-        inference: InferenceResult
-        from_cache: bool
-        context: ImageContext
-        merged_keywords: KeywordSet
-        foreign_terms: list[str]
 
 
 # Pause between the first pass and the retry pass. First-pass failures often mean the model
@@ -275,7 +266,7 @@ class _PendingWrite:
 
     Holds everything the write still needs: the keywords (which harmonization may rewrite), the two
     text fields, what the photo already carries in all three (to merge keywords into, and to decide
-    whether a preserved title or description is written at all), and the scratch pad the deferred
+    whether a preserved title or description is written at all), and the record the deferred
     :class:`ImageOutcome` is built from.
 
     ``extra_tags`` is resolved here rather than at write time because its copyright notice is filled
@@ -286,7 +277,7 @@ class _PendingWrite:
     title: str
     description: str
     existing: KeywordSet
-    scratch: _InferenceScratch
+    record: _PhotoRecord
     existing_title: str | None = None
     existing_description: str | None = None
     extra_tags: dict[str, str] = field(default_factory=dict)
@@ -503,32 +494,44 @@ def _resolve_inference(
             our_event.set()
 
 
-def _record_scratch(  # noqa: PLR0913 - one kwarg per piece the sink collects; a bundle adds nothing.
-    sink: _InferenceScratch | None,
-    *,
-    context: ImageContext | None = None,
-    inference: InferenceResult | None = None,
-    from_cache: bool = False,
-    merged_keywords: KeywordSet | None = None,
-    foreign_terms: list[str] | None = None,
-) -> None:
+@dataclass(slots=True)
+class _PhotoRecord:
     """
-    Write the supplied pieces into the per-call *sink*, a no-op when no sink was given.
+    What processing one photo learned as it went, for the ImageOutcome reported at the end.
 
-    Centralizes the ``outcome_sink is not None`` guard so process_photo records context, inference,
-    and merged keywords as plain one-liners as each becomes available.
+    A photo can fail at any step, so every piece is optional: a failure still reports what was known
+    by then (its EXIF and existing keywords, say), and a CSV row needs no second read.
     """
-    if sink is None:
-        return
-    if context is not None:
-        sink["context"] = context
-    if inference is not None:
-        sink["inference"] = inference
-        sink["from_cache"] = from_cache
-    if merged_keywords is not None:
-        sink["merged_keywords"] = merged_keywords
-    if foreign_terms is not None:
-        sink["foreign_terms"] = foreign_terms
+
+    context: ImageContext | None = None
+    inference: InferenceResult | None = None
+    from_cache: bool = False
+    merged_keywords: KeywordSet | None = None
+    foreign_terms: list[str] = field(default_factory=list)
+
+    def outcome(self, image_file: Path, *, success: bool, retry: bool) -> ImageOutcome:
+        """Build the outcome of *image_file* from what is known."""
+        inference, context, merged = self.inference, self.context, self.merged_keywords
+        return ImageOutcome(
+            file=image_file,
+            success=success,
+            from_cache=self.from_cache,
+            retry=retry,
+            title=inference.title if inference is not None else None,
+            description=inference.description if inference is not None else None,
+            keywords=list(inference.keywords) if inference is not None else [],
+            input_tokens=inference.input_tokens if inference is not None else 0,
+            output_tokens=inference.output_tokens if inference is not None else 0,
+            total_tokens=inference.total_tokens if inference is not None else 0,
+            seconds=inference.seconds if inference is not None else 0.0,
+            written_keywords=list(merged.subject) if merged is not None else [],
+            hierarchical_keywords=list(merged.hierarchical) if merged is not None else [],
+            existing_keywords=list(context.existing_keywords.subject) if context else [],
+            camera_info=dict(context.camera_info) if context is not None else {},
+            location_tags=dict(context.location_tags) if context is not None else {},
+            gps_position=context.gps_position if context is not None else None,
+            foreign_terms=list(self.foreign_terms),
+        )
 
 
 def _flag_foreign_script(
@@ -536,7 +539,7 @@ def _flag_foreign_script(
     ctx: _BatchContext,
     image_path: Path,
     *,
-    sink: _InferenceScratch | None,
+    record: _PhotoRecord,
 ) -> None:
     """
     Mark the photo for review when its generated text mixes writing systems.
@@ -558,7 +561,7 @@ def _flag_foreign_script(
         terms=finding.terms,
     )
     ctx.usage.add_review(image_path)
-    _record_scratch(sink, foreign_terms=finding.terms)
+    record.foreign_terms = finding.terms
 
 
 def _apply_vocabulary(keywords: list[str], ctx: _BatchContext, *, file_name: str) -> list[str]:
@@ -636,7 +639,7 @@ def process_photo(
     ctx: _BatchContext,
     *,
     et: ExifToolHelper | None = None,
-    outcome_sink: _InferenceScratch | None = None,
+    record: _PhotoRecord | None = None,
 ) -> bool:
     """
     Convert an image to JPEG bytes in memory, query the model, and persist metadata.
@@ -649,15 +652,16 @@ def process_photo(
             Concurrent callers must NOT share a helper across threads (the underlying
             -stay_open subprocess uses a single stdin/stdout pipe); pass et=None instead
             and let each task get its own.
-        outcome_sink: Optional per-call scratch dict. When provided, this function
-            populates ``inference`` (InferenceResult) and ``from_cache`` (bool) so the
-            caller can wrap them into an ImageOutcome without retracing the work.
+        record: Optional record of what this call learns (the context, the answer, the merged
+            keywords, the review flag), so the caller can build an ImageOutcome without
+            retracing the work.
 
     Returns:
         True if every step succeeded, False if metadata writing failed. In session mode the write
         is deferred (see :class:`_PendingWrite`), so True there means "analyzed, queued to write".
     """
     logger.info("processing_photo")
+    record = record if record is not None else _PhotoRecord()
     options = ctx.options
 
     with managed_helper(et) as helper:
@@ -676,7 +680,7 @@ def process_photo(
             )
         # Stash the read context early so even a photo that fails during inference still
         # carries its EXIF/existing-keyword columns into the CSV report.
-        _record_scratch(outcome_sink, context=context)
+        record.context = context
 
         gps_info = {"position": context.gps_position} if context.gps_position else {}
         contextual_prompt = build_contextual_prompt(
@@ -697,8 +701,8 @@ def process_photo(
             contextual_prompt=contextual_prompt,
             content_key=content_key,
         )
-        _record_scratch(outcome_sink, inference=inference, from_cache=from_cache)
-        _flag_foreign_script(inference, ctx, image_path, sink=outcome_sink)
+        record.inference, record.from_cache = inference, from_cache
+        _flag_foreign_script(inference, ctx, image_path, record=record)
 
         title = inference.title
         description = inference.description
@@ -721,7 +725,7 @@ def process_photo(
             title=title,
             description=description,
             existing=existing_keywords_full if options.preserve_existing_kw else KeywordSet(),
-            scratch=outcome_sink if outcome_sink is not None else {},
+            record=record,
             existing_title=context.existing_title,
             existing_description=context.existing_description,
             extra_tags=_resolve_extra_tags(image_path, context, options),
@@ -778,7 +782,7 @@ def _write_pending(
         if options.write_keywords
         else KeywordSet()
     )
-    _record_scratch(pending.scratch, merged_keywords=merged_keywords)
+    pending.record.merged_keywords = merged_keywords
     title = _caption_to_write(
         pending.title,
         pending.existing_title,
@@ -823,37 +827,15 @@ def _write_pending(
 def _emit_outcome(
     on_image_result: OnImageResult | None,
     image_file: Path,
-    scratch: _InferenceScratch,
+    record: _PhotoRecord,
     *,
     success: bool,
     retry: bool,
 ) -> None:
-    """Build an ImageOutcome from *scratch* and *success* and call *on_image_result*."""
+    """Report the outcome of *image_file* to *on_image_result*, which may not break the batch."""
     if on_image_result is None:
         return
-    inference: InferenceResult | None = scratch.get("inference")
-    context: ImageContext | None = scratch.get("context")
-    merged: KeywordSet | None = scratch.get("merged_keywords")
-    outcome = ImageOutcome(
-        file=image_file,
-        success=success,
-        from_cache=bool(scratch.get("from_cache", False)),
-        retry=retry,
-        title=inference.title if inference is not None else None,
-        description=inference.description if inference is not None else None,
-        keywords=list(inference.keywords) if inference is not None else [],
-        input_tokens=inference.input_tokens if inference is not None else 0,
-        output_tokens=inference.output_tokens if inference is not None else 0,
-        total_tokens=inference.total_tokens if inference is not None else 0,
-        seconds=inference.seconds if inference is not None else 0.0,
-        written_keywords=list(merged.subject) if merged is not None else [],
-        hierarchical_keywords=list(merged.hierarchical) if merged is not None else [],
-        existing_keywords=list(context.existing_keywords.subject) if context is not None else [],
-        camera_info=dict(context.camera_info) if context is not None else {},
-        location_tags=dict(context.location_tags) if context is not None else {},
-        gps_position=context.gps_position if context is not None else None,
-        foreign_terms=list(scratch.get("foreign_terms", [])),
-    )
+    outcome = record.outcome(image_file, success=success, retry=retry)
     try:
         on_image_result(outcome)
     except Exception as exc:  # noqa: BLE001 - callback errors must not break the batch.
@@ -895,14 +877,14 @@ def execute_process(
     if retry:
         context_kwargs["retry"] = True
 
-    scratch: _InferenceScratch = {}
+    record = _PhotoRecord()
     with logger.contextualize(**context_kwargs):
         try:
             ok = process_photo(
                 image_file,
                 ctx,
                 et=et,
-                outcome_sink=scratch,
+                record=record,
             )
         except Exception as exc:  # noqa: BLE001 - process_photo wraps several SDKs
             event = "processing_retry_exception" if retry else "processing_exception"
@@ -918,7 +900,7 @@ def execute_process(
                 ctx.usage.add_failure(kind, exc)
                 with ctx.permanently_failed_lock:
                     ctx.permanently_failed[image_file] = kind
-            _emit_outcome(ctx.on_image_result, image_file, scratch, success=False, retry=retry)
+            _emit_outcome(ctx.on_image_result, image_file, record, success=False, retry=retry)
             return False
 
         if ok:
@@ -927,7 +909,7 @@ def execute_process(
             if ctx.pending is None:
                 # In session mode the photo is only analyzed at this point; the flush emits its
                 # outcome once the write has actually happened and can be reported truthfully.
-                _emit_outcome(ctx.on_image_result, image_file, scratch, success=True, retry=retry)
+                _emit_outcome(ctx.on_image_result, image_file, record, success=True, retry=retry)
             return True
 
         if retry:
@@ -936,7 +918,7 @@ def execute_process(
             ctx.usage.add_failure(FAILURE_METADATA_WRITE)
         else:
             logger.error("processing_failed", index=index, queued_for_retry=True)
-        _emit_outcome(ctx.on_image_result, image_file, scratch, success=False, retry=retry)
+        _emit_outcome(ctx.on_image_result, image_file, record, success=False, retry=retry)
         return False
 
 
@@ -1271,7 +1253,7 @@ def _flush_session(
             continue  # Analysis failed; already counted and queued for the retry pass.
         pending.keywords = vocabulary.snap(pending.keywords).keywords
         ok = _write_pending(image_file, pending, ctx, et=et)
-        _emit_outcome(ctx.on_image_result, image_file, pending.scratch, success=ok, retry=False)
+        _emit_outcome(ctx.on_image_result, image_file, pending.record, success=ok, retry=False)
         if ctx.progress is not None:
             # The photo is finished only now, and a write that failed is final: there is no retry
             # pass for it, so the bar must show it as the failure it is.

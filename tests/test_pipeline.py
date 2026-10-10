@@ -27,6 +27,7 @@ from photo_tagger.pipeline import (
     _drain_after_interrupt,
     _emit_outcome,
     _notify_success,
+    _PhotoRecord,
     _resolve_inference,
     _UsageAccumulator,
     execute_process,
@@ -45,7 +46,6 @@ if TYPE_CHECKING:
     from pydantic_ai import Agent
 
     from photo_tagger.models import GeneratedMetadata
-    from photo_tagger.pipeline import _InferenceScratch
 
 # Pipeline tests patch every IO call, so the agent value never gets touched.
 _FAKE_AGENT = cast("Agent[None, GeneratedMetadata]", object())
@@ -1446,7 +1446,7 @@ def test_emit_outcome_emits_zeros_when_inference_is_absent(tmp_path: Path) -> No
     image = tmp_path / "img.cr3"
     image.write_text("x")
 
-    _emit_outcome(received.append, image, {}, success=False, retry=False)
+    _emit_outcome(received.append, image, _PhotoRecord(), success=False, retry=False)
 
     assert len(received) == 1
     outcome = received[0]
@@ -1467,8 +1467,8 @@ def test_emit_outcome_includes_context_and_merged_keywords(tmp_path: Path) -> No
     received: list[ImageOutcome] = []
     image = tmp_path / "img.cr3"
     image.write_text("x")
-    scratch: _InferenceScratch = {
-        "inference": InferenceResult(
+    scratch = _PhotoRecord(
+        inference=InferenceResult(
             title="T",
             description="D",
             keywords=["Beach"],
@@ -1477,15 +1477,15 @@ def test_emit_outcome_includes_context_and_merged_keywords(tmp_path: Path) -> No
             total_tokens=3,
             seconds=0.5,
         ),
-        "from_cache": True,
-        "context": ImageContext(
+        from_cache=True,
+        context=ImageContext(
             existing_keywords=KeywordSet(subject=["Old"]),
             location_tags={"XMP-photoshop:City": "Hamburg"},
             gps_position="53 N, 9 E",
             camera_info={"EXIF:Model": "Canon EOS R5"},
         ),
-        "merged_keywords": KeywordSet(subject=["Old", "Beach"], hierarchical=["Nature|Beach"]),
-    }
+        merged_keywords=KeywordSet(subject=["Old", "Beach"], hierarchical=["Nature|Beach"]),
+    )
 
     _emit_outcome(received.append, image, scratch, success=True, retry=False)
 
@@ -1508,13 +1508,15 @@ def test_process_photo_populates_outcome_sink(tmp_path: Path) -> None:
         existing_keywords=KeywordSet(subject=["Old"]),
         camera_info={"EXIF:Model": "Canon EOS R5"},
     )
-    scratch: _InferenceScratch = {}
+    scratch = _PhotoRecord()
     with patch("photo_tagger.pipeline.read_image_context", return_value=rich):
-        process_photo(image, _ctx(), outcome_sink=scratch)
+        process_photo(image, _ctx(), record=scratch)
 
-    assert scratch["context"] is rich
-    assert scratch["inference"].title == "Title"
-    merged = scratch["merged_keywords"]
+    assert scratch.context is rich
+    assert scratch.inference is not None
+    assert scratch.inference.title == "Title"
+    merged = scratch.merged_keywords
+    assert merged is not None
     assert "Old" in merged.subject
     assert "Beach" in merged.subject
 
@@ -1529,14 +1531,14 @@ def test_emit_outcome_swallows_callback_errors(tmp_path: Path) -> None:
         raise RuntimeError(msg)
 
     # Should not raise.
-    _emit_outcome(boom, image, {}, success=True, retry=False)
+    _emit_outcome(boom, image, _PhotoRecord(), success=True, retry=False)
 
 
 def test_emit_outcome_noop_when_callback_is_none(tmp_path: Path) -> None:
     """Passing None as the callback is the normal no-op path."""
     image = tmp_path / "img.cr3"
     image.write_text("x")
-    _emit_outcome(None, image, {}, success=True, retry=False)
+    _emit_outcome(None, image, _PhotoRecord(), success=True, retry=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2194,11 +2196,11 @@ def test_process_photo_flags_mixed_script_output(
     image.write_text("x")
     patched_pipeline["analyze"].return_value = _MIXED_SCRIPT_RESULT
     ctx = _ctx()
-    scratch: _InferenceScratch = {}
+    scratch = _PhotoRecord()
 
-    assert process_photo(image, ctx, outcome_sink=scratch) is True
+    assert process_photo(image, ctx, record=scratch) is True
 
-    assert scratch["foreign_terms"] == ["陶笛"]
+    assert scratch.foreign_terms == ["陶笛"]
     assert ctx.usage.flagged_for_review == {image}
 
 
@@ -2210,11 +2212,11 @@ def test_process_photo_leaves_clean_output_unflagged(
     image = tmp_path / "img.cr3"
     image.write_text("x")
     ctx = _ctx()
-    scratch: _InferenceScratch = {}
+    scratch = _PhotoRecord()
 
-    assert process_photo(image, ctx, outcome_sink=scratch) is True
+    assert process_photo(image, ctx, record=scratch) is True
 
-    assert "foreign_terms" not in scratch
+    assert scratch.foreign_terms == []
     assert ctx.usage.flagged_for_review == set()
 
 
@@ -2314,9 +2316,9 @@ def test_repair_asks_the_model_again_with_the_same_image(
     image.write_text("x")
     patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, _REPAIRED_RESULT]
     ctx = _ctx(options=ProcessingOptions(repair_language=True))
-    scratch: _InferenceScratch = {}
+    scratch = _PhotoRecord()
 
-    assert process_photo(image, ctx, outcome_sink=scratch) is True
+    assert process_photo(image, ctx, record=scratch) is True
 
     repair_call = patched_pipeline["analyze"].call_args_list[1].kwargs
     assert repair_call["image_bytes"] is stub_image_bytes
@@ -2325,7 +2327,7 @@ def test_repair_asks_the_model_again_with_the_same_image(
     assert "English" in repair_call["user_prompt"]
     # The repaired text is what lands on the file, and the flag is gone with it.
     assert patched_pipeline["write"].call_args.kwargs["title"] == _REPAIRED_RESULT.title
-    assert "foreign_terms" not in scratch
+    assert scratch.foreign_terms == []
     assert ctx.usage.flagged_for_review == set()
 
 
@@ -2362,11 +2364,12 @@ def test_repair_reports_what_both_calls_cost(
     )
     patched_pipeline["analyze"].side_effect = [first, _REPAIRED_RESULT]
     ctx = _ctx(options=ProcessingOptions(repair_language=True))
-    scratch: _InferenceScratch = {}
+    scratch = _PhotoRecord()
 
-    process_photo(image, ctx, outcome_sink=scratch)
+    process_photo(image, ctx, record=scratch)
 
-    merged = scratch["inference"]
+    merged = scratch.inference
+    assert merged is not None
     assert merged.total_tokens == first.total_tokens + _REPAIRED_RESULT.total_tokens
     assert merged.seconds == pytest.approx(0.3)
     # Both calls were counted once each on the batch, not folded into one.
@@ -2383,13 +2386,13 @@ def test_a_repair_that_fails_keeps_the_original_answer(
     image.write_text("x")
     patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, RuntimeError("boom")]
     ctx = _ctx(options=ProcessingOptions(repair_language=True))
-    scratch: _InferenceScratch = {}
+    scratch = _PhotoRecord()
 
-    assert process_photo(image, ctx, outcome_sink=scratch) is True
+    assert process_photo(image, ctx, record=scratch) is True
 
     assert patched_pipeline["write"].call_args.kwargs["title"] == _MIXED_SCRIPT_RESULT.title
     # Still flagged: nothing was fixed, so the photo is still one to go back to.
-    assert scratch["foreign_terms"] == ["陶笛"]
+    assert scratch.foreign_terms == ["陶笛"]
     assert ctx.usage.language_repairs == 0
 
 
@@ -2402,12 +2405,12 @@ def test_a_repair_that_does_not_help_leaves_the_photo_flagged(
     image.write_text("x")
     patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, _MIXED_SCRIPT_RESULT]
     ctx = _ctx(options=ProcessingOptions(repair_language=True))
-    scratch: _InferenceScratch = {}
+    scratch = _PhotoRecord()
 
-    process_photo(image, ctx, outcome_sink=scratch)
+    process_photo(image, ctx, record=scratch)
 
     assert patched_pipeline["analyze"].call_count == _WITH_REPAIR
-    assert scratch["foreign_terms"] == ["陶笛"]
+    assert scratch.foreign_terms == ["陶笛"]
 
 
 def test_a_repair_that_mixes_scripts_again_keeps_the_original_text(
@@ -2429,11 +2432,12 @@ def test_a_repair_that_mixes_scripts_again_keeps_the_original_text(
     )
     patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, mixed_again]
     ctx = _ctx(options=ProcessingOptions(repair_language=True))
-    scratch: _InferenceScratch = {}
+    scratch = _PhotoRecord()
 
-    process_photo(image, ctx, outcome_sink=scratch)
+    process_photo(image, ctx, record=scratch)
 
-    inference = scratch["inference"]
+    inference = scratch.inference
+    assert inference is not None
     assert inference.title == _MIXED_SCRIPT_RESULT.title
     assert inference.total_tokens == _MIXED_SCRIPT_RESULT.total_tokens + mixed_again.total_tokens
 
@@ -2455,15 +2459,16 @@ def test_a_cached_mixed_answer_is_repaired_when_the_setting_is_on(
     patched_pipeline["analyze"].side_effect = [_REPAIRED_RESULT]
     cache, stored = _mixed_cache()
     ctx = _ctx(options=ProcessingOptions(repair_language=True), cache=cache)
-    scratch: _InferenceScratch = {}
+    scratch = _PhotoRecord()
 
     with patch("photo_tagger.pipeline.content_cache_key", return_value="key"):
-        process_photo(image, ctx, outcome_sink=scratch)
+        process_photo(image, ctx, record=scratch)
 
     assert patched_pipeline["analyze"].call_count == 1
     assert stored["key"].title == _REPAIRED_RESULT.title
-    assert scratch["inference"].total_tokens == _REPAIRED_RESULT.total_tokens
-    assert scratch["from_cache"] is False
+    assert scratch.inference is not None
+    assert scratch.inference.total_tokens == _REPAIRED_RESULT.total_tokens
+    assert scratch.from_cache is False
 
 
 def test_a_cached_mixed_answer_is_replayed_as_is_without_the_setting(
