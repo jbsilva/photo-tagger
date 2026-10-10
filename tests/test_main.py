@@ -803,6 +803,22 @@ def test_cli_lock_file_blocks_second_run(tmp_path: Path) -> None:
     assert "image_files" not in captured
 
 
+def test_watch_takes_the_lock_file_too(tmp_path: Path) -> None:
+    """Two watches on one folder must not race: --lock-file holds for watch as it does for tag."""
+    from photo_tagger.locking import FileLock  # noqa: PLC0415 - test-local import.
+
+    lock_path = tmp_path / "run.lock"
+    with (
+        FileLock(lock_path),
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "_watch_forever", side_effect=AssertionError("no watch")),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main_module.app(["watch", str(tmp_path), "--lock-file", str(lock_path)])
+
+    assert exc_info.value.code == 1
+
+
 def test_cli_log_setup_failure_exits_cleanly(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

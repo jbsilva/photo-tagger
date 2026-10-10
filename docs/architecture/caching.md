@@ -96,7 +96,8 @@ already produces a different namespace digest. Stale entries are never looked up
 
 [`locking.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/locking.py)
 provides `FileLock`, a thin wrapper over the `filelock` library that works on Linux, macOS, and
-Windows. Enable it with `--lock-file PATH`.
+Windows. Enable it with `--lock-file PATH`, for `tag` and for `watch`. `tag` holds the lock for the
+whole run, and `watch` holds it for as long as it watches.
 
 The lock is exclusive and non-blocking. photo-tagger calls `acquire(timeout=0)`. If another
 photo-tagger process already holds the lock, the call raises `LockHeldError` and refuses to start
@@ -116,7 +117,7 @@ photo-tagger -i ~/Photos --lock-file ~/Photos/.photo-tagger.lock
 
 ## Related pages
 
-- [Processing pipeline](pipeline.md) shows where the cache lookup and lock acquisition sit in
-    `run_batch()`.
+- [Processing pipeline](pipeline.md) shows where the cache lookup sits in `process_photo()`. The
+    lock is taken before that, when the command starts.
 - [CLI reference](../usage/cli-reference.md) lists `--cache-file` and `--lock-file` with their
     defaults.

@@ -149,7 +149,7 @@ from photo_tagger.write_plan import plan_writes
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
     from exiftool import ExifToolHelper  # type: ignore[attr-defined]
     from pydantic_ai import Agent
@@ -1715,27 +1715,7 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
     )
     try:
         _start_run(log)
-        with contextlib.ExitStack() as stack:
-            if artifacts.lock_file is not None:
-                try:
-                    stack.enter_context(FileLock(artifacts.lock_file))
-                except LockHeldError as exc:
-                    logger.error(
-                        "lock_held_by_other_process",
-                        file=str(artifacts.lock_file),
-                        error=str(exc),
-                    )
-                    raise SystemExit(1) from exc
-                except OSError as exc:
-                    # Parent dir not writable, filesystem full, etc. Surface a clean
-                    # message instead of letting the traceback land in the user's tty.
-                    logger.error(
-                        "lock_file_open_failed",
-                        file=str(artifacts.lock_file),
-                        error=str(exc),
-                    )
-                    raise SystemExit(1) from exc
-
+        with _optional_lock(artifacts.lock_file):
             try:
                 _tag_inside_lock(
                     inputs=inputs,
@@ -1759,6 +1739,27 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
         # batch beacon of its own, so it is reported here.
         beacons.stopped(exc)
         raise
+
+
+@contextlib.contextmanager
+def _optional_lock(lock_file: Path | None) -> Generator[None]:
+    """
+    Hold *lock_file* for the run, when one was given, or stop with exit code 1.
+
+    A lock another run holds, or one that cannot be opened (a folder that is not writable, a full
+    disk), ends the run with a log line instead of a traceback in the user's terminal.
+    """
+    with contextlib.ExitStack() as stack:
+        if lock_file is not None:
+            try:
+                stack.enter_context(FileLock(lock_file))
+            except LockHeldError as exc:
+                logger.error("lock_held_by_other_process", file=str(lock_file), error=str(exc))
+                raise SystemExit(1) from exc
+            except OSError as exc:
+                logger.error("lock_file_open_failed", file=str(lock_file), error=str(exc))
+                raise SystemExit(1) from exc
+        yield
 
 
 @dataclass(slots=True)
@@ -2203,24 +2204,25 @@ def watch(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group
     try:
         _start_run(log)
         folders = _require_inputs(inputs)
-        try:
-            _watch_forever(
-                inputs=folders,
-                image_extensions=image_extensions,
-                recursive=recursive,
-                workers=watch_config.workers,
-                watch_config=watch_config,
-                filter_=filter_,
-                display=display,
-                artifacts=artifacts,
-                provider=provider,
-                output=output,
-                inference=inference,
-                beacons=beacons,
-                pacing=pacing,
-            )
-        except PhotoTaggerError as exc:
-            raise SystemExit(1) from exc
+        with _optional_lock(artifacts.lock_file):
+            try:
+                _watch_forever(
+                    inputs=folders,
+                    image_extensions=image_extensions,
+                    recursive=recursive,
+                    workers=watch_config.workers,
+                    watch_config=watch_config,
+                    filter_=filter_,
+                    display=display,
+                    artifacts=artifacts,
+                    provider=provider,
+                    output=output,
+                    inference=inference,
+                    beacons=beacons,
+                    pacing=pacing,
+                )
+            except PhotoTaggerError as exc:
+                raise SystemExit(1) from exc
     except (SystemExit, KeyboardInterrupt) as exc:
         beacons.stopped(exc)
         raise

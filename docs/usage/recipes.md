@@ -413,4 +413,5 @@ photo-tagger \
 ```
 
 The lock is acquired before processing starts. If another process already holds it, photo-tagger
-refuses to start. This works on Linux, macOS, and Windows.
+refuses to start. A `watch` holds the same lock for as long as it watches, so a scheduled run and a
+watch on the same folder do not overlap. This works on Linux, macOS, and Windows.
