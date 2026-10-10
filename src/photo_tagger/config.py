@@ -115,6 +115,19 @@ DEFAULT_TIMEOUT_SECONDS = _env_float("TIMEOUT_SECONDS", 60.0)
 # strongly suppressing pathological loops.
 DEFAULT_FREQUENCY_PENALTY = _env_float("FREQUENCY_PENALTY", 0.5)
 
+# Pacing (see photo_tagger.pacing). All off by default: a run works flat out until the user asks
+# for less. The two window lengths only matter once it does.
+DEFAULT_DUTY_PERCENT = _env_int("DUTY_PERCENT", 100)
+DEFAULT_BATTERY_FLOOR = _env_int("BATTERY_FLOOR", 0)
+DEFAULT_BATTERY_RESUME = _env_int("BATTERY_RESUME", 0)
+# Ten minutes of work between rests. Long enough that a rest is worth taking (a few seconds of
+# idling recharges nothing and only gives a model server time to unload), short enough that the
+# battery is looked at often.
+DEFAULT_WORK_MINUTES = _env_float("WORK_MINUTES", 10.0)
+# No single rest lasts longer than this. LM Studio unloads a JIT-loaded model after an hour idle,
+# and a run that sits still any longer looks hung to whoever is watching it.
+DEFAULT_MAX_PAUSE_MINUTES = _env_float("MAX_PAUSE_MINUTES", 15.0)
+
 
 def state_dir() -> Path:
     """

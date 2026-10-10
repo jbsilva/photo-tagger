@@ -17,6 +17,7 @@ from photo_tagger.errors import BatchError
 from photo_tagger.fields import ExtraFields
 from photo_tagger.metadata import ImageContext
 from photo_tagger.models import InferenceResult, KeywordSet
+from photo_tagger.pacing import Pacer, PacingPlan
 from photo_tagger.pipeline import (
     FAILURE_METADATA_WRITE,
     FAILURE_MODEL_API,
@@ -2555,3 +2556,129 @@ def test_session_mode_keeps_each_photo_its_own_copyright_year(
         for call in patched_pipeline["write"].call_args_list
     }
     assert written == {old: "(c) 2011", new: "(c) 2025"}
+
+
+class _TickingClock:
+    """A clock the test moves by hand, so a paced run takes no real time."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        """Return the current fake time."""
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        """Advance the fake time instead of waiting."""
+        self.now += seconds
+
+
+_PHOTO_SECONDS = 60.0
+
+
+def test_run_batch_rests_between_work_windows(tmp_path: Path) -> None:
+    """A paced run rests at photo boundaries, and the totals say what that cost."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(_BATCH_SIZE)]
+    for f in files:
+        f.write_text("x")
+    clock = _TickingClock()
+
+    def work(*_args: Any, **_kwargs: Any) -> bool:  # noqa: ANN401 - stands in for process_photo.
+        clock.sleep(_PHOTO_SECONDS)
+        return True
+
+    pacer = Pacer(
+        PacingPlan(duty_percent=50, work_seconds=_PHOTO_SECONDS),
+        battery_reader=lambda: None,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+    )
+    with patch("photo_tagger.pipeline.process_photo", side_effect=work):
+        totals = run_batch(files, agent=_FAKE_AGENT, options=ProcessingOptions(), pacer=pacer)
+
+    assert totals.success == _BATCH_SIZE
+    # The first photo only starts the clock; the two after it each earn a full window of rest.
+    assert totals.rests_taken == _BATCH_SIZE - 1
+    assert totals.rested_seconds == pytest.approx(2 * _PHOTO_SECONDS)
+
+
+def test_run_batch_without_a_pacer_reports_no_rest(tmp_path: Path) -> None:
+    """A run with no pacer works flat out and says so in its totals."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    with patch("photo_tagger.pipeline.process_photo", return_value=True):
+        totals = run_batch([image], agent=_FAKE_AGENT, options=ProcessingOptions())
+
+    assert totals.rested_seconds == 0
+    assert totals.rests_taken == 0
+
+
+def test_execute_process_skips_a_photo_when_the_rest_is_cancelled(
+    tmp_path: Path,
+) -> None:
+    """A cancelled rest means the run is ending, so the photo is never touched."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    pacer = Pacer(PacingPlan(duty_percent=50))
+    pacer.cancel()
+    ctx = _ctx()
+    ctx.pacer = pacer
+
+    with patch("photo_tagger.pipeline.process_photo", return_value=True) as proc:
+        ok = execute_process(image, ctx, index="1/1")
+
+    assert ok is False
+    assert proc.call_count == 0
+
+
+def test_run_batch_concurrent_interrupt_cancels_the_pacer(tmp_path: Path) -> None:
+    """
+    Ctrl-C wakes every worker asleep in a rest.
+
+    Without this the drain that follows the interrupt would wait out the whole rest, which can be
+    minutes, before the run could report and exit.
+    """
+    files = [tmp_path / f"img{i}.cr3" for i in range(2)]
+    for f in files:
+        f.write_text("x")
+    pacer = Pacer(PacingPlan(duty_percent=50))
+    options = ProcessingOptions()
+
+    class InterruptingPool(ThreadPoolExecutor):
+        def submit(self, *_args: Any, **_kwargs: Any) -> Any:  # noqa: ANN401 - pool signature.
+            raise KeyboardInterrupt
+
+    with (
+        patch("photo_tagger.pipeline.ThreadPoolExecutor", InterruptingPool),
+        patch("photo_tagger.pipeline.process_photo", return_value=True),
+        pytest.raises(BatchError),
+    ):
+        run_batch(
+            files,
+            agent=_FAKE_AGENT,
+            options=options,
+            workers=2,
+            pacer=pacer,
+        )
+
+    assert pacer.wait_before_next() is False
+
+
+def test_run_batch_reports_only_its_own_rests(tmp_path: Path) -> None:
+    """
+    A watch shares one pacer across batches, so each batch reports the rests it took itself.
+
+    Reading the pacer's running totals would count every earlier rest again in each summary.
+    """
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    pacer = Pacer(PacingPlan(duty_percent=50))
+    pacer._rested_seconds = 120.0  # noqa: SLF001 - an earlier batch of the same watch.
+    pacer._rests_taken = 2  # noqa: SLF001
+
+    with patch("photo_tagger.pipeline.process_photo", return_value=True):
+        totals = run_batch([image], agent=_FAKE_AGENT, options=ProcessingOptions(), pacer=pacer)
+
+    assert totals.rested_seconds == 0
+    assert totals.rests_taken == 0

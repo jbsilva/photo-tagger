@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from photo_tagger.fields import ExtraFields
     from photo_tagger.metadata import ImageContext
     from photo_tagger.models import GeneratedMetadata
+    from photo_tagger.pacing import Pacer
     from photo_tagger.sessions import SessionPlan
     from photo_tagger.undo import UndoJournal
     from photo_tagger.vocabulary import Vocabulary
@@ -358,6 +359,9 @@ class _BatchContext:
     pending_lock: threading.Lock = field(default_factory=threading.Lock)
     # Records every file this run writes, so `photo-tagger undo` can put it back.
     journal: UndoJournal | None = None
+    # Set when the run is paced (see photo_tagger.pacing): it decides, at each photo boundary,
+    # whether the machine has earned a rest. None means the run works flat out.
+    pacer: Pacer | None = None
 
 
 def _call_model(ctx: _BatchContext, jpeg_bytes: BinaryContent, prompt: str) -> InferenceResult:
@@ -881,6 +885,19 @@ def _emit_outcome(
         logger.exception("on_image_result_callback_failed", file=image_file.name, error=str(exc))
 
 
+def _rest_before_photo(ctx: _BatchContext, image_file: Path) -> bool:
+    """
+    Let a paced run rest before *image_file* starts; False means the run is stopping.
+
+    Every worker thread calls this, and they all rest together: the pacer lets one of them do the
+    sleeping while the rest queue behind it.
+    """
+    if ctx.pacer is None or ctx.pacer.wait_before_next():
+        return True
+    logger.info("photo_not_started", file=image_file.name)
+    return False
+
+
 def execute_process(
     image_file: Path,
     ctx: _BatchContext,
@@ -889,7 +906,16 @@ def execute_process(
     retry: bool = False,
     et: ExifToolHelper | None = None,
 ) -> bool:
-    """Run process_photo once with consistent logging and error handling."""
+    """
+    Run process_photo once with consistent logging and error handling.
+
+    A paced run may rest here first, before the photo starts: this is the photo boundary, the one
+    place where stopping costs nothing. A rest that gets cancelled means the run is ending, so the
+    photo is left untouched and reported as still pending.
+    """
+    if not _rest_before_photo(ctx, image_file):
+        return False
+
     context_kwargs: dict[str, Any] = {"file": image_file.name}
     if retry:
         context_kwargs["retry"] = True
@@ -973,6 +999,10 @@ class BatchTotals:
     # rewrote are already gone from it; language_repairs counts the extra calls that took.
     flagged_files: list[str] = field(default_factory=list)
     language_repairs: int = 0
+    # Wall-clock seconds the run spent resting on purpose (see photo_tagger.pacing), and how many
+    # rests that took. Both stay zero unless the run was paced.
+    rested_seconds: float = 0.0
+    rests_taken: int = 0
 
 
 def _notify_success(ctx: _BatchContext, image_file: Path) -> None:
@@ -1110,6 +1140,9 @@ def _run_pass_concurrent(
                     ctx.progress(image_file, ok)
         except KeyboardInterrupt:
             interrupted = True
+            # Workers asleep in a pacing rest would otherwise hold the drain below for minutes.
+            if ctx.pacer is not None:
+                ctx.pacer.cancel()
             pool.shutdown(wait=False, cancel_futures=True)
             remaining = {f: img for f, img in future_to_image.items() if f not in consumed}
             drained_ok, drained_failed, cancelled = _drain_after_interrupt(remaining, ctx)
@@ -1404,6 +1437,12 @@ def _log_totals(totals: BatchTotals, *, workers: int) -> None:
         )
     if totals.language_repairs:
         logger.info("language_repairs", calls=totals.language_repairs)
+    if totals.rests_taken:
+        logger.info(
+            "pacing_summary",
+            rests=totals.rests_taken,
+            seconds=totals.rested_seconds,
+        )
     if totals.flagged_files:
         logger.warning(
             "files_flagged_for_review",
@@ -1428,6 +1467,7 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
     on_image_result: OnImageResult | None = None,
     session_plan: SessionPlan | None = None,
     journal: UndoJournal | None = None,
+    pacer: Pacer | None = None,
 ) -> BatchTotals:
     """
     Run the initial pass plus a single retry pass and return summary totals.
@@ -1448,6 +1488,10 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
     are silent because they're still pending retry; this guarantees the bar reaches 100% without
     overshooting on flaky files.
 
+    With a *pacer*, the run rests between work windows instead of tagging flat out, so it stays
+    inside the machine's power and heat budget (see :mod:`photo_tagger.pacing`). Rests happen at
+    photo boundaries only, and ``rested_seconds`` in the totals says how much time they cost.
+
     With a *session_plan*, the batch is processed one shoot at a time: every photo in a session is
     analyzed first, the session's keywords are harmonized (see :mod:`photo_tagger.sessions`), and
     only then is anything written. Progress and the *on_success* callback still fire once per photo,
@@ -1455,6 +1499,9 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
     """
     usage = _UsageAccumulator()
     successful_files: list[Path] = []
+    # A watch shares its pacer across batches, so this batch reports only the rests it took.
+    rested_before = pacer.rested_seconds if pacer is not None else 0.0
+    rests_before = pacer.rests_taken if pacer is not None else 0
 
     def _record_success(path: Path) -> None:
         successful_files.append(path)
@@ -1475,38 +1522,44 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
         progress=progress,
         session_plan=session_plan,
         journal=journal,
+        pacer=pacer,
     )
 
-    with managed_helper(None) if workers <= 1 else _no_helper() as et:
-        if session_plan is not None:
-            outcome = _run_session_passes(image_files, ctx, et=et, workers=workers)
-            success, pending, interrupted = (
-                outcome.successes,
-                outcome.retryable,
-                outcome.interrupted,
-            )
-            unrecoverable = outcome.final_failures
-        else:
-            success, pending, interrupted = _run_pass(
-                image_files,
-                ctx,
-                retry=False,
-                et=et,
-                workers=workers,
-            )
-            unrecoverable = []
-        if interrupted:
-            # Don't retry after the user asked us to stop. Mark everything that
-            # was still pending as failed so the summary file reflects reality.
-            retry_successes = 0
-            still_failing = pending
-        else:
-            retry_successes, still_failing = _run_retry_phase(
-                pending,
-                ctx,
-                et=et,
-                workers=workers,
-            )
+    try:
+        with managed_helper(None) if workers <= 1 else _no_helper() as et:
+            if session_plan is not None:
+                outcome = _run_session_passes(image_files, ctx, et=et, workers=workers)
+                success, pending, interrupted = (
+                    outcome.successes,
+                    outcome.retryable,
+                    outcome.interrupted,
+                )
+                unrecoverable = outcome.final_failures
+            else:
+                success, pending, interrupted = _run_pass(
+                    image_files,
+                    ctx,
+                    retry=False,
+                    et=et,
+                    workers=workers,
+                )
+                unrecoverable = []
+            if interrupted:
+                # Don't retry after the user asked us to stop. Mark everything that
+                # was still pending as failed so the summary file reflects reality.
+                retry_successes = 0
+                still_failing = pending
+            else:
+                retry_successes, still_failing = _run_retry_phase(
+                    pending,
+                    ctx,
+                    et=et,
+                    workers=workers,
+                )
+    finally:
+        # Waiting for the next batch of a watch is not work.
+        if pacer is not None:
+            pacer.pause()
 
     # Session-mode write failures never entered the retry pass, so fold them in here.
     still_failing = still_failing + unrecoverable
@@ -1530,6 +1583,8 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
         vocabulary_dropped=dict(usage.vocabulary_dropped),
         flagged_files=sorted(str(path) for path in usage.flagged_for_review),
         language_repairs=usage.language_repairs,
+        rested_seconds=round(pacer.rested_seconds - rested_before, 1) if pacer is not None else 0.0,
+        rests_taken=pacer.rests_taken - rests_before if pacer is not None else 0,
     )
 
     _log_totals(totals, workers=workers)
