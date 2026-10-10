@@ -54,8 +54,8 @@ much of this information as you can:
 
 - The photo-tagger version (`photo-tagger --version`) and how you installed it.
 - Your OS and Python version.
-- The model backend that you used (Ollama, LM Studio, or another OpenAI-compatible endpoint through
-  `--url`), and whether it was local or remote.
+- The model backend that you used (Ollama, LM Studio, llama.cpp, OpenAI, or another
+  OpenAI-compatible endpoint through `--url`), and whether it was local or remote.
 - Steps to reproduce, or a small proof of concept.
 - The impact: what an attacker can read, write, corrupt, or leak.
 - Relevant log excerpts. Please remove API keys, absolute paths, and any personal location data
@@ -128,15 +128,16 @@ Bugs in photo-tagger's own behavior are in scope, for example:
 
 These are not vulnerabilities in photo-tagger:
 
-- Your model server: the security, patch level, auth, and TLS of your Ollama / LM Studio /
-  OpenAI-compatible server are yours to manage. photo-tagger is only a client.
+- Your model server: the security, patch level, auth, and TLS of your Ollama / LM Studio / llama.cpp
+  / OpenAI-compatible server are yours to manage. photo-tagger is only a client.
 - Where you point `--url`: the tool sends the image and metadata to whatever endpoint you configure.
   Pointing it at a remote or untrusted host, and any data exposure that follows, is your decision.
   If you point `--url` off localhost, the tool does not warn you. It also permits plain `http://`
   there, so a remote host can receive your data as plaintext.
 - ExifTool, libraw/rawpy, and Pillow CVEs: the tool shells out to the ExifTool binary on your PATH
-  and uses third-party decoders. Flaws in those tools are upstream. My job is to invoke them safely
-  and keep dependency pins current, not to fix the libraries.
+  (or at the path that you configure) and uses third-party decoders. Flaws in those tools are
+  upstream. My job is to invoke them safely and keep dependency pins current, not to fix the
+  libraries.
 - The model's output content: a model can hallucinate or produce wrong or offensive titles,
   descriptions, and keywords. The tool makes sure that output matches a schema, and keyword counts
   are capped. I cannot guarantee semantic correctness.
@@ -156,9 +157,9 @@ These are not vulnerabilities in photo-tagger:
 Most of your real risk comes from how you run the tool, not from the tool's code. A few habits keep
 you safe:
 
-- Prefer environment variables over `--api-key`: use `OLLAMA_API_KEY`, `LM_STUDIO_API_KEY`, or
-  `OPENAI_API_KEY`. Command-line arguments show up in process listings (for example, `ps`) to other
-  local users. The `--api-key` help text warns about this.
+- Prefer environment variables over `--api-key`: use `OLLAMA_API_KEY`, `LM_STUDIO_API_KEY`,
+  `LLAMA_CPP_API_KEY`, or `OPENAI_API_KEY`. Command-line arguments show up in process listings (for
+  example, `ps`) to other local users. The `--api-key` help text warns about this.
 - Be deliberate about `--url` and `*_BASE_URL` targets: keep them on localhost for fully offline
   processing. Anything else sends your image content, and any embedded GPS/location and camera
   metadata, to that host. Only use endpoints you trust, and prefer `https://` for remote ones. If
