@@ -35,8 +35,6 @@ from photo_tagger.telemetry_facts import (
     config_key_names,
     env_var_names,
     joined,
-    mean,
-    quantile,
 )
 
 
@@ -248,32 +246,23 @@ class PhotoStats:
     def __init__(self) -> None:
         """Start empty; workers may call concurrently, hence the lock."""
         self._lock = threading.Lock()
-        self._seconds: list[float] = []
-        self._keywords: list[float] = []
-        self._titles: list[float] = []
-        self._descriptions: list[float] = []
+        self._figures = telemetry.PhotoFigures()
 
     def __call__(self, outcome: ImageOutcome) -> None:
         """Keep one finished photo's model time and text sizes, never the text."""
         if not outcome.success:
             return
         with self._lock:
-            if not outcome.from_cache and outcome.seconds > 0:
-                self._seconds.append(outcome.seconds)
-            self._keywords.append(len(outcome.keywords))
-            self._titles.append(len(outcome.title or ""))
-            self._descriptions.append(len(outcome.description or ""))
+            self._figures.add(
+                seconds=0.0 if outcome.from_cache else outcome.seconds,
+                keywords=len(outcome.keywords),
+                title=outcome.title or "",
+                description=outcome.description or "",
+            )
 
     def apply(self, run: telemetry.RunInfo) -> telemetry.RunInfo:
         """Return *run* with the per-photo figures filled in."""
-        return replace(
-            run,
-            photo_seconds_median=quantile(self._seconds, 0.5),
-            photo_seconds_p90=quantile(self._seconds, 0.9),
-            keywords_mean=mean(self._keywords),
-            title_chars_mean=mean(self._titles),
-            description_chars_mean=mean(self._descriptions),
-        )
+        return self._figures.apply(run)
 
 
 def run_from_totals(  # noqa: PLR0913 - the batch and its beacons and what the run tracked beside it.

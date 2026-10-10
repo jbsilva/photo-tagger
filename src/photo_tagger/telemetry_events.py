@@ -6,7 +6,7 @@ payload builders in :mod:`photo_tagger.telemetry`, are everything that leaves th
 field needs a line in docs/telemetry.md.
 """
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, ClassVar
 
 from photo_tagger.config import (
@@ -29,6 +29,8 @@ from photo_tagger.config import (
 from photo_tagger.telemetry_facts import (
     ENDPOINT_LOCALHOST,
     extension_list,
+    mean,
+    quantile,
 )
 
 
@@ -378,6 +380,39 @@ class RunInfo:
         # The Worker's AE column reads a number: a v2 Worker still deployed must see 0 or 1.
         fields["dry_run"] = int(self.dry_run)
         return fields
+
+
+@dataclass(slots=True)
+class PhotoFigures:
+    """
+    The per-photo figures of a run beacon: model time and text sizes, never the text.
+
+    The CLI and the GUI each feed it one photo at a time, so both report the same figures.
+    """
+
+    seconds: list[float] = field(default_factory=list)
+    keywords: list[float] = field(default_factory=list)
+    titles: list[float] = field(default_factory=list)
+    descriptions: list[float] = field(default_factory=list)
+
+    def add(self, *, seconds: float, keywords: int, title: str, description: str) -> None:
+        """Keep one photo's figures; *seconds* is 0 for an answer that made no model call."""
+        if seconds > 0:
+            self.seconds.append(seconds)
+        self.keywords.append(keywords)
+        self.titles.append(len(title))
+        self.descriptions.append(len(description))
+
+    def apply(self, run: RunInfo) -> RunInfo:
+        """Return *run* with the per-photo figures filled in."""
+        return replace(
+            run,
+            photo_seconds_median=quantile(self.seconds, 0.5),
+            photo_seconds_p90=quantile(self.seconds, 0.9),
+            keywords_mean=mean(self.keywords),
+            title_chars_mean=mean(self.titles),
+            description_chars_mean=mean(self.descriptions),
+        )
 
 
 @dataclass(slots=True, frozen=True)

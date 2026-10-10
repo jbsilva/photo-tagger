@@ -907,3 +907,17 @@ def test_every_envelope_and_crash_key_is_documented() -> None:
         crash = telemetry.build_crash_payload(exc, interface="cli")
 
     assert sorted((set(run) | set(crash)) - _documented_names()) == []
+
+
+def test_photo_figures_skip_a_photo_that_made_no_model_call() -> None:
+    """A cache hit has no model time, so it must not pull the median down to zero."""
+    figures = telemetry.PhotoFigures()
+    figures.add(seconds=2.0, keywords=4, title="Dune", description="Sand at dusk")
+    figures.add(seconds=0.0, keywords=2, title="", description="Sea")
+
+    run = figures.apply(_sample_run())
+
+    assert run.photo_seconds_median == 2.0  # noqa: PLR2004 - the one photo the model answered
+    assert run.keywords_mean == 3.0  # noqa: PLR2004 - (4 + 2) / 2
+    assert run.title_chars_mean == 2.0  # noqa: PLR2004 - (4 + 0) / 2
+    assert run.description_chars_mean == 7.5  # noqa: PLR2004 - (12 + 3) / 2

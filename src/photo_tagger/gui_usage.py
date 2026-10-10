@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from photo_tagger import telemetry
 from photo_tagger.gui_state import DEFAULT_GUI_EXTENSIONS, FAILED
-from photo_tagger.telemetry_facts import endpoint_kind, extension_list, marked_label, mean, quantile
+from photo_tagger.telemetry_facts import endpoint_kind, extension_list, marked_label, quantile
 
 
 if TYPE_CHECKING:
@@ -306,10 +306,7 @@ class RunTally:
     review: ReviewTally = field(default_factory=ReviewTally)
     failures: dict[str, str] = field(default_factory=dict)  # photo key -> failure kind
     failure_types: dict[str, str] = field(default_factory=dict)  # photo key -> exception type
-    photo_seconds: list[float] = field(default_factory=list)
-    keywords: list[float] = field(default_factory=list)
-    titles: list[float] = field(default_factory=list)
-    descriptions: list[float] = field(default_factory=list)
+    photos: telemetry.PhotoFigures = field(default_factory=telemetry.PhotoFigures)
 
     def pass_started(self, name: str, count: int, *, retry: bool) -> None:
         """Record an extra pass over *count* photos: the retry pass, or the mixed-script one."""
@@ -339,11 +336,12 @@ class RunTally:
             # A repaired replay made only the repair call; the first one was an earlier run's.
             self.inference_calls += int(not proposal.replayed) + int(proposal.repaired)
             self.inference_seconds += proposal.seconds
-            if proposal.seconds > 0:
-                self.photo_seconds.append(proposal.seconds)
-        self.keywords.append(len(proposal.keywords))
-        self.titles.append(len(proposal.title))
-        self.descriptions.append(len(proposal.description))
+        self.photos.add(
+            seconds=0.0 if proposal.from_cache else proposal.seconds,
+            keywords=len(proposal.keywords),
+            title=proposal.title,
+            description=proposal.description,
+        )
 
     def failed(self, key: str, kind: str, error_type: str = "") -> None:
         """Count one photo that failed; a later success in a pass takes it back."""
@@ -396,7 +394,7 @@ def run_info(tally: RunTally, end: RunEnd) -> telemetry.RunInfo:
     """Turn a finished run into its beacon."""
     failed = tally.save_failures if tally.job == JOB_SAVE else max(len(tally.failures), end.failed)
     context = tally.context
-    return telemetry.RunInfo(
+    run = telemetry.RunInfo(
         interface="gui",
         command="gui",
         job=tally.job,
@@ -428,11 +426,6 @@ def run_info(tally: RunTally, end: RunEnd) -> telemetry.RunInfo:
         vocabulary_dropped=len(tally.vocabulary_dropped),
         rested_seconds=tally.rested_seconds,
         rests_taken=tally.rests_taken,
-        photo_seconds_median=quantile(tally.photo_seconds, 0.5),
-        photo_seconds_p90=quantile(tally.photo_seconds, 0.9),
-        keywords_mean=mean(tally.keywords),
-        title_chars_mean=mean(tally.titles),
-        description_chars_mean=mean(tally.descriptions),
         settings=context.settings,
         setup=context.setup,
         gui=telemetry.GuiJob(
@@ -453,6 +446,7 @@ def run_info(tally: RunTally, end: RunEnd) -> telemetry.RunInfo:
         ),
         review=tally.review.stats() if tally.review.saved else None,
     )
+    return tally.photos.apply(run)
 
 
 def batch_outcome(items: Iterable[PhotoItem]) -> tuple[int, int]:
