@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
 
 from photo_tagger import gui, i18n, image_io, metadata, telemetry
 from photo_tagger.errors import ProviderError
-from photo_tagger.gui import detail_pane, main_window, viewer, widgets, workers
+from photo_tagger.gui import detail_pane, main_window, select_menu, viewer, widgets, workers
 from photo_tagger.gui.common import COL_STATUS, COL_TAGGED, IS_DIR_ROLE, PATH_ROLE
 from photo_tagger.gui_state import (
     DEFAULT_GUI_EXTENSIONS,
@@ -920,7 +920,7 @@ def test_tagged_presets_all_run_without_error(
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
     _scan_reports(window, {})
-    for _label, criterion in main_window._TAGGED_PRESETS:  # noqa: SLF001
+    for _label, criterion in select_menu._TAGGED_PRESETS:  # noqa: SLF001
         window._deselect_tagged(criterion)  # noqa: SLF001
         assert criterion.phrase in window._status.text()  # noqa: SLF001
 
@@ -933,20 +933,17 @@ def test_deselect_tagged_with_no_photos_nags(window: gui.MainWindow) -> None:
     assert "Add photos" in window._status.text()  # noqa: SLF001
 
 
-def test_already_tagged_menu_actions_route_to_each_preset(
-    window: gui.MainWindow,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Each preset in the Select menu triggers _deselect_tagged with it (no late-binding bug)."""
-    actions = window._tagged_menu.actions()  # noqa: SLF001
-    assert len(actions) == len(main_window._TAGGED_PRESETS)  # noqa: SLF001
+def test_already_tagged_menu_actions_route_to_each_preset(window: gui.MainWindow) -> None:
+    """Each preset in the Select menu asks for its own criterion (no late-binding bug)."""
+    actions = window._select_menu._tagged_menu.actions()  # noqa: SLF001
+    assert len(actions) == len(select_menu._TAGGED_PRESETS)  # noqa: SLF001
 
     captured: list[TaggedCriterion] = []
-    monkeypatch.setattr(window, "_deselect_tagged", captured.append)
+    window._select_menu.tagged_requested.connect(captured.append)  # noqa: SLF001
     for action in actions:
         action.trigger()
 
-    assert captured == [criterion for _label, criterion in main_window._TAGGED_PRESETS]  # noqa: SLF001
+    assert captured == [criterion for _label, criterion in select_menu._TAGGED_PRESETS]  # noqa: SLF001
 
 
 def test_select_menu_checks_and_unchecks_all(window: gui.MainWindow, tmp_path: Path) -> None:
@@ -7518,7 +7515,7 @@ def test_uncheck_already_tagged_settles_when_only_unreadable_photos_are_left(
     window._items[str(img)].known_fields = None  # noqa: SLF001
     window._scan_tried = {str(img)}  # noqa: SLF001
 
-    window._deselect_tagged(main_window._TAGGED_PRESETS[0][1])  # noqa: SLF001
+    window._deselect_tagged(select_menu._TAGGED_PRESETS[0][1])  # noqa: SLF001
 
     assert window._scan_pending is None  # noqa: SLF001
     assert "Reading metadata" not in window._status.text()  # noqa: SLF001

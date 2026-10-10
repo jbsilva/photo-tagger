@@ -86,6 +86,7 @@ from photo_tagger.gui.pacing import PacingDialog
 from photo_tagger.gui.photo_tree import PhotoTree
 from photo_tagger.gui.run_bar import RunBar
 from photo_tagger.gui.save_options import SaveOptionsMenu
+from photo_tagger.gui.select_menu import SelectMenu
 from photo_tagger.gui.settings_menu import SettingsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
 from photo_tagger.gui.threads import join_thread, release_thread, start_in_thread
@@ -106,22 +107,12 @@ from photo_tagger.gui_state import (
     DEFAULT_GUI_EXTENSIONS,
     EXTRA_PASSES,
     FAILED,
-    FILTER_FAILED,
-    FILTER_GENERATED,
-    FILTER_MIXED_SCRIPT,
-    FILTER_NO_COPYRIGHT,
-    FILTER_PENDING,
-    FILTER_SAVED,
-    FILTER_UNTAGGED,
     PENDING,
     READY,
     RERUN_FAILED,
     RERUN_MIXED_SCRIPT,
     SAVED,
     SCAN_FILTERS,
-    SELECT_CHECK,
-    SELECT_ONLY,
-    SELECT_UNCHECK,
     WORKING,
     GenerateOptions,
     GuiConfigValues,
@@ -143,7 +134,6 @@ from photo_tagger.gui_state import (
     config_toml_text,
     deselect_paths,
     expand_inputs,
-    extension_counts,
     extra_pass_status,
     failure_summary,
     field_tags_to_read,
@@ -153,14 +143,12 @@ from photo_tagger.gui_state import (
     keyword_lines,
     load_sidecar_overrides,
     location_crumb,
-    matches_extension,
     matches_name_pattern,
     merged_config_text,
     navigation_shortcuts,
     new_paths,
     paths_under,
     photo_item_to_report_row,
-    photo_matches_filter,
     photos_for_pass,
     photos_to_save,
     photos_to_write,
@@ -243,54 +231,6 @@ _EMPTY_PICK = gettext_noop(
     "Generate proposes a title, description, and keywords you can edit before saving.",
 )
 
-# The field-aware "deselect already-tagged" menu, mirroring the CLI's --skip-tagged but letting
-# the user pick which fields count as "done". Each entry pairs a menu label with the criterion it
-# applies. "Any metadata" is the broad OR criterion (the original skip-tagged); the rest require all
-# of their fields, so a keyword-only photo survives "a title and a description" and stays selected
-# for title/description generation.
-_TAGGED_PRESETS: tuple[tuple[str, TaggedCriterion], ...] = (
-    (
-        gettext_noop("Has any metadata"),
-        TaggedCriterion(
-            frozenset({FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS}),
-            match_all=False,
-            phrase=gettext_noop("any metadata"),
-        ),
-    ),
-    (
-        gettext_noop("Has a title"),
-        TaggedCriterion(
-            frozenset({FIELD_TITLE}),
-            match_all=True,
-            phrase=gettext_noop("a title"),
-        ),
-    ),
-    (
-        gettext_noop("Has a description"),
-        TaggedCriterion(
-            frozenset({FIELD_DESCRIPTION}),
-            match_all=True,
-            phrase=gettext_noop("a description"),
-        ),
-    ),
-    (
-        gettext_noop("Has a title and a description"),
-        TaggedCriterion(
-            frozenset({FIELD_TITLE, FIELD_DESCRIPTION}),
-            match_all=True,
-            phrase=gettext_noop("a title and a description"),
-        ),
-    ),
-    (
-        gettext_noop("Has keywords"),
-        TaggedCriterion(
-            frozenset({FIELD_KEYWORDS}),
-            match_all=True,
-            phrase=gettext_noop("keywords"),
-        ),
-    ),
-)
-
 # Edge of the small drawn icons in the row above the photo list, in pixels.
 _TOOLBAR_ICON = 14
 
@@ -319,39 +259,6 @@ _VIEW_MODES: tuple[tuple[str, str, str], ...] = (
             "while it is on; a photo's folder still opens from Go > Enclosing Folder.",
         ),
     ),
-)
-
-# The Select menu's three bulk verbs, each offering the same criteria below. Each entry is
-# (verb, menu label, tooltip).
-_SELECT_VERBS: tuple[tuple[str, str, str], ...] = (
-    (
-        SELECT_CHECK,
-        gettext_noop("Check"),
-        gettext_noop("Check the matching photos, leaving every other photo as it is."),
-    ),
-    (
-        SELECT_UNCHECK,
-        gettext_noop("Uncheck"),
-        gettext_noop("Uncheck the matching photos, leaving every other photo as it is."),
-    ),
-    (
-        SELECT_ONLY,
-        gettext_noop("Check Only"),
-        gettext_noop("Check the matching photos and uncheck every other photo in the list."),
-    ),
-)
-
-# The lifecycle criteria a bulk verb can act on, reusing the folder grid's own filters so "saved"
-# and "generated" mean the same thing in both places. Each entry is (filter, menu label); the
-# label doubles as the phrase the status line reports back.
-_SELECT_STATUSES: tuple[tuple[str, str], ...] = (
-    (FILTER_PENDING, gettext_noop("Not generated")),
-    (FILTER_GENERATED, gettext_noop("Generated")),
-    (FILTER_SAVED, gettext_noop("Saved")),
-    (FILTER_FAILED, gettext_noop("Failed")),
-    (FILTER_UNTAGGED, gettext_noop("Untagged")),
-    (FILTER_NO_COPYRIGHT, gettext_noop("No copyright")),
-    (FILTER_MIXED_SCRIPT, gettext_noop("Mixed writing systems")),
 )
 
 # Grace period _stop_scan gives an in-flight batched exiftool call to finish on its own before
@@ -1020,84 +927,19 @@ class MainWindow(QMainWindow):
         menu.addAction(host)
         return menu
 
-    def _build_select_menu(self) -> QMenu:
-        """Bulk check/uncheck actions, including the CLI's --skip-tagged/--skip-from mirrors."""
-        menu = self._select_menu = QMenu(self)
-        menu.setToolTipsVisible(True)
-        menu.addAction(_("Check All"), lambda: self._set_all_checked(checked=True))
-        menu.addAction(_("Uncheck All"), lambda: self._set_all_checked(checked=False))
-        menu.addAction(_("Invert Checked"), self._invert_checked)
-        menu.addSeparator()
-
-        for verb, label, hint in _SELECT_VERBS:
-            self._build_criteria_menu(menu.addMenu(_(label)), verb).setToolTip(tooltip(hint))
-        menu.addSeparator()
-
-        self._tagged_menu = menu.addMenu(_("Uncheck Already Tagged"))
-        self._tagged_menu.setToolTip(
-            tooltip(
-                "Uncheck photos that already have the chosen metadata (in the image or its XMP "
-                "sidecar), e.g. 'a title and a description' to skip those while keeping "
-                "keyword-only photos. Mirrors the CLI's --skip-tagged. It reads what the Tagged "
-                "column shows, so it waits for the scan under the list to reach the end.",
-            ),
+    def _build_select_menu(self) -> SelectMenu:
+        """Build the Select button's menu and carry out what its entries ask for."""
+        menu = self._select_menu = SelectMenu(self, photos=self._items.values)
+        menu.check_all_requested.connect(lambda: self._set_all_checked(checked=True))
+        menu.uncheck_all_requested.connect(lambda: self._set_all_checked(checked=False))
+        menu.invert_requested.connect(self._invert_checked)
+        menu.matching_requested.connect(
+            lambda matches, verb, phrase: self._select_matching(matches, verb=verb, phrase=phrase),
         )
-        for text, criterion in _TAGGED_PRESETS:
-            action = self._tagged_menu.addAction(_(text))
-            action.triggered.connect(
-                lambda _checked=False, chosen=criterion: self._deselect_tagged(chosen),
-            )
-
-        from_file = menu.addAction(_("Uncheck From Skip List..."), self._deselect_from_file)
-        from_file.setToolTip(
-            tooltip(
-                "Uncheck photos whose filename or full path is listed in a text file (one per "
-                "line), like the CLI's --skip-from.",
-            ),
-        )
+        menu.pattern_requested.connect(self._select_by_pattern)
+        menu.tagged_requested.connect(self._deselect_tagged)
+        menu.skip_list_requested.connect(self._deselect_from_file)
         return menu
-
-    def _build_criteria_menu(self, menu: QMenu, verb: str) -> QMenu:
-        """Fill one verb's submenu with the criteria it can act on, and return the menu."""
-        menu.setToolTipsVisible(True)
-        types = menu.addMenu(_("File Type"))
-        types.setToolTip(tooltip("The file types actually in the list, with how many of each."))
-        # Filled when the menu opens: which types are in the list changes with every photo added.
-        types.aboutToShow.connect(lambda: self._fill_file_type_menu(types, verb))
-        status = menu.addMenu(_("Status"))
-        status.setToolTip(tooltip("Where each photo is in the generate-and-save cycle."))
-        for criterion, label in _SELECT_STATUSES:
-            status.addAction(
-                _(label),
-                lambda crit=criterion, text=label: self._select_matching(
-                    lambda item: photo_matches_filter(item, crit),
-                    verb=verb,
-                    phrase=_(text),
-                ),
-            )
-        pattern = menu.addAction(_("Name Pattern..."), lambda: self._select_by_pattern(verb))
-        pattern.setToolTip(
-            tooltip("Match filenames against text or a glob, e.g. IMG_ or *_edit.jpg."),
-        )
-        return menu
-
-    def _fill_file_type_menu(self, menu: QMenu, verb: str) -> None:
-        """Rebuild *menu* from the file types currently in the list, most common first."""
-        menu.clear()
-        counts = extension_counts(self._items.values())
-        if not counts:
-            menu.addAction(_("No photos in the list")).setEnabled(False)
-            return
-        for extension, count in counts:
-            label = extension or _("no extension")
-            menu.addAction(
-                f"{label} ({count})",
-                lambda ext=extension, name=label: self._select_matching(
-                    lambda item: matches_extension(item, ext),
-                    verb=verb,
-                    phrase=name,
-                ),
-            )
 
     def _warn_if_no_photos(self) -> bool:
         """
