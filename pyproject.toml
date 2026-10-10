@@ -58,6 +58,7 @@ otel = [
 dev = [
     "babel>=2.18.0",
     "bandit>=1.9.4",
+    "poethepoet>=0.48.0",
     "pycroscope>=0.5.0",
     "ruff>=0.17.0",
     "zizmor>=1.30.1",
@@ -106,6 +107,64 @@ zuban = "6 hours"
 [build-system]
 requires = ["uv_build>=0.13.0,<1.0.0"]
 build-backend = "uv_build"
+
+# Dev tasks: `uv run poe` lists them. Each task runs through `uv run`, so it uses the locked versions
+# and syncs the dependency group it needs.
+[tool.poe]
+executor.type = "uv"
+
+[tool.poe.tasks.lint]
+help = "Lint with ruff and apply its fixes"
+cmd = "ruff check --fix ."
+
+[tool.poe.tasks.format]
+help = "Format the code with ruff"
+cmd = "ruff format ."
+
+[tool.poe.tasks.typecheck]
+help = "Strict type check with zuban"
+cmd = "zuban check"
+
+[tool.poe.tasks.pycroscope]
+help = "Semi-static analysis with pycroscope"
+cmd = "pycroscope --config-file pyproject.toml"
+
+[tool.poe.tasks.hooks]
+help = "Run every pre-commit hook on all files"
+cmd = "prek run -a"
+executor = { with = ["prek"] }
+
+[tool.poe.tasks.check]
+help = "Run all the checks to do before a commit"
+sequence = ["lint", "format", "typecheck", "pycroscope", "hooks"]
+
+[tool.poe.tasks.test]
+help = "Run the test suite (extra arguments go to pytest)"
+cmd = "pytest"
+executor = { group = "test" }
+
+[tool.poe.tasks.test-gui]
+help = "Run the GUI tests headless (installs the gui extra)"
+cmd = "pytest tests/test_gui.py"
+env = { QT_QPA_PLATFORM = "offscreen" }
+executor = { extra = "gui", group = "test" }
+
+[tool.poe.tasks.docs]
+help = "Serve the docs site locally with live reload"
+cmd = "zensical serve"
+executor = { group = "docs" }
+
+[tool.poe.tasks.docs-build]
+help = "Build the static docs site into site/"
+cmd = "zensical build --clean"
+executor = { group = "docs" }
+
+[tool.poe.tasks.translations]
+help = "Refresh the translation catalogs and recompile them"
+sequence = [
+    { cmd = "python scripts/extract_translations.py" },
+    { cmd = "python scripts/compile_translations.py" },
+]
 
 [tool.ruff]
 line-length = 100

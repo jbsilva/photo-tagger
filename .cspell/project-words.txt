@@ -166,6 +166,7 @@ pixmap
 pixmaps
 pixtral
 pmset
+poethepoet
 pofile
 pointerover
 Português
