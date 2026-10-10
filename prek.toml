@@ -144,6 +144,17 @@ pass_filenames = false
 require_serial = true
 always_run = true
 
+# Whole-project, like zuban: a contract is about the import graph, not one file.
+[[repos.hooks]]
+id = "import-linter"
+name = "import-linter layering"
+entry = "uv run lint-imports"
+language = "system"
+types = ["python"]
+pass_filenames = false
+require_serial = true
+always_run = true
+
 [[repos.hooks]]
 id = "check-version-sync"
 name = "check version sync"

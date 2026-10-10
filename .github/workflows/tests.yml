@@ -138,6 +138,10 @@ jobs:
           uv run --locked --no-build --no-binary-package photo-tagger
           pycroscope --config-file pyproject.toml
 
+      - name: import-linter layering
+        # The contracts under [tool.importlinter]; like pycroscope, a hookless fork PR runs them too.
+        run: uv run --locked --no-build --no-binary-package photo-tagger lint-imports
+
       - name: Check version sync
         # Invoke via `python` so uv runs this in the project env, not PEP 723 script mode, where
         # `--locked` would demand a per-script lockfile that does not exist.

@@ -68,6 +68,23 @@ uv run pycroscope --config-file pyproject.toml
     You cannot model a Qt event-loop shell statically or run it headlessly. See
     [Testing](testing.md#gui-tests) for how the project tests it instead.
 
+### import-linter
+
+[`import-linter`](https://import-linter.readthedocs.io) checks the layering that the architecture
+pages describe. Its contracts live under `[tool.importlinter]` in `pyproject.toml`:
+
+- Only the `gui` package imports Qt.
+- The core modules import neither frontend (`main`, `cli_options`, or the `gui` package).
+- The CLI and the GUI do not import each other. `main` loads the `gui` command by name.
+- The pure modules (`keywords`, `models`, `script_guard`, and `templates`) do no I/O.
+
+```bash
+uv run poe imports
+```
+
+A new module must join the lists in those contracts. `tests/test_architecture.py` fails until it
+does.
+
 ### bandit
 
 `bandit` scans the source for common security problems (for example, unsafe subprocess use or hard
@@ -156,6 +173,7 @@ uv run poe lint         # ruff check --fix .
 uv run poe format       # ruff format .
 uv run poe typecheck    # zuban check
 uv run poe pycroscope   # pycroscope --config-file pyproject.toml
+uv run poe imports      # lint-imports
 uv run poe hooks        # prek run -a
 ```
 

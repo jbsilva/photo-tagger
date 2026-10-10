@@ -58,6 +58,7 @@ otel = [
 dev = [
     "babel>=2.18.0",
     "bandit>=1.9.4",
+    "import-linter>=2.15",
     "poethepoet>=0.48.0",
     "pycroscope>=0.5.0",
     "ruff>=0.17.0",
@@ -129,6 +130,10 @@ cmd = "zuban check"
 help = "Semi-static analysis with pycroscope"
 cmd = "pycroscope --config-file pyproject.toml"
 
+[tool.poe.tasks.imports]
+help = "Check the import layering with import-linter"
+cmd = "lint-imports"
+
 [tool.poe.tasks.hooks]
 help = "Run every pre-commit hook on all files"
 cmd = "prek run -a"
@@ -136,7 +141,7 @@ executor = { with = ["prek"] }
 
 [tool.poe.tasks.check]
 help = "Run all the checks to do before a commit"
-sequence = ["lint", "format", "typecheck", "pycroscope", "hooks"]
+sequence = ["lint", "format", "typecheck", "pycroscope", "imports", "hooks"]
 
 [tool.poe.tasks.test]
 help = "Run the test suite (extra arguments go to pytest)"
@@ -303,6 +308,124 @@ alle = "alle"
 [tool.typos.files]
 # Translation catalogs are not English; the checker would flag every Portuguese word.
 extend-exclude = ["src/photo_tagger/locale/**"]
+
+[tool.importlinter]
+# The layering AGENTS.md describes, checked on every commit (`uv run poe imports`). A new module
+# joins the lists below, or the contracts stop covering it.
+root_packages = ["photo_tagger"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Only the gui package imports Qt"
+type = "forbidden"
+source_modules = [
+    "photo_tagger.ai",
+    "photo_tagger.cache",
+    "photo_tagger.config",
+    "photo_tagger.config_file",
+    "photo_tagger.csv_report",
+    "photo_tagger.diagnostics",
+    "photo_tagger.discovery",
+    "photo_tagger.errors",
+    "photo_tagger.fields",
+    "photo_tagger.gui_state",
+    "photo_tagger.gui_usage",
+    "photo_tagger.hardware",
+    "photo_tagger.i18n",
+    "photo_tagger.image_io",
+    "photo_tagger.keywords",
+    "photo_tagger.locking",
+    "photo_tagger.logging_setup",
+    "photo_tagger.metadata",
+    "photo_tagger.models",
+    "photo_tagger.notify",
+    "photo_tagger.observability",
+    "photo_tagger.pacing",
+    "photo_tagger.pipeline",
+    "photo_tagger.programs",
+    "photo_tagger.progress",
+    "photo_tagger.providers",
+    "photo_tagger.script_guard",
+    "photo_tagger.sessions",
+    "photo_tagger.telemetry",
+    "photo_tagger.telemetry_facts",
+    "photo_tagger.templates",
+    "photo_tagger.undo",
+    "photo_tagger.vocabulary",
+    "photo_tagger.vocabulary_build",
+    "photo_tagger.vocabulary_organize",
+    "photo_tagger.watch",
+    "photo_tagger.cli_options",
+    "photo_tagger.main",
+]
+forbidden_modules = ["PySide6"]
+
+[[tool.importlinter.contracts]]
+name = "The core knows neither frontend"
+type = "forbidden"
+source_modules = [
+    "photo_tagger.ai",
+    "photo_tagger.cache",
+    "photo_tagger.config",
+    "photo_tagger.config_file",
+    "photo_tagger.csv_report",
+    "photo_tagger.diagnostics",
+    "photo_tagger.discovery",
+    "photo_tagger.errors",
+    "photo_tagger.fields",
+    "photo_tagger.gui_state",
+    "photo_tagger.gui_usage",
+    "photo_tagger.hardware",
+    "photo_tagger.i18n",
+    "photo_tagger.image_io",
+    "photo_tagger.keywords",
+    "photo_tagger.locking",
+    "photo_tagger.logging_setup",
+    "photo_tagger.metadata",
+    "photo_tagger.models",
+    "photo_tagger.notify",
+    "photo_tagger.observability",
+    "photo_tagger.pacing",
+    "photo_tagger.pipeline",
+    "photo_tagger.programs",
+    "photo_tagger.progress",
+    "photo_tagger.providers",
+    "photo_tagger.script_guard",
+    "photo_tagger.sessions",
+    "photo_tagger.telemetry",
+    "photo_tagger.telemetry_facts",
+    "photo_tagger.templates",
+    "photo_tagger.undo",
+    "photo_tagger.vocabulary",
+    "photo_tagger.vocabulary_build",
+    "photo_tagger.vocabulary_organize",
+    "photo_tagger.watch",
+]
+forbidden_modules = ["photo_tagger.cli_options", "photo_tagger.gui", "photo_tagger.main"]
+
+[[tool.importlinter.contracts]]
+# main imports the gui package by name (importlib), so the `gui` command stays lazy and Qt-free.
+name = "The CLI and the GUI do not import each other"
+type = "independence"
+modules = ["photo_tagger.gui", "photo_tagger.main"]
+
+[[tool.importlinter.contracts]]
+name = "The pure modules do no I/O"
+type = "forbidden"
+source_modules = [
+    "photo_tagger.keywords",
+    "photo_tagger.models",
+    "photo_tagger.script_guard",
+    "photo_tagger.templates",
+]
+forbidden_modules = [
+    "exiftool",
+    "httpx2",
+    "openai",
+    "photo_tagger.metadata",
+    "photo_tagger.telemetry",
+    "pydantic_ai",
+]
 
 [tool.pycroscope]
 # Directory to analyze (relative to pyproject.toml) and the import root for the src layout

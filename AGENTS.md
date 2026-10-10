@@ -125,7 +125,7 @@ command becomes part of the routine, add a task for it.
 ## Before committing
 
 ```bash
-uv run poe check    # The five tasks below, in order; stops at the first failure
+uv run poe check    # The six tasks below, in order; stops at the first failure
 ```
 
 ```bash
@@ -133,6 +133,7 @@ uv run poe lint         # ruff check --fix .
 uv run poe format       # ruff format .
 uv run poe typecheck    # zuban check (strict, mypy-compatible)
 uv run poe pycroscope   # Semi-static analyzer (complements zuban)
+uv run poe imports      # lint-imports (the layering contracts in [tool.importlinter])
 uv run poe hooks        # prek run -a (all pre-commit hooks)
 ```
 

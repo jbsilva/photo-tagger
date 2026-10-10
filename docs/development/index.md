@@ -63,7 +63,7 @@ These are the commands that you will use most often:
 uv run photo-tagger --help    # See the CLI options
 uv run poe                    # List the dev tasks
 uv run poe test               # Run the test suite (extra arguments go to pytest)
-uv run poe check              # Lint, format, type check, and run all pre-commit hooks
+uv run poe check              # Lint, format, type check, check imports, and run all hooks
 ```
 
 !!! tip

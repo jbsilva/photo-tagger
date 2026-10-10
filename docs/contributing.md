@@ -99,7 +99,7 @@ Run the local checks before you push, so that CI finds nothing that you can catc
     Before you commit, run the same checks that CI runs:
 
     ```bash
-    uv run poe check    # ruff, zuban, pycroscope, then all pre-commit hooks
+    uv run poe check    # ruff, zuban, pycroscope, import-linter, then all pre-commit hooks
     ```
 
 Never push secrets. Keep API keys and other credentials out of commits and pull requests. Pass them
