@@ -537,7 +537,8 @@ What is collected:
 What is never collected: photos, file paths, and filenames. The generated tags, titles, and
 descriptions, your prompts and hints, and server URLs are never sent either. Neither are API keys,
 IP addresses, error messages, or anything else that identifies you. The dataclasses in
-[`telemetry.py`](src/photo_tagger/telemetry.py) are the closed list of what leaves the machine.
+[`telemetry_events.py`](src/photo_tagger/telemetry_events.py), with the payload builders in
+[`telemetry.py`](src/photo_tagger/telemetry.py), are the closed list of what leaves the machine.
 
 Where it goes: our own Cloudflare Worker at `telemetry.tagger.photo`. No third-party analytics
 service is involved, and the collector's full source (and the queries run against it) lives in

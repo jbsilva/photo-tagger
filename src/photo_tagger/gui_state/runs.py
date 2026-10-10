@@ -7,8 +7,10 @@ from photo_tagger.cache import build_cache_namespace
 from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
     DEFAULT_FREQUENCY_PENALTY,
+    DEFAULT_INTERVAL_SECONDS,
     DEFAULT_JPEG_QUALITY,
     DEFAULT_OUTPUT_LANGUAGE,
+    DEFAULT_SETTLE_SECONDS,
     DEFAULT_TEMPERATURE,
     DEFAULT_USER_PROMPT,
 )
@@ -26,7 +28,6 @@ from photo_tagger.gui_state.text import (
 )
 from photo_tagger.i18n import _, ngettext
 from photo_tagger.vocabulary import Vocabulary
-from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 
 
 if TYPE_CHECKING:

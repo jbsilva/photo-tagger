@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from photo_tagger.config import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 from photo_tagger.discovery import parse_extensions, resolve_image_files
 
 
@@ -23,11 +24,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
 
-
-# How often to list the watched folders, and how long a file must be unchanged before it counts as
-# finished. Two polls plus the age check is a cheap, portable stand-in for "the writer closed it".
-DEFAULT_INTERVAL_SECONDS = 5.0
-DEFAULT_SETTLE_SECONDS = 2.0
 
 # The wait between polls is taken in slices no longer than this, so a caller that asks to stop is
 # not held for a whole interval. The CLI stops on Ctrl-C and never passes a predicate; the GUI does,

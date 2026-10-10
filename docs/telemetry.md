@@ -55,9 +55,11 @@ Every value is a switch, a number, a mode name, a hardware model name, or one of
 Configuration values are sent as switches, counts, and mode names, never as the text or the path
 that they hold. For example, a vocabulary file becomes `vocabulary` (set or not) and
 `vocabulary_terms` (a count). A hint becomes `hint` and `hint_chars`. The dataclasses in
-[`telemetry.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/telemetry.py),
-together with the functions there that build the payload from them (`build_payload` and its
-helpers), are the closed list of what leaves the machine.
+[`telemetry_events.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/telemetry_events.py),
+together with the functions in
+[`telemetry.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/telemetry.py)
+that build the payload from them (`build_payload` and its helpers), are the closed list of what
+leaves the machine.
 
 ### Every beacon
 

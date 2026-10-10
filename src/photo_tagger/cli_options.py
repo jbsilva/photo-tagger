@@ -37,12 +37,14 @@ from photo_tagger.config import (
     DEFAULT_DIMENSIONS,
     DEFAULT_DUTY_PERCENT,
     DEFAULT_FREQUENCY_PENALTY,
+    DEFAULT_INTERVAL_SECONDS,
     DEFAULT_JPEG_QUALITY,
     DEFAULT_MAX_PAUSE_MINUTES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_NAME,
     DEFAULT_OUTPUT_LANGUAGE,
     DEFAULT_RETRIES,
+    DEFAULT_SETTLE_SECONDS,
     DEFAULT_SIDECAR_MODE,
     DEFAULT_TEMPERATURE,
     DEFAULT_TIMEOUT_SECONDS,
@@ -62,7 +64,6 @@ from photo_tagger.providers import ProviderName, get_backend
 from photo_tagger.telemetry_facts import endpoint_kind, extension_list, marked_label
 from photo_tagger.vocabulary import folds_plurals
 from photo_tagger.vocabulary_build import TrimRules
-from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 from photo_tagger.write_plan import parse_sidecar_overrides
 
 

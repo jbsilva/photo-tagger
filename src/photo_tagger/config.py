@@ -290,6 +290,12 @@ def build_system_prompt(output_language: str = DEFAULT_OUTPUT_LANGUAGE) -> str:
     return _SYSTEM_PROMPT_TEMPLATE.format(language=output_language)
 
 
+# How often to list the watched folders, and how long a file must be unchanged before it counts as
+# finished. Two polls plus the age check is a cheap, portable stand-in for "the writer closed it".
+DEFAULT_INTERVAL_SECONDS = 5.0
+DEFAULT_SETTLE_SECONDS = 2.0
+
+
 DEFAULT_USER_PROMPT = (
     "Execute your mission: analyze this image and generate the structured metadata."
 )

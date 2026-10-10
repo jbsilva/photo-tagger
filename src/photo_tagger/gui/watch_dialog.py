@@ -20,10 +20,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from photo_tagger.config import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 from photo_tagger.gui.common import CHOOSE_LABEL
 from photo_tagger.gui_state import WatchSettings, tooltip
 from photo_tagger.i18n import _
-from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 
 
 class WatchDialog(QDialog):

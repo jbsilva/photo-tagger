@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-10 15:27+0200\n"
+"POT-Creation-Date: 2026-10-10 15:50+0200\n"
 "PO-Revision-Date: 2026-07-10 22:30+0200\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language: pt_BR\n"
@@ -2858,7 +2858,7 @@ msgstr "encobre \"{value}\" no {source}"
 msgid "Mixed script, worth a look: {terms}"
 msgstr "Escrita misturada, vale conferir: {terms}"
 
-#: src/photo_tagger/gui_state/runs.py:106
+#: src/photo_tagger/gui_state/runs.py:107
 #, python-brace-format
 msgid "{n} photo mixes writing systems (Select > Check Only > Status)."
 msgid_plural "{n} photos mix writing systems (Select > Check Only > Status)."
@@ -2869,40 +2869,40 @@ msgstr[1] ""
 "{n} fotos misturam sistemas de escrita (Selecionar > Marcar Apenas > "
 "Status)."
 
-#: src/photo_tagger/gui_state/runs.py:123
+#: src/photo_tagger/gui_state/runs.py:124
 #, python-brace-format
 msgid "{n} photo failed (Retry Failed to try again)."
 msgid_plural "{n} photos failed (Retry Failed to try again)."
 msgstr[0] "{n} foto falhou (use Repetir Falhas para tentar de novo)."
 msgstr[1] "{n} fotos falharam (use Repetir Falhas para tentar de novo)."
 
-#: src/photo_tagger/gui_state/runs.py:152
+#: src/photo_tagger/gui_state/runs.py:153
 #, python-brace-format
 msgid "Watching {folders} for new photos..."
 msgstr "Monitorando {folders} em busca de novas fotos..."
 
-#: src/photo_tagger/gui_state/runs.py:154
+#: src/photo_tagger/gui_state/runs.py:155
 #, python-brace-format
 msgid "Watching {folders}: {n} photo added so far."
 msgid_plural "Watching {folders}: {n} photos added so far."
 msgstr[0] "Monitorando {folders}: {n} foto adicionada até agora."
 msgstr[1] "Monitorando {folders}: {n} fotos adicionadas até agora."
 
-#: src/photo_tagger/gui_state/runs.py:188
+#: src/photo_tagger/gui_state/runs.py:189
 #, python-brace-format
 msgid "Retrying {n} photo that failed..."
 msgid_plural "Retrying {n} photos that failed..."
 msgstr[0] "Repetindo {n} foto que falhou..."
 msgstr[1] "Repetindo {n} fotos que falharam..."
 
-#: src/photo_tagger/gui_state/runs.py:193
+#: src/photo_tagger/gui_state/runs.py:194
 #, python-brace-format
 msgid "Retrying {n} photo that mixed writing systems..."
 msgid_plural "Retrying {n} photos that mixed writing systems..."
 msgstr[0] "Repetindo {n} foto que misturou sistemas de escrita..."
 msgstr[1] "Repetindo {n} fotos que misturaram sistemas de escrita..."
 
-#: src/photo_tagger/gui_state/runs.py:217
+#: src/photo_tagger/gui_state/runs.py:218
 #: src/photo_tagger/gui_state/undo_view.py:62
 #, python-brace-format
 msgid "{n} file"
@@ -2910,7 +2910,7 @@ msgid_plural "{n} files"
 msgstr[0] "{n} arquivo"
 msgstr[1] "{n} arquivos"
 
-#: src/photo_tagger/gui_state/runs.py:219
+#: src/photo_tagger/gui_state/runs.py:220
 #, python-brace-format
 msgid ""
 "{files} · {selected} selected · {generated} generated · {saved} saved · "
@@ -2919,19 +2919,19 @@ msgstr ""
 "{files} · {selected} selecionadas · {generated} geradas · {saved} salvas "
 "· {failed} com falha"
 
-#: src/photo_tagger/gui_state/runs.py:237
+#: src/photo_tagger/gui_state/runs.py:238
 #, python-brace-format
 msgid "Showing {shown} of {total} photo"
 msgid_plural "Showing {shown} of {total} photos"
 msgstr[0] "Mostrando {shown} de {total} foto"
 msgstr[1] "Mostrando {shown} de {total} fotos"
 
-#: src/photo_tagger/gui_state/runs.py:265
+#: src/photo_tagger/gui_state/runs.py:266
 #, python-brace-format
 msgid "{elapsed} elapsed"
 msgstr "{elapsed} decorrido"
 
-#: src/photo_tagger/gui_state/runs.py:266
+#: src/photo_tagger/gui_state/runs.py:267
 #, python-brace-format
 msgid "{elapsed} elapsed · {remaining} left"
 msgstr "{elapsed} decorrido · {remaining} restante"

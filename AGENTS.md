@@ -49,9 +49,11 @@ module owns one part of that pipeline:
 - `models.py`: shared data types. `GeneratedMetadata` is the schema of the model, next to
   `InferenceResult` and `KeywordSet` (the typed value object that replaced the old
   `dict[str, list[str]]`).
-- `telemetry.py`: the anonymous usage beacons. It holds the consent logic, the event dataclasses
-  (the closed list of what is sent), and the sending. `telemetry_facts.py` reduces URLs, install
-  paths, stack frames, and the environment to coarse categories for it. A new field needs a line in
+- `telemetry.py`: the anonymous usage beacons. It builds the payload and sends it, and re-exports
+  the rest, so callers use `telemetry.X`. `telemetry_events.py` holds the event dataclasses (the
+  closed list of what is sent), `telemetry_consent.py` the consent logic, and `telemetry_state.py`
+  the install id and the notice markers. `telemetry_facts.py` reduces URLs, install paths, stack
+  frames, and the environment to coarse categories for it. A new field needs a line in
   `docs/telemetry.md`.
 - `cache.py`, `locking.py`, `image_io.py`, `discovery.py`, `progress.py`, `logging_setup.py`,
   `diagnostics.py`, `programs.py`: small helpers with one purpose each. `programs.py` finds every

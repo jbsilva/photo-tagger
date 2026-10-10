@@ -20,7 +20,7 @@ from unittest.mock import patch
 import httpx2
 import pytest
 
-from photo_tagger import __version__, telemetry
+from photo_tagger import __version__, telemetry, telemetry_state
 from photo_tagger.hardware import HardwareInfo
 from photo_tagger.pacing import BatteryState
 from photo_tagger.telemetry import RunInfo
@@ -212,7 +212,7 @@ def test_install_id_reads_the_winner_when_another_process_wrote_first(tmp_path: 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(winner, encoding="utf-8")
 
-    with patch.object(telemetry, "_read_install_id", side_effect=[None, winner]) as read:
+    with patch.object(telemetry_state, "_read_install_id", side_effect=[None, winner]) as read:
         other_process_wins(path)
         assert telemetry.install_id() == winner
     assert read.call_count == 2  # noqa: PLR2004 - once before the create, once after losing it.
