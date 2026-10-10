@@ -20,18 +20,19 @@ defaults that suit your library.
 photo-tagger uses a few external pieces that it does not bundle. Make sure that each one is
 available before you run your first batch.
 
-| Tool               | Why it is needed                                                                                                                                                |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Python 3.14+       | The runtime. photo-tagger targets modern Python syntax.                                                                                                         |
-| ExifTool on `PATH` | Reads existing metadata and writes the title, description, and keywords. `pyexiftool` drives the `exiftool` binary.                                             |
-| `libraw` (rawpy)   | Decodes RAW files (CR3, CR2, NEF, DNG). The rawpy wheels include it. An Intel Mac may need `brew install libraw`.                                               |
-| Model server       | A vision-language model (for example Qwen3-VL) behind an OpenAI-compatible API: Ollama, LM Studio, or llama.cpp on your machine or server, or a hosted service. |
+| Tool             | Why it is needed                                                                                                                                                |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Python 3.14+     | The runtime. photo-tagger targets modern Python syntax.                                                                                                         |
+| ExifTool         | Reads existing metadata and writes the title, description, and keywords. `pyexiftool` drives the `exiftool` binary.                                             |
+| `libraw` (rawpy) | Decodes RAW files (CR3, CR2, NEF, DNG). The rawpy wheels include it. An Intel Mac may need `brew install libraw`.                                               |
+| Model server     | A vision-language model (for example Qwen3-VL) behind an OpenAI-compatible API: Ollama, LM Studio, or llama.cpp on your machine or server, or a hosted service. |
 
 !!! warning
 
-    ExifTool must be discoverable on your `PATH`. The model server must be running and must serve the
-    model that you ask for. photo-tagger looks for both at runtime, not at install time. As a result, a
-    missing piece appears only at the start of a batch.
+    photo-tagger must find ExifTool: on your `PATH`, or at the path in the `exiftool_path` key or the
+    `PHOTO_TAGGER_EXIFTOOL` variable. The model server must be running and must serve the model that you
+    ask for. photo-tagger looks for both at runtime, not at install time. As a result, a missing piece
+    appears only at the start of a batch.
 
 ## Next steps
 

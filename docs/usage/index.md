@@ -22,7 +22,8 @@ descend into subdirectories. When scanning directories, `--ext` controls which e
 up (default `cr3,jpg`, case-insensitive). The tool reads RAW and standard formats (CR3, CR2, NEF,
 DNG, JPG, PNG, and more).
 
-Before your first run, make sure that ExifTool is on your `PATH` and a model server is running. See
+Before your first run, make sure that photo-tagger can find ExifTool (on your `PATH`, or through the
+`exiftool_path` key) and that a model server is running. See
 [Installation](../getting-started/installation.md) for the full prerequisites, and
 [Configuration](../getting-started/configuration.md) for env vars and the TOML configuration file.
 

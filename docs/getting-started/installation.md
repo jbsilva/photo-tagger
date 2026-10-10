@@ -173,9 +173,10 @@ brew install libraw
 
 !!! warning
 
-    The `exiftool` binary must be on your `PATH`. photo-tagger shells out to it for every photo. If it
-    is not found, the run will fail. After you install it, make sure that it is visible with
-    `exiftool -ver`. See [Verify](#verify) below.
+    photo-tagger must find the `exiftool` binary. It runs it for every photo. Put it on your `PATH`, or
+    set its full path in the `exiftool_path` key of the [configuration file](configuration.md) or in the
+    `PHOTO_TAGGER_EXIFTOOL` environment variable. If it is not found, the run will fail. After you
+    install it, make sure that it is visible with `exiftool -ver`. See [Verify](#verify) below.
 
 ## Verify
 

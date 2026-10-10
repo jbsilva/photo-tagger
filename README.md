@@ -56,7 +56,8 @@ Full documentation: <https://jbsilva.github.io/photo-tagger/>
 ## Requirements
 
 - Python 3.14+
-- [ExifTool](https://exiftool.org/) available on `PATH`
+- [ExifTool](https://exiftool.org/) available on `PATH`, or its path in the `exiftool_path` key or
+  the `PHOTO_TAGGER_EXIFTOOL` variable
 - A vision-language model (for example Qwen-VL). It can run in Ollama, LM Studio, or llama.cpp on
   your machine, on your own server, or at any OpenAI-compatible service, free or paid.
 - `libraw` support for `rawpy`. The rawpy wheels for Linux, Windows, and Apple silicon include it.
