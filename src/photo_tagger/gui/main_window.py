@@ -165,6 +165,7 @@ from photo_tagger.gui_state import (
     tooltip,
     vocabulary_summary,
     watch_status_text,
+    with_notice_written,
     writes_nothing,
 )
 from photo_tagger.gui_usage import (
@@ -2295,6 +2296,7 @@ class MainWindow(QMainWindow):
         job = build_save_job(item, options)
         try:
             extra = self._copyright_tags_for(options, item)
+            job = with_notice_written(job, extra)
             ok, targets = (
                 (True, [])
                 if writes_nothing(job, extra)
@@ -2404,6 +2406,8 @@ class MainWindow(QMainWindow):
         job = self._save_jobs.get(path)
         if item is None or job is None:
             return
+        if self._save_worker is not None:
+            job = self._save_worker.resolved.get(path, job)
         stamp_only = not reports_status(item, job)
         kept = self._save_worker is not None and path in self._save_worker.kept
         self._usage.saved(item, ok=ok, now=time.monotonic(), stamp_only=stamp_only, kept=kept)

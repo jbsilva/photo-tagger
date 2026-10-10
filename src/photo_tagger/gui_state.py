@@ -49,6 +49,7 @@ from photo_tagger.fields import (
     ARTIST_READ_TAGS,
     COPYRIGHT_READ_TAGS,
     TAG_EXIF_COPYRIGHT,
+    TAG_IPTC_COPYRIGHT_NOTICE,
     TAG_XMP_RIGHTS,
     ExtraFields,
     build_extra_fields,
@@ -583,6 +584,18 @@ def reports_status(item: PhotoItem, job: SaveJob) -> bool:
     was never generated). A copyright stamp alone is not: see :func:`apply_write_result`.
     """
     return item.has_proposal or bool(fields_written(job.title, job.description, job.keywords))
+
+
+def with_notice_written(job: SaveJob, extra: Mapping[str, str]) -> SaveJob:
+    """
+    Return *job* saying whether its photo got a notice, now that its tags are resolved.
+
+    The run decides that a notice goes on, but a template chain with no literal finds nothing on
+    some photos and writes none there. Such a photo keeps its place in the No copyright filter. A
+    notice the photo kept was already known, and the Tagged state only ever grows.
+    """
+    notices = (TAG_EXIF_COPYRIGHT, TAG_XMP_RIGHTS, TAG_IPTC_COPYRIGHT_NOTICE)
+    return replace(job, copyright=job.copyright and any(extra.get(tag) for tag in notices))
 
 
 def apply_write_result(item: PhotoItem, job: SaveJob, *, ok: bool) -> None:

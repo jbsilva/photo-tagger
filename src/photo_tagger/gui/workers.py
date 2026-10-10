@@ -39,6 +39,7 @@ from photo_tagger.gui_state import (
     harmonize_sessions,
     pacing_status_text,
     resolve_extra_tags,
+    with_notice_written,
     writes_nothing,
 )
 from photo_tagger.gui_usage import GUI_GENERATE_RETRIES
@@ -466,6 +467,9 @@ class SaveWorker(QObject):
         # The photos with nothing to write, because they keep the notice they have. Filled before
         # file_done is sent, so the window's slot can tell such a save from a stamp.
         self.kept: set[str] = set()
+        # Each job as it went out, once its photo's tags were resolved (see with_notice_written).
+        # Filled before file_done is sent, as kept is.
+        self.resolved: dict[str, SaveJob] = {}
 
     def stop(self) -> None:
         """Ask the loop to stop before the next photo; the write in flight finishes."""
@@ -505,6 +509,7 @@ class SaveWorker(QObject):
                 return
             try:
                 extra = resolve_extra_tags(self._options, job.path, sources)
+                self.resolved[str(job.path)] = with_notice_written(job, extra)
                 if writes_nothing(job, extra):
                     self.kept.add(str(job.path))
                 ok, targets = (

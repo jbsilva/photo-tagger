@@ -173,6 +173,7 @@ from photo_tagger.gui_state import (
     vocabulary_status,
     vocabulary_summary,
     watch_status_text,
+    with_notice_written,
     wrap_tooltip,
     writes_nothing,
     zoom_label,
@@ -2847,6 +2848,27 @@ def _job(
         description=None,
         copyright=copyright_notice,
     )
+
+
+def test_with_notice_written_follows_what_the_photo_got(tmp_path: Path) -> None:
+    """A run writes a notice, but a chain with no literal can find nothing on one photo."""
+    job = _job(tmp_path / "a.jpg", copyright_notice=True)
+
+    assert with_notice_written(job, {"XMP-dc:Rights": "(c) 2011 Ada"}).copyright is True
+    assert with_notice_written(job, {"XMP-dc:Creator": "Ada"}).copyright is False
+    # A run that writes no notice never claims one, whatever the tags hold.
+    plain = _job(tmp_path / "a.jpg")
+    assert with_notice_written(plain, {"EXIF:Copyright": "(c)"}).copyright is False
+
+
+def test_a_photo_left_without_a_notice_stays_in_the_no_copyright_filter(tmp_path: Path) -> None:
+    """The C badge and the filter follow the notice the photo got, not the one the run meant."""
+    item = PhotoItem(path=tmp_path / "a.jpg", known_fields=set())
+    job = with_notice_written(_job(item.path, copyright_notice=True), {"XMP-dc:Creator": "Ada"})
+
+    apply_write_result(item, job, ok=True)
+
+    assert FIELD_COPYRIGHT not in (item.known_fields or set())
 
 
 def test_a_copyright_only_save_leaves_the_generation_status_alone(tmp_path: Path) -> None:
