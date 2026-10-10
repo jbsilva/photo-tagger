@@ -37,6 +37,7 @@ from photo_tagger.config import (
     SidecarMode,
     exiftool_executable,
 )
+from photo_tagger.fields import COPYRIGHT_READ_TAGS
 from photo_tagger.models import KeywordSet
 
 
@@ -97,11 +98,16 @@ _TAGGED_INDICATOR_TAGS: tuple[str, ...] = (
     *_TITLE_TAGS,
 )
 
-# Names of the three metadata fields a caller can ask about individually (vs the coarse
-# "any indicator" check above). Stable identifiers the GUI's field-aware deselect uses.
+# Names of the metadata fields a caller can ask about individually (vs the coarse "any
+# indicator" check above). Stable identifiers the GUI's field-aware deselect uses.
 FIELD_TITLE = "title"
 FIELD_DESCRIPTION = "description"
 FIELD_KEYWORDS = "keywords"
+FIELD_COPYRIGHT = "copyright"
+
+# The fields that make a photo "tagged". Copyright is not one of them: many cameras stamp a notice
+# on every frame, and that photo still waits for its title, description, and keywords.
+TAGGED_FIELDS = frozenset({FIELD_TITLE, FIELD_DESCRIPTION, FIELD_KEYWORDS})
 
 # The exiftool tags that mark each field as populated. A field counts as present when any of
 # its tags carries content, on either the image or its XMP sidecar.
@@ -114,6 +120,7 @@ _FIELD_PRESENCE_TAGS: dict[str, tuple[str, ...]] = {
         TAG_XMP_WEIGHTED_FLAT_SUBJECT,
         TAG_IPTC_KEYWORDS,
     ),
+    FIELD_COPYRIGHT: COPYRIGHT_READ_TAGS,
 }
 
 # How many images one presence read covers. A batch is the smallest unit a caller can report
@@ -424,15 +431,16 @@ def find_field_presence(
     et: ExifToolHelper | None = None,
 ) -> dict[Path, set[str]]:
     """
-    Report which of title/description/keywords each image already carries.
+    Report which of title/description/keywords/copyright each image already carries.
 
     Returns a mapping from every input path to the set of present field names (:data:`FIELD_TITLE`,
-    :data:`FIELD_DESCRIPTION`, :data:`FIELD_KEYWORDS`); an empty set means the photo was scanned and
-    carries none. An image exiftool could not read at all is left out of the mapping entirely, so
-    callers (the GUI's Tagged column) can tell "could not read" from "read and found nothing"
-    instead of wrongly reporting it as untagged. A field counts as present when any of its tags is
-    populated on the image *or* its XMP sidecar, so presence accumulates across both. The read is
-    batched (see :data:`PRESENCE_BATCH_SIZE`) rather than one exiftool call per image.
+    :data:`FIELD_DESCRIPTION`, :data:`FIELD_KEYWORDS`, :data:`FIELD_COPYRIGHT`); an empty set means
+    the photo was scanned and carries none. An image exiftool could not read at all is left out of
+    the mapping entirely, so callers (the GUI's Tagged column) can tell "could not read" from "read
+    and found nothing" instead of wrongly reporting it as untagged. A field counts as present when
+    any of its tags is populated on the image *or* its XMP sidecar, so presence accumulates across
+    both. The read is batched (see :data:`PRESENCE_BATCH_SIZE`) rather than one exiftool call per
+    image.
 
     This is the per-field counterpart the GUI uses to deselect, say, photos that already have a
     title and description while leaving keyword-only photos selected.

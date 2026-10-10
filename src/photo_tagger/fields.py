@@ -55,6 +55,13 @@ READ_XMP_CREATOR = "XMP:Creator"
 READ_XMP_RIGHTS = "XMP:Rights"
 READ_XMP_MARKED = "XMP:Marked"
 
+# Every tag a copyright notice may sit in, in the read spelling, best first.
+COPYRIGHT_READ_TAGS: tuple[str, ...] = (
+    READ_XMP_RIGHTS,
+    TAG_EXIF_COPYRIGHT,
+    TAG_IPTC_COPYRIGHT_NOTICE,
+)
+
 # What ``{year}`` and ``{artist}`` may be spelled as in a notice template.
 _PLACEHOLDER_PATTERN = re.compile(r"\{([^{}]*)\}")
 _PLACEHOLDER_YEAR = "year"
@@ -81,7 +88,7 @@ SHOWN_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("Keywords", (TAG_XMP_SUBJECT, TAG_IPTC_KEYWORDS)),
     FieldSpec("Hierarchy", (TAG_XMP_HIERARCHICAL_SUBJECT,)),
     FieldSpec("Creator", (READ_XMP_CREATOR, TAG_EXIF_ARTIST, TAG_IPTC_BY_LINE)),
-    FieldSpec("Copyright", (READ_XMP_RIGHTS, TAG_EXIF_COPYRIGHT, TAG_IPTC_COPYRIGHT_NOTICE)),
+    FieldSpec("Copyright", COPYRIGHT_READ_TAGS),
     FieldSpec("Rights marked", (READ_XMP_MARKED,)),
     FieldSpec("Camera", ("EXIF:Model",)),
     FieldSpec("Lens", ("EXIF:LensModel",)),

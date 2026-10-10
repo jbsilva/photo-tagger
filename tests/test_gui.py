@@ -63,6 +63,7 @@ from photo_tagger.gui_state import (
     build_copyright_fields,
 )
 from photo_tagger.metadata import (
+    FIELD_COPYRIGHT,
     FIELD_DESCRIPTION,
     FIELD_KEYWORDS,
     FIELD_TITLE,
@@ -1168,6 +1169,24 @@ def test_select_by_status_reuses_the_grid_filters(window: gui.MainWindow, tmp_pa
     assert window._items[str(a)].selected is False  # noqa: SLF001
     assert window._items[str(b)].selected is True  # noqa: SLF001
     assert "Changed 1 photo (Failed)" in window._status.text()  # noqa: SLF001
+
+
+def test_select_by_status_checks_only_the_photos_without_a_copyright(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """Check Only > Status > No copyright leaves checked just the photos with no notice."""
+    bare = _jpeg(tmp_path / "a.jpg")
+    owned = _jpeg(tmp_path / "b.jpg")
+    _add_dir(window, {"a": bare, "b": owned})
+    window._on_scan_done({str(bare): {FIELD_TITLE}, str(owned): {FIELD_COPYRIGHT}})  # noqa: SLF001
+
+    status = _select_submenu(window, "Check Only").actions()[1].menu()
+    next(action for action in status.actions() if action.text() == "No copyright").trigger()
+
+    assert window._items[str(bare)].selected is True  # noqa: SLF001
+    assert window._items[str(owned)].selected is False  # noqa: SLF001
+    assert "Changed 1 photo (No copyright)" in window._status.text()  # noqa: SLF001
 
 
 def test_select_by_name_pattern_asks_and_remembers_the_pattern(
@@ -2578,6 +2597,26 @@ def test_grid_filter_untagged_refreshes_after_metadata_scan(
     window._on_scan_done({str(a): set(), str(b): {FIELD_TITLE}})  # noqa: SLF001
 
     assert _grid_order(window) == ["a.jpg"]  # only the scanned-empty photo
+
+
+def test_grid_filter_no_copyright_refreshes_after_metadata_scan(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No copyright reads the same scan as Untagged, so it re-filters when the scan reports."""
+    a = _jpeg(tmp_path / "a.jpg")
+    b = _jpeg(tmp_path / "b.jpg")
+    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    _add_dir(window, {"a": a, "b": b})
+    _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
+    combo = window._grid_filter_combo  # noqa: SLF001
+    combo.setCurrentIndex(combo.findData(gui.FILTER_NO_COPYRIGHT))
+    assert _grid_order(window) == []
+
+    window._on_scan_done({str(a): {FIELD_TITLE}, str(b): {FIELD_COPYRIGHT}})  # noqa: SLF001
+
+    assert _grid_order(window) == ["a.jpg"]
 
 
 def test_grid_combos_are_sized_to_their_widest_label(window: gui.MainWindow) -> None:
@@ -6103,6 +6142,26 @@ def test_save_writes_the_copyright_dated_by_the_photo(
     extra = captured["extra"]
     assert extra["EXIF:Copyright"] == "Copyright (c) 2011 Ada Lovelace"  # type: ignore[index]
     assert extra["XMP-dc:Creator"] == "Ada Lovelace"  # type: ignore[index]
+
+
+def test_a_saved_notice_takes_the_photo_out_of_no_copyright(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The save records the notice it wrote, so the filter lets go of the photo with no rescan."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _capture_write(monkeypatch)
+    monkeypatch.setattr(gui, "read_capture_years", lambda paths, **_k: dict.fromkeys(paths, 2011))
+    _add_dir(window, {"a": img})
+    window._on_scan_done({str(img): set()})  # noqa: SLF001
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+    _fill_copyright(window)
+
+    window._save_current()  # noqa: SLF001
+
+    assert not gui.photo_matches_filter(window._items[str(img)], gui.FILTER_NO_COPYRIGHT)  # noqa: SLF001
 
 
 def test_save_reuses_a_capture_date_already_read(

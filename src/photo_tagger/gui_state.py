@@ -41,11 +41,13 @@ from photo_tagger.fields import ExtraFields, build_extra_fields, non_ascii_tags
 from photo_tagger.i18n import AUTO, _, gettext_noop, ngettext, pgettext
 from photo_tagger.keywords import dedupe_keywords, merge_keywords
 from photo_tagger.metadata import (
+    FIELD_COPYRIGHT,
     FIELD_DESCRIPTION,
     FIELD_KEYWORDS,
     FIELD_TITLE,
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
+    TAGGED_FIELDS,
     CaptionValue,
     select_camera_fields,
     select_location,
@@ -371,6 +373,12 @@ class SaveOptions:
         return self.extra_fields is not None and not self.extra_fields.is_empty
 
     @property
+    def writes_notice(self) -> bool:
+        """Whether a save puts a copyright notice on the file, not only a name or a flag."""
+        fields = self.extra_fields
+        return fields is not None and bool(fields.notice or fields.rights)
+
+    @property
     def writes_anything(self) -> bool:
         """
         Whether a save would put anything on the file at all.
@@ -394,11 +402,17 @@ class SaveJob:
     keywords: KeywordSet
     title: str | None
     description: str | None
+    # The notice itself is resolved at write time (it needs the capture year). This only says
+    # that one goes on, so the No copyright filter lets go of the photo without a rescan.
+    copyright: bool = False
 
     @property
     def fields(self) -> set[str]:
-        """Which indicator fields this job puts on the file, for the Tagged column."""
-        return fields_written(self.title, self.description, self.keywords)
+        """Which scanned fields this job puts on the file, for the Tagged column and its filters."""
+        written = fields_written(self.title, self.description, self.keywords)
+        if self.copyright:
+            written.add(FIELD_COPYRIGHT)
+        return written
 
 
 def _caption_to_save(
@@ -454,6 +468,7 @@ def build_save_job(item: PhotoItem, options: SaveOptions) -> SaveJob:
             write=options.write_description,
             overwrite=options.overwrite_description,
         ),
+        copyright=options.writes_notice,
     )
 
 
@@ -1967,19 +1982,26 @@ FILTER_GENERATED = "generated"
 FILTER_SAVED = "saved"
 FILTER_FAILED = "failed"
 FILTER_UNTAGGED = "untagged"
+FILTER_NO_COPYRIGHT = "no_copyright"
 FILTER_MIXED_SCRIPT = "mixed_script"
+
+# The filters that read the background metadata scan, so a view showing one must re-filter when
+# the scan reports.
+SCAN_FILTERS = frozenset({FILTER_UNTAGGED, FILTER_NO_COPYRIGHT})
 
 
 def photo_matches_filter(item: PhotoItem, criterion: str) -> bool:
     """
     Report whether *item* passes the grid filter *criterion*.
 
-    The status filters key off the lifecycle state the badges show, FILTER_SELECTED follows the
-    checkbox, and FILTER_UNTAGGED matches only once the metadata scan has run and found nothing (a
-    None/unknown scan state does not match, so no photo is hidden while the scan is still pending).
-    FILTER_MIXED_SCRIPT is what turns the run's "3 photos mix writing systems" line into three rows
-    you can actually open. FILTER_ALL and any unrecognized value match everything.
+    The status filters key off the lifecycle state the badges show, and FILTER_SELECTED follows the
+    checkbox. FILTER_UNTAGGED and FILTER_NO_COPYRIGHT match only once the metadata scan has run and
+    found nothing (a None/unknown scan state does not match, so no photo is hidden while the scan is
+    still pending). FILTER_MIXED_SCRIPT is what turns the run's "3 photos mix writing systems" line
+    into three rows you can actually open. FILTER_ALL and any unrecognized value match everything.
     """
+    scanned = item.known_fields is not None
+    found = item.known_fields or set()
     # A dict of cheap boolean checks keeps this to one return (no PLR0911). FILTER_ALL is not a
     # key, so it falls through to the default True, as does any value the grid never sends.
     checks = {
@@ -1988,7 +2010,8 @@ def photo_matches_filter(item: PhotoItem, criterion: str) -> bool:
         FILTER_GENERATED: item.has_proposal,
         FILTER_SAVED: item.status == SAVED,
         FILTER_FAILED: item.status == FAILED,
-        FILTER_UNTAGGED: item.known_fields is not None and not item.known_fields,
+        FILTER_UNTAGGED: scanned and not (found & TAGGED_FIELDS),
+        FILTER_NO_COPYRIGHT: scanned and FIELD_COPYRIGHT not in found,
         FILTER_MIXED_SCRIPT: bool(item.foreign_terms),
     }
     return checks.get(criterion, True)
@@ -2026,7 +2049,7 @@ def thumb_badges(item: PhotoItem, *, has_sidecar: bool) -> list[str]:
         badges.append(BADGE_SAVED)
     elif item.has_proposal:
         badges.append(BADGE_UNSAVED)
-    if item.known_fields:
+    if (item.known_fields or set()) & TAGGED_FIELDS:
         badges.append(BADGE_METADATA)
     if has_sidecar:
         badges.append(BADGE_SIDECAR)

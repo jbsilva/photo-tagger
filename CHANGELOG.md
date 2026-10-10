@@ -39,6 +39,9 @@ This file lists all notable changes to this project. The format follows the
   buttons type `©`, `{year}`, and `{artist}` into the field holding the cursor. The save menu's
   **Write Copyright** skips the block without clearing it.
 
+- GUI: **No copyright** joins the **Select > Status** criteria and the grid's **Show** box. It finds
+  the photos that have no copyright notice in EXIF, IPTC, or XMP.
+
 - `--otel` exports an OpenTelemetry trace of every model call (timings, tokens, failures) to a
   collector you run, so a slow or expensive batch is something you can read rather than guess at.
   Off by default and pointed only where `--otel-endpoint` says. The photo itself is never exported.

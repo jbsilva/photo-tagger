@@ -173,6 +173,7 @@ from photo_tagger.gui_state import (
     FILTER_FAILED,
     FILTER_GENERATED,
     FILTER_MIXED_SCRIPT,
+    FILTER_NO_COPYRIGHT,
     FILTER_PENDING,
     FILTER_SAVED,
     FILTER_SELECTED,
@@ -184,6 +185,7 @@ from photo_tagger.gui_state import (
     RERUN_FAILED,
     RERUN_MIXED_SCRIPT,
     SAVED,
+    SCAN_FILTERS,
     SELECT_CHECK,
     SELECT_ONLY,
     SELECT_UNCHECK,
@@ -563,6 +565,7 @@ _SELECT_STATUSES: tuple[tuple[str, str], ...] = (
     (FILTER_SAVED, gettext_noop("Saved")),
     (FILTER_FAILED, gettext_noop("Failed")),
     (FILTER_UNTAGGED, gettext_noop("Untagged")),
+    (FILTER_NO_COPYRIGHT, gettext_noop("No copyright")),
     (FILTER_MIXED_SCRIPT, gettext_noop("Mixed writing systems")),
 )
 
@@ -3448,9 +3451,9 @@ class MainWindow(QMainWindow):
                 # Merge rather than replace: a save may have added fields while the scan ran.
                 item.known_fields = set(fields) | (item.known_fields or set())
                 self._refresh_status_cell(item)
-        # The Untagged filter depends on this scan, so a grid showing it must re-evaluate once the
-        # results land; other filters and the Tagged sort read state the scan does not change.
-        if self._grid_filter == FILTER_UNTAGGED:
+        # The Untagged and No copyright filters depend on this scan, so a grid showing one must
+        # re-evaluate once the results land; the rest read state the scan does not change.
+        if self._grid_filter in SCAN_FILTERS:
             self._resort_grid()
 
     def _on_scan_finished(self) -> None:
@@ -3610,6 +3613,7 @@ class MainWindow(QMainWindow):
             (_("Saved"), FILTER_SAVED),
             (_("Failed"), FILTER_FAILED),
             (_("Untagged"), FILTER_UNTAGGED),
+            (_("No copyright"), FILTER_NO_COPYRIGHT),
             (_("Mixed writing systems"), FILTER_MIXED_SCRIPT),
         ):
             self._grid_filter_combo.addItem(label, criterion)

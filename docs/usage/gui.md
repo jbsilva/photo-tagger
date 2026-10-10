@@ -140,9 +140,11 @@ list by hand:
     - **File Type** lists the extensions that are in the list, each with a count (`dng (120)`,
         `jpg (120)`). The GUI builds this list again each time the menu opens.
     - **Status** works on the stage of a photo in its cycle: **Not generated**, **Generated**,
-        **Saved**, **Failed**, **Untagged**, or **Mixed writing systems**. These are the same criteria
-        as the filter of the thumbnail grid. As a result, **Uncheck > Status > Saved** before a rerun
-        has the same meaning in both places.
+        **Saved**, **Failed**, **Untagged**, **No copyright**, or **Mixed writing systems**. These are
+        the same criteria as the filter of the thumbnail grid. As a result, **Uncheck > Status >
+        Saved** before a rerun has the same meaning in both places. **No copyright** finds the photos
+        that have no copyright notice in EXIF, IPTC, or XMP. A photo that has only a notice (many
+        cameras write one) still counts as **Untagged**.
     - **Name Pattern...** asks for text to match against the filename. Plain text means "contains"
         (`IMG` finds `IMG_0001.dng`). Text with `*`, `?`, or `[` is a glob (a wildcard pattern such as
         `*_edit.jpg`). A pattern with a `/` matches against the whole path, so it can name a

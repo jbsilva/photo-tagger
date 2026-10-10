@@ -29,6 +29,7 @@ from photo_tagger.gui_state import (
     FILTER_FAILED,
     FILTER_GENERATED,
     FILTER_MIXED_SCRIPT,
+    FILTER_NO_COPYRIGHT,
     FILTER_PENDING,
     FILTER_SAVED,
     FILTER_SELECTED,
@@ -158,6 +159,7 @@ from photo_tagger.gui_state import (
 )
 from photo_tagger.i18n import activate
 from photo_tagger.metadata import (
+    FIELD_COPYRIGHT,
     FIELD_DESCRIPTION,
     FIELD_KEYWORDS,
     FIELD_TITLE,
@@ -1063,6 +1065,10 @@ def test_thumb_badges_lifecycle_and_info_markers() -> None:
     pending = PhotoItem(path=Path("/a.jpg"), known_fields=set())
     assert thumb_badges(pending, has_sidecar=False) == []
 
+    # A notice alone is not the metadata the badge means, the same as for the Untagged filter.
+    stamped = PhotoItem(path=Path("/a.jpg"), known_fields={FIELD_COPYRIGHT})
+    assert thumb_badges(stamped, has_sidecar=False) == []
+
     # Mixed script is informational: it marks the generated thumbnail, it does not replace
     # the lifecycle badge that says the proposal is there.
     mixed = PhotoItem(
@@ -1422,6 +1428,22 @@ def test_filter_untagged_matches_only_scanned_empty() -> None:
     tagged = PhotoItem(path=Path("/d/b.jpg"), known_fields={FIELD_TITLE})
     unscanned = PhotoItem(path=Path("/d/c.jpg"), known_fields=None)
     assert filter_photos([empty, tagged, unscanned], FILTER_UNTAGGED) == [empty]
+
+
+def test_filter_untagged_ignores_a_copyright_alone() -> None:
+    """A camera stamps a notice on every frame, and that photo still waits for its tags."""
+    stamped = PhotoItem(path=Path("/d/a.jpg"), known_fields={FIELD_COPYRIGHT})
+    assert filter_photos([stamped], FILTER_UNTAGGED) == [stamped]
+
+
+def test_filter_no_copyright_matches_only_scanned_photos_without_one() -> None:
+    """Other tags do not count, and a photo the scan has not reached yet is left out."""
+    bare = PhotoItem(path=Path("/d/a.jpg"), known_fields=set())
+    titled = PhotoItem(path=Path("/d/b.jpg"), known_fields={FIELD_TITLE})
+    owned = PhotoItem(path=Path("/d/c.jpg"), known_fields={FIELD_TITLE, FIELD_COPYRIGHT})
+    unscanned = PhotoItem(path=Path("/d/d.jpg"), known_fields=None)
+    photos = [bare, titled, owned, unscanned]
+    assert filter_photos(photos, FILTER_NO_COPYRIGHT) == [bare, titled]
 
 
 def test_filter_mixed_script_finds_the_photos_the_run_flagged() -> None:
@@ -2208,6 +2230,24 @@ def test_save_options_ignores_an_empty_copyright() -> None:
     """A dialog nobody filled in is not a reason to write."""
     options = SaveOptions(extra_fields=ExtraFields())
     assert not options.writes_copyright
+    assert not options.writes_notice
+
+
+def test_save_job_counts_the_notice_among_the_fields_it_writes() -> None:
+    """After the save, No copyright lets go of the photo without a rescan."""
+    job = build_save_job(_proposed_item(), _copyright_options())
+    assert FIELD_COPYRIGHT in job.fields
+    assert FIELD_COPYRIGHT not in build_save_job(_proposed_item(), SaveOptions()).fields
+
+
+def test_save_job_does_not_count_a_name_alone_as_a_notice() -> None:
+    """A credit with no notice and no rights leaves the photo without a copyright."""
+    options = SaveOptions(extra_fields=ExtraFields(artist="Ada Lovelace", marked=True))
+    assert options.writes_copyright
+    assert not options.writes_notice
+    assert FIELD_COPYRIGHT not in build_save_job(_proposed_item(), options).fields
+    rights_only = SaveOptions(extra_fields=ExtraFields(rights="© {year}"))
+    assert rights_only.writes_notice
 
 
 def test_resolve_extra_tags_dates_the_notice_by_the_photo() -> None:

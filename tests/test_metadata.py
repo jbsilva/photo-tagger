@@ -11,6 +11,7 @@ from exiftool.exceptions import ExifToolExecuteError
 from photo_tagger.config import TAG_EXIF_IMAGE_DESCRIPTION
 from photo_tagger.fields import SHOWN_FIELDS
 from photo_tagger.metadata import (
+    FIELD_COPYRIGHT,
     FIELD_DESCRIPTION,
     FIELD_KEYWORDS,
     FIELD_TITLE,
@@ -400,6 +401,34 @@ def test_find_field_presence_classifies_each_field(tmp_path: Path) -> None:
     assert presence[a] == {FIELD_TITLE, FIELD_DESCRIPTION}
     assert presence[b] == {FIELD_KEYWORDS}
     assert presence[c] == set()
+
+
+def test_find_field_presence_reads_the_copyright_notice(tmp_path: Path) -> None:
+    """A notice in any one of its three tags counts, so one a camera stamped is found too."""
+    exif, iptc, xmp, blank = (tmp_path / f"{name}.jpg" for name in ("exif", "iptc", "xmp", "no"))
+    for path in (exif, iptc, xmp, blank):
+        path.write_text("x")
+
+    fake_helper = _fake_helper(
+        [
+            {"SourceFile": str(exif), "EXIF:Copyright": "(c) 2019 Ada"},
+            {"SourceFile": str(iptc), "IPTC:CopyrightNotice": "(c) 2019 Ada"},
+            {"SourceFile": str(xmp), "XMP:Rights": "© 2019 Ada"},
+            {"SourceFile": str(blank), "EXIF:Copyright": "  "},
+        ],
+    )
+    with (
+        patch("photo_tagger.metadata.metadata_targets", side_effect=lambda p: [str(p)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=fake_helper),
+    ):
+        presence = find_field_presence([exif, iptc, xmp, blank])
+
+    assert presence == {
+        exif: {FIELD_COPYRIGHT},
+        iptc: {FIELD_COPYRIGHT},
+        xmp: {FIELD_COPYRIGHT},
+        blank: set(),
+    }
 
 
 def test_find_field_presence_unions_image_and_sidecar(tmp_path: Path) -> None:
