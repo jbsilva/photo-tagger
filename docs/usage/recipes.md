@@ -259,11 +259,12 @@ Replace the default user prompt and limit how many AI keywords are kept per phot
 photo-tagger \
   -i ~/Pictures/inbox \
   --prompt-file ~/prompts/studio.txt \
-  --max-keywords 15
+  --max-keywords 10
 ```
 
 Existing photo metadata (location, GPS, camera EXIF) is still appended to your custom prompt
-automatically. `--max-keywords` caps the AI keywords before they are merged with existing ones.
+automatically. `--max-keywords` caps the AI keywords before they are merged with existing ones. The
+default prompt already asks for at most 15 keywords, so a cap of 15 or more rarely has an effect.
 
 ## Keep keywords inside your Lightroom catalog
 
@@ -295,11 +296,11 @@ photo-tagger \
   --session-gap 60
 ```
 
-Photos taken less than an hour apart are one session. Each session is analyzed in full. Its own
-output becomes its vocabulary (majority spelling, majority hierarchy), and only then is anything
-written. This way, forty frames of the same bird cannot land in the catalog as `Osprey`, `Ospreys`,
-`Bird|Osprey`, and `Wildlife|Raptor|Osprey`. Photos are processed in capture order, and the result
-is the same at any `--workers` setting.
+A new session starts wherever the gap between two photos, in capture order, is more than an hour.
+Each session is analyzed in full. Its own output becomes its vocabulary (majority spelling, majority
+hierarchy), and only then is anything written. This way, forty frames of the same bird cannot land
+in the catalog as `Osprey`, `Ospreys`, `Bird|Osprey`, and `Wildlife|Raptor|Osprey`. Photos are
+processed in capture order, and the result is the same at any `--workers` setting.
 
 ## Cache model outputs across reruns
 
