@@ -784,6 +784,36 @@ def test_find_tagged_images_salvages_batch_with_one_bad_file(tmp_path: Path) -> 
         assert find_tagged_images([good, bad]) == {good}
 
 
+def test_a_broken_sidecar_does_not_hide_what_the_photo_carries(tmp_path: Path) -> None:
+    """
+    The photo's own keywords and title survive a sidecar ExifTool cannot parse.
+
+    Without them, the run would tag the photo as if it held nothing, and the write would replace the
+    keywords it should have merged with.
+    """
+    photo = tmp_path / "a.cr3"
+    photo.write_text("x")
+    sidecar = tmp_path / "a.xmp"
+    helper = _fake_helper()
+    helper.get_tags.side_effect = _raise_execute_error_with_payload(
+        [
+            {"SourceFile": str(photo), "XMP:Subject": ["Beach"], "XMP:Title": "Shore"},
+            {"SourceFile": str(sidecar)},
+        ],
+    )
+    with (
+        patch(
+            "photo_tagger.metadata.metadata_targets",
+            side_effect=lambda p: [str(p), str(sidecar)],
+        ),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        context = read_image_context(photo)
+
+    assert context.existing_keywords.subject == ["Beach"]
+    assert context.existing_title == "Shore"
+
+
 def test_find_field_presence_salvages_batch_with_one_bad_file(tmp_path: Path) -> None:
     """The field-presence scan also survives a single corrupt file in the batch."""
     good = tmp_path / "good.cr3"

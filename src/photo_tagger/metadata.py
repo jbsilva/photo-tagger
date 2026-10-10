@@ -295,6 +295,7 @@ def _batched_get_tags(
     *,
     files: list[str],
     tags: list[str],
+    params: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Run one ``get_tags`` over *files*, salvaging the payload when a single file is unreadable.
@@ -302,11 +303,12 @@ def _batched_get_tags(
     exiftool exits non-zero when any file in the batch has a format error, and pyexiftool then
     raises even though the JSON for every file (including the healthy ones) is already on stdout.
     Without the salvage, one corrupt or zero-byte photo would wipe out the whole folder's read and
-    every image would report "no metadata". Re-raises when there is nothing to salvage.
+    every image would report "no metadata". The same holds for one photo and its sidecar: a broken
+    sidecar must not hide what the photo itself carries. Re-raises when there is nothing to salvage.
     """
     with managed_helper(et) as helper:
         try:
-            blocks: list[dict[str, Any]] = helper.get_tags(files=files, tags=tags)
+            blocks: list[dict[str, Any]] = helper.get_tags(files=files, tags=tags, params=params)
         except ExifToolExecuteError as exc:
             try:
                 blocks = json.loads(exc.stdout or "")
@@ -686,8 +688,7 @@ def read_caption_values(
         return fields
 
     try:
-        with managed_helper(et) as helper:
-            blocks = helper.get_tags(files=targets, tags=[*_TITLE_TAGS, *_DESCRIPTION_TAGS])
+        blocks = _batched_get_tags(et, files=targets, tags=[*_TITLE_TAGS, *_DESCRIPTION_TAGS])
     except _EXIFTOOL_ERRORS as e:
         logger.exception("failed_to_read_caption", error=str(e))
         return fields
@@ -742,8 +743,7 @@ def read_metadata_sources(
         return []
 
     try:
-        with managed_helper(et) as helper:
-            blocks = helper.get_tags(files=targets, tags=list(_TAGGED_INDICATOR_TAGS))
+        blocks = _batched_get_tags(et, files=targets, tags=list(_TAGGED_INDICATOR_TAGS))
     except _EXIFTOOL_ERRORS as exc:
         logger.exception("failed_to_read_metadata_sources", error=str(exc))
         return []
@@ -898,8 +898,7 @@ def read_image_context(
         params = _IMAGE_HASH_API
 
     try:
-        with managed_helper(et) as helper:
-            blocks = helper.get_tags(files=targets, tags=all_tags, params=params)
+        blocks = _batched_get_tags(et, files=targets, tags=all_tags, params=params)
     except _EXIFTOOL_ERRORS as exc:
         logger.exception("failed_to_read_image_context", error=str(exc))
         return ImageContext()
