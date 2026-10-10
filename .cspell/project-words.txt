@@ -28,6 +28,7 @@ CHEVRONLIGHT
 Cim
 CIPA
 cogvlm
+condaforge
 configfile
 conftest
 Consolas
