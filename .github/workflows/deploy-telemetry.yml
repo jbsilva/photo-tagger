@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - "telemetry/worker.js"
+      - "telemetry/worker.test.mjs"
       - "telemetry/wrangler.toml"
       - ".github/workflows/deploy-telemetry.yml"
 
@@ -30,6 +31,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The runner's own Node; the tests need no dependencies. A collector that fails them would
+      # drop every beacon, so it never deploys.
+      - name: Test Worker
+        run: node --experimental-detect-module --test telemetry/worker.test.mjs
 
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3

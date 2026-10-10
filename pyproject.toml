@@ -179,6 +179,10 @@ cmd = "uvx marimo run --sandbox telemetry/dashboard.py"
 help = "Open the telemetry dashboard as an editable notebook"
 cmd = "uvx marimo edit --sandbox telemetry/dashboard.py"
 
+[tool.poe.groups.telemetry.tasks.test-worker]
+help = "Test the telemetry collector (needs Node)"
+cmd = "node --experimental-detect-module --test telemetry/worker.test.mjs"
+
 [tool.ruff]
 line-length = 100
 indent-width = 4

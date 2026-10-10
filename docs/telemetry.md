@@ -50,6 +50,8 @@ Its full source (and the queries run against it) lives in the
 [`telemetry/`](https://github.com/jbsilva/photo-tagger/tree/main/telemetry) directory of the
 repository.
 
+Events are kept with no expiry date, so trends can be compared across releases.
+
 Sending happens on a background thread with a short timeout and every failure is swallowed, so
 telemetry can never crash, slow down, or block a tagging run.
 

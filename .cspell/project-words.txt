@@ -17,8 +17,8 @@ borderless
 canberra
 capsys
 casefold
-casefolded
 Casefolded
+casefolded
 charliermarsh
 chave
 CHEVRONLIGHT
@@ -32,8 +32,8 @@ consoledonottrack
 cooldown
 cpuinfo
 CREAT
-Cyclopts
 cyclopts
+Cyclopts
 darktable
 dataclass
 datas
@@ -52,8 +52,9 @@ dwLength
 EDITMSG
 evals
 excepthook
-Exif
+executescript
 exif
+Exif
 exiftool
 Exiftool
 filelock
@@ -77,8 +78,8 @@ getpixel
 glanceable
 gpgconf
 GURMUKHI
-halfwidth
 HALFWIDTH
+halfwidth
 headerless
 headlessly
 Headwear
@@ -93,8 +94,8 @@ importorskips
 imread
 inlinehilite
 internvl
-iptc
 IPTC
+iptc
 isort
 jbsilva
 José
@@ -113,8 +114,8 @@ linecap
 linejoin
 linenums
 litellm
-LLAMACPP
 llamacpp
+LLAMACPP
 llava
 lmstudio
 LMSTUDIO
@@ -149,9 +150,9 @@ noqa
 NOSONAR
 numprocesses
 nvidia
-Ollama
-OLLAMA
 ollama
+OLLAMA
+Ollama
 osascript
 Ospray
 pacman
@@ -216,8 +217,8 @@ smartsymbols
 smolvlm
 sonarcloud
 sonarlint
-sonarqube
 SonarQube
+sonarqube
 sortdir
 sppci
 starlette
@@ -238,6 +239,7 @@ tasklist
 testpypi
 testsdeselect
 THAANA
+timespec
 titlecase
 tlsv
 tobytes

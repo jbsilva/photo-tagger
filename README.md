@@ -509,8 +509,9 @@ nothing else to leak.
 
 **Where it goes:** our own Cloudflare Worker at `telemetry.tagger.photo`. No third-party analytics
 service is involved, and the collector's full source (and the queries run against it) lives in
-[`telemetry/`](telemetry/). Sending happens on a background thread with a short timeout and is
-wrapped so it can never crash or slow down a run.
+[`telemetry/`](telemetry/). Events are kept with no expiry date, so trends can be compared across
+releases. Sending happens on a background thread with a short timeout and is wrapped so it can never
+crash or slow down a run.
 
 **How to disable it** (any one of these):
 
