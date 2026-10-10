@@ -88,8 +88,9 @@ or not you installed the `gui` extra:
 - `tests/test_gui_state.py` covers the Qt-free logic in the `gui_state` package. It imports no
     PySide6, so it always runs and counts toward coverage like any other module.
 - `tests/test_gui.py` exercises the real window and worker. It calls
-    `pytest.importorskip("PySide6")`. If the extra is absent (the default CI run), pytest skips the
-    whole file. It uses Qt's `offscreen` platform to build widgets without a display server.
+    `pytest.importorskip("PySide6")`. If the extra is absent, pytest skips the whole file. It uses
+    Qt's `offscreen` platform to build widgets without a display server. The main CI test job does
+    not install the extra. A separate `gui-tests` job in `tests.yml` installs it and runs this file.
 
 To run the GUI tests, use the `test-gui` task. It installs the extra and points Qt at the offscreen
 platform:

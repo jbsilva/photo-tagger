@@ -83,7 +83,7 @@ explain *why* the change is necessary, not only what changed.
 
 ## Pull requests and CI
 
-Two GitHub Actions workflows gate every pull request:
+Three GitHub Actions workflows gate every pull request:
 
 - [`tests.yml`](https://github.com/jbsilva/photo-tagger/blob/main/.github/workflows/tests.yml): runs
     the unit tests, the linters, and the SonarCloud analysis.

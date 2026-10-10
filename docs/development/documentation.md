@@ -120,7 +120,7 @@ uv run scripts/check_docs_sync.py
 It enforces three rules:
 
 - `README.md` and the [CLI reference](../usage/cli-reference.md) name every subcommand (`doctor`,
-    `watch`, `undo`, `gui`).
+    `show`, `set`, `vocabulary`, `watch`, `undo`, `gui`).
 - Every flag that the CLI accepts appears in the CLI reference, under at least one of its names.
     That page promises to document every flag, so a new flag cannot ship without documentation.
 - Every flag-shaped token in the user-facing pages is a flag that the CLI really has. The

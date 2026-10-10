@@ -89,7 +89,9 @@ does.
 ### bandit
 
 `bandit` scans the source for common security problems (for example, unsafe subprocess use or hard
-coded secrets). It runs as a pre-commit hook and in CI.
+coded secrets). It runs as a pre-commit hook. In CI, it only writes a report for SonarCloud
+(`--exit-zero`), so a bandit finding does not fail the CI run. The pre-commit hook and CodeQL are
+the gates for security.
 
 ### zizmor
 
@@ -125,7 +127,7 @@ hooks in the native TOML format of prek. The repository does not use `.pre-commi
 file that the original `pre-commit` tool reads. Run every hook against all files with one command:
 
 ```bash
-prek run -a
+uv run poe hooks    # prek run -a
 ```
 
 The configured hooks are:
@@ -146,6 +148,7 @@ The configured hooks are:
 | zizmor                     | Audits the GitHub Actions workflows for security.             |
 | zuban (local)              | Strict type check.                                            |
 | pycroscope (local)         | Semi-static analysis with the project configuration.          |
+| import-linter (local)      | Checks the import layering contracts.                         |
 | check-version-sync (local) | Keeps the package version consistent across project files.    |
 | check-docs-sync (local)    | Keeps the documented CLI surface matching the real app.       |
 | check-translations (local) | Fails on a `.po` change that has no recompiled catalog.       |
