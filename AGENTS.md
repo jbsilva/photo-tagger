@@ -31,8 +31,10 @@ module owns one part of that pipeline:
   It is pure and knows no languages. It reads the dominant script from the text itself and does not
   map `--output-language` to a script. Thus callers run it again on cache replays, and the cache
   stores no verdict. `--repair-language` then asks the model again, with the prompt in
-  `config.build_repair_prompt`. The repair runs before the cache write, so a rerun never pays for a
-  repair that worked. One that came back mixed leaves the original cached and is asked again.
+  `config.build_repair_prompt`. `language_repair.py` holds that repair once for both frontends: each
+  passes the one model call it makes, and gets back the answer to keep and a `RepairStatus`. The
+  repair runs before the cache write, so a rerun never pays for a repair that worked. One that came
+  back mixed leaves the original cached and is asked again.
 - `fields.py`: the copyright and credit fields a run writes (`ExtraFields`), and `--set`.
   `templates.py` parses and fills their notice templates: chains of tags with quoted fallbacks. It
   is pure: the tag values arrive as a mapping, read before the write.

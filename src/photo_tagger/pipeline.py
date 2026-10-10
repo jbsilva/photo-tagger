@@ -4,7 +4,7 @@ import contextlib
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from loguru import logger
@@ -25,11 +25,11 @@ from photo_tagger.config import (
     DEFAULT_USER_PROMPT,
     SidecarMode,
     SidecarOverrides,
-    build_repair_prompt,
 )
 from photo_tagger.errors import BatchError
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
+from photo_tagger.language_repair import RepairStatus, repair_mixed_script, repair_replay
 from photo_tagger.metadata import (
     build_contextual_prompt,
     managed_helper,
@@ -435,45 +435,22 @@ def _repair_foreign_script(
     file_name: str,
 ) -> InferenceResult:
     """
-    Ask the model once more, in place, when its answer mixed writing systems.
-
-    Only the same agent and the same image: the question that decides the right fix is whether the
-    photo shows that text, which no text-only pass can answer. A failed repair is logged and the
-    original answer kept, because a photo that was tagged imperfectly still beats one not tagged. A
-    repair that comes back mixed again keeps the original too, and gets no third try.
+    Ask the model once more when its answer mixed writing systems (see :mod:`language_repair`).
 
     Runs before the cache write in :func:`_resolve_inference`, so what gets stored (and replayed) is
     the repaired answer and a rerun never pays for the second call again.
     """
     if not ctx.options.repair_language:
         return inference
-    finding = find_in_result(inference)
-    if finding is None:
-        return inference
-    logger.info("foreign_script_repair_started", file=file_name, terms=finding.terms)
-    prompt = build_repair_prompt(
-        title=inference.title,
-        description=inference.description,
-        keywords=inference.keywords,
-        terms=finding.terms,
+    result, status = repair_mixed_script(
+        inference,
+        lambda prompt: _call_model(ctx, jpeg_bytes, prompt),
         output_language=ctx.options.output_language,
+        file_name=file_name,
     )
-    try:
-        repaired = _call_model(ctx, jpeg_bytes, prompt)
-    except Exception as exc:  # noqa: BLE001 - a failed repair must not cost the photo its tags.
-        logger.warning("foreign_script_repair_failed", file=file_name, error=str(exc))
-        return inference
-    ctx.usage.add_repair()
-    still_mixed = find_in_result(repaired) is not None
-    logger.info(
-        "foreign_script_repair_finished",
-        file=file_name,
-        title=repaired.title,
-        still_mixed=still_mixed,
-    )
-    # A repair that mixes scripts again is no better, and the original is the answer the photo
-    # was flagged on: keep it, so what the person reviews is what the check found.
-    return inference.with_cost_of(repaired) if still_mixed else repaired.with_cost_of(inference)
+    if status.answered:
+        ctx.usage.add_repair()
+    return result
 
 
 def _repair_cached(
@@ -485,11 +462,10 @@ def _repair_cached(
     content_key: str,
 ) -> tuple[InferenceResult, bool]:
     """
-    Return a replayed answer, repaired first when it mixes scripts and --repair-language is on.
+    Return a replayed answer and whether it came from the cache alone, repaired first if need be.
 
-    An answer cached by a run without the setting would otherwise be replayed mixed forever. A
-    repair that helps replaces the cached answer, so the next run replays the fixed one. The copy
-    handed to the repair carries no cost, since the cached call was paid for by an earlier run.
+    An answer cached by a run without --repair-language would otherwise be replayed mixed forever. A
+    repair that helps replaces the cached answer, so the next run replays the fixed one.
     """
     if not ctx.options.repair_language or find_in_result(cached) is None:
         return cached, True
@@ -498,22 +474,17 @@ def _repair_cached(
         jpg_quality=ctx.options.jpeg_quality,
         max_size=ctx.options.jpeg_dimensions,
     )
-    unpaid = replace(cached, input_tokens=0, output_tokens=0, total_tokens=0, seconds=0.0)
-    result = _repair_foreign_script(
-        unpaid,  # NOSONAR S5655 - replace() keeps the type of cached
-        ctx,
-        jpeg_bytes,
+    result, status = repair_replay(
+        cached,
+        lambda prompt: _call_model(ctx, jpeg_bytes, prompt),
+        output_language=ctx.options.output_language,
         file_name=image_path.name,
     )
-    if (
-        result.title == cached.title
-        and result.keywords == cached.keywords
-        and (result.description == cached.description)
-    ):
-        # The repair failed or came back mixed again: the cached answer stands, as it was.
-        return result, result.total_tokens == 0
-    safe_cache_put(cache, content_key, result, file_name=image_path.name)
-    return result, False
+    if status.answered:
+        ctx.usage.add_repair()
+    if status is RepairStatus.FIXED:
+        safe_cache_put(cache, content_key, result, file_name=image_path.name)
+    return result, not status.answered
 
 
 def _run_model(image_path: Path, ctx: _BatchContext, *, contextual_prompt: str) -> InferenceResult:

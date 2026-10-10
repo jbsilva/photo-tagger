@@ -10,7 +10,6 @@ harmonization, the vocabulary build, and the folder watch each get their own, so
 another.
 """
 
-from dataclasses import replace
 from itertools import islice
 from typing import TYPE_CHECKING
 
@@ -25,7 +24,7 @@ from photo_tagger.cache import (
     safe_cache_get,
     safe_cache_put,
 )
-from photo_tagger.config import DEFAULT_USER_PROMPT, build_repair_prompt
+from photo_tagger.config import DEFAULT_USER_PROMPT
 from photo_tagger.errors import PhotoTaggerError
 from photo_tagger.gui_state import (
     GenerateOptions,
@@ -45,6 +44,7 @@ from photo_tagger.gui_state import (
 from photo_tagger.gui_usage import GUI_GENERATE_RETRIES
 from photo_tagger.i18n import _, ngettext
 from photo_tagger.image_io import prepare_image_for_agent
+from photo_tagger.language_repair import Ask, RepairStatus, repair_mixed_script, repair_replay
 from photo_tagger.metadata import (
     build_contextual_prompt,
     iter_field_presence,
@@ -281,6 +281,14 @@ class GenerateWorker(QObject):
             ),
         )
 
+    def _ask(self, agent: object, jpeg: BinaryContent) -> Ask:
+        """Return the one model call a repair makes: the photo again, with a new prompt."""
+
+        def ask(prompt: str) -> InferenceResult:
+            return analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
+
+        return ask
+
     def _repair_one(
         self,
         inference: InferenceResult,
@@ -292,34 +300,18 @@ class GenerateWorker(QObject):
         """
         Ask the model once more when its answer mixed writing systems, if the setting is on.
 
-        The GUI's counterpart to the pipeline's ``--repair-language``, kept here rather than shared
-        because the two call the agent differently (no sampling knobs here, and no batch usage to
-        fold into). A failed repair keeps the original answer: the note over the fields still marks
-        it, and a proposal you can edit beats no proposal. So does a repair that comes back mixed
-        again. The flag says whether a repair ran.
+        See :mod:`photo_tagger.language_repair`: a failed repair keeps the original answer, and the
+        note over the fields still marks it. The flag says whether a repair call answered.
         """
         if not self._repair_language:
             return inference, False
-        finding = find_in_result(inference)
-        if finding is None:
-            return inference, False
-        logger.info("gui_foreign_script_repair_started", file=file_name, terms=finding.terms)
-        prompt = build_repair_prompt(
-            title=inference.title,
-            description=inference.description,
-            keywords=inference.keywords,
-            terms=finding.terms,
+        result, status = repair_mixed_script(
+            inference,
+            self._ask(agent, jpeg),
             output_language=self._output_language,
+            file_name=file_name,
         )
-        try:
-            repaired = analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
-        except Exception as exc:  # noqa: BLE001 - a failed repair must not cost the photo its proposal.
-            logger.warning("gui_foreign_script_repair_failed", file=file_name, error=str(exc))
-            return inference, False
-        # Mixed again: the original stays, as in the CLI, and the proposal counts both calls.
-        if find_in_result(repaired) is not None:
-            return inference.with_cost_of(repaired), True
-        return repaired.with_cost_of(inference), True
+        return result, status.answered
 
     def _repair_cached(
         self,
@@ -333,21 +325,20 @@ class GenerateWorker(QObject):
         Repair a replayed answer that mixes scripts, when the setting is on, and store the fix.
 
         An answer cached before the setting was turned on would otherwise come back mixed on every
-        run, as in the CLI pipeline. An earlier run paid for the cached call, so the proposal counts
-        only the repair. A repair that does not help leaves the cache as it was.
+        run, as in the CLI pipeline (see :func:`~photo_tagger.language_repair.repair_replay`).
         """
         if not self._repair_language or find_in_result(cached) is None:
             return cached, False
         jpeg = prepare_image_for_agent(path, max_size=self._jpeg_dimensions)
-        unpaid = replace(cached, input_tokens=0, output_tokens=0, total_tokens=0, seconds=0.0)
-        result, repaired = self._repair_one(unpaid, agent, jpeg, file_name=path.name)
-        if not repaired:
-            return cached, False  # the call failed: a plain replay, with what it cost back then
-        text = (result.title, result.description, result.keywords)
-        helped = text != (cached.title, cached.description, cached.keywords)
-        if helped and cache is not None and content_key is not None:
+        result, status = repair_replay(
+            cached,
+            self._ask(agent, jpeg),
+            output_language=self._output_language,
+            file_name=path.name,
+        )
+        if status is RepairStatus.FIXED and cache is not None and content_key is not None:
             safe_cache_put(cache, content_key, result, file_name=path.name)
-        return result, repaired
+        return result, status.answered
 
     def _generate_one(self, agent: object, path: Path, cache: InferenceCache | None) -> Proposal:
         """Read existing metadata, run the model (or hit the cache), and assemble a proposal."""

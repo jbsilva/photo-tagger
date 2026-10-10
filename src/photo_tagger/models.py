@@ -118,6 +118,16 @@ class InferenceResult:
     total_tokens: int = 0
     seconds: float = 0.0
 
+    def without_cost(self) -> InferenceResult:
+        """Return this answer's text with no cost, for a replay an earlier run paid for."""
+        return replace(  # NOSONAR S5886 - replace() returns the type of self
+            self,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            seconds=0.0,
+        )
+
     def with_cost_of(self, other: InferenceResult) -> InferenceResult:
         """
         Return this answer's text carrying what both calls cost.
