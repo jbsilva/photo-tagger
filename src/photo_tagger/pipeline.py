@@ -909,7 +909,7 @@ def _write_pending(
                 image_path,
                 target.path,
                 created=not target.existed,
-                backed_up=options.backup_xmp,
+                backed_up=target.made_backup(backup=options.backup_xmp),
             )
     return written
 

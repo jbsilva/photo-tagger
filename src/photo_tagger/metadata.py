@@ -1444,6 +1444,13 @@ class WriteTarget:
     # Whether the file was there before the write. Undo needs it to tell "restore the backup" from
     # "delete what the run created", and it can only be known beforehand.
     existed: bool
+    # Whether a *_original backup was there before the write. ExifTool keeps an existing backup and
+    # writes the file anyway, so that backup holds an older state, not what this write replaced.
+    had_backup: bool = False
+
+    def made_backup(self, *, backup: bool) -> bool:
+        """Say whether a write with backups set to *backup* left a backup of its own behind."""
+        return backup and not self.had_backup
 
 
 # What each --sidecar-override target writes, as use_sidecar values: photo before sidecar, the
@@ -1520,7 +1527,14 @@ def plan_writes(
     targets: list[WriteTarget] = []
     for use_sidecar in _sidecar_choices(image_path, mode, overrides):
         path = write_target(image_path, use_sidecar=use_sidecar)
-        targets.append(WriteTarget(path=path, use_sidecar=use_sidecar, existed=path.exists()))
+        targets.append(
+            WriteTarget(
+                path=path,
+                use_sidecar=use_sidecar,
+                existed=path.exists(),
+                had_backup=path.with_name(path.name + "_original").exists(),
+            ),
+        )
     return targets
 
 

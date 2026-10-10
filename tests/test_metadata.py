@@ -1901,3 +1901,25 @@ def test_a_set_of_processing_software_wins_over_the_stamp_in_any_spelling() -> N
     for tag in ("EXIF:ProcessingSoftware", "IFD0:processingsoftware", "ProcessingSoftware"):
         assert _software_stamp({tag: "MyTool"}, use_sidecar=False) == {}
     assert _software_stamp({"XMP-dc:Title": "t"}, use_sidecar=False)
+
+
+def test_plan_writes_notes_a_backup_that_predates_the_write(tmp_path: Path) -> None:
+    """
+    A *_original already there is an older state, not what this write replaces.
+
+    ExifTool keeps it and writes the file anyway, so undo must not restore it: that would drop every
+    run in between.
+    """
+    from photo_tagger.metadata import plan_writes  # noqa: PLC0415
+
+    photo = tmp_path / "img.jpg"
+    photo.write_bytes(b"x")
+    (tmp_path / "img.jpg_original").write_bytes(b"old")
+
+    (target,) = plan_writes(photo, "none")
+
+    assert target.had_backup is True
+    assert target.made_backup(backup=True) is False
+    (fresh,) = plan_writes(tmp_path / "other.jpg", "none")
+    assert fresh.made_backup(backup=True) is True
+    assert fresh.made_backup(backup=False) is False

@@ -475,7 +475,7 @@ def _write_fields(
                         image_file,
                         target.path,
                         created=not target.existed,
-                        backed_up=backup,
+                        backed_up=target.made_backup(backup=backup),
                     )
             if ok:
                 written += 1

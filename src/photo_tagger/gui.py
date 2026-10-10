@@ -818,7 +818,12 @@ def _record_writes(
     if journal is None:
         return
     for target in targets:
-        journal.record(image_path, target.path, created=not target.existed, backed_up=backup)
+        journal.record(
+            image_path,
+            target.path,
+            created=not target.existed,
+            backed_up=target.made_backup(backup=backup),
+        )
 
 
 def _readonly_box(min_height: int) -> QPlainTextEdit:

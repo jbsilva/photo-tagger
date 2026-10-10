@@ -159,7 +159,7 @@ class UndoJournal:
     that is otherwise writing metadata correctly is worse.
     """
 
-    __slots__ = ("_broken", "_entries", "_lock", "_path")
+    __slots__ = ("_broken", "_entries", "_lock", "_own_backups", "_path")
 
     def __init__(self, path: Path) -> None:
         """Prepare (but do not create) the journal at *path*."""
@@ -167,6 +167,9 @@ class UndoJournal:
         self._lock = threading.Lock()
         self._entries = 0
         self._broken = False
+        # Targets this journal recorded a backup for. ExifTool keeps the first backup of a file, so
+        # a later write of the same file in this run still owns it (see record).
+        self._own_backups: set[str] = set()
 
     @property
     def path(self) -> Path:
@@ -192,15 +195,19 @@ class UndoJournal:
         *created* says the target did not exist before the write, which is what tells undo to delete
         the file rather than look for a backup.
 
-        *backed_up* says the write was allowed to make one. Without it ExifTool is passed
-        ``-overwrite_original`` and writes no ``*_original`` at all, so any file sitting under that
-        name belongs to an earlier run or to the user's own ExifTool use. Adopting it would point
-        undo at content this run never wrote, and restoring it would destroy every edit made in
-        between. With backups on, ExifTool refuses to write over an existing ``*_original``, so the
-        write fails and nothing is recorded; a backup found here is therefore this write's own.
+        *backed_up* says this write left a backup of its own: backups were on, and no ``*_original``
+        was there before it (see :meth:`WriteTarget.made_backup`). ExifTool keeps an existing backup
+        and writes the file anyway, so a backup that predates the write belongs to an earlier run or
+        to the user's own ExifTool use. Adopting it would point undo at content this run never
+        wrote, and restoring it would destroy every edit made in between.
         """
         if self._broken:
             return
+        if backed_up:
+            self._own_backups.add(str(target))
+        elif str(target) in self._own_backups:
+            # A second write of a file this run already backed up: the backup is still ours.
+            backed_up = True
         backup = target.with_name(target.name + BACKUP_SUFFIX)
         try:
             stat = target.stat()
@@ -370,8 +377,8 @@ def undo_run(
     """
     Undo every recorded write, newest first.
 
-    Reverse order matters when one file was written more than once in a run: the last write is the
-    one whose backup holds the state before it.
+    Reverse order matters when one file was written more than once in a run: ExifTool keeps the
+    backup its first write made, so the newest record restores the state from before the run.
     """
     results = [_undo_one(record, force=force, dry_run=dry_run) for record in reversed(records)]
     counts: dict[str, int] = {}

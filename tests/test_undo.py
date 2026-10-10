@@ -415,3 +415,23 @@ def test_prune_journals_skips_an_entry_it_cannot_stat(
 
     with patch("pathlib.Path.stat", side_effect=OSError("gone")):
         assert prune_journals() == 0
+
+
+def test_journal_keeps_its_backup_for_a_second_write_of_the_same_file(tmp_path: Path) -> None:
+    """
+    A file saved twice in one run keeps the backup of its first write.
+
+    ExifTool keeps that backup and writes the file anyway, so the second write finds it there. It is
+    still this run's backup, and dropping it would leave undo nothing to restore.
+    """
+    target = tmp_path / "a.jpg"
+    target.write_text("first save")
+    (tmp_path / ("a.jpg" + BACKUP_SUFFIX)).write_text("before the run")
+    journal = UndoJournal(tmp_path / "run.jsonl")
+    journal.record(target, target, created=False, backed_up=True)
+    target.write_text("second save")
+
+    journal.record(target, target, created=False, backed_up=False)
+
+    records = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines()]
+    assert records[-1]["backup"] is not None
