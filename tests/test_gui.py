@@ -4802,8 +4802,8 @@ def test_run_generation_hands_the_vocabulary_to_the_worker(
     photo = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": photo})
-    window._load_vocabulary(_keyword_file(tmp_path))  # noqa: SLF001
-    window._strict_box.setChecked(True)  # noqa: SLF001
+    window._keyword_rules_dialog.load_vocabulary(_keyword_file(tmp_path))  # noqa: SLF001
+    window._keyword_rules_dialog._strict_box.setChecked(True)  # noqa: SLF001
     monkeypatch.setattr(QThread, "start", lambda *_a, **_k: None)
 
     window._run_generation([window._items[str(photo)]])  # noqa: SLF001
@@ -4823,11 +4823,11 @@ def test_loading_an_unusable_vocabulary_says_why(
     empty = tmp_path / "empty.txt"
     empty.write_text("# just a comment\n", encoding="utf-8")
 
-    window._load_vocabulary(empty)  # noqa: SLF001
+    window._keyword_rules_dialog.load_vocabulary(empty)  # noqa: SLF001
 
-    assert window._vocabulary is None  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary is None  # noqa: SLF001
     assert "no keywords" in window._status.text()  # noqa: SLF001
-    assert "no keywords" in window._vocabulary_label.text()  # noqa: SLF001
+    assert "no keywords" in window._keyword_rules_dialog._vocabulary_label.text()  # noqa: SLF001
 
 
 def test_clearing_the_vocabulary_writes_keywords_as_they_come(
@@ -4835,14 +4835,28 @@ def test_clearing_the_vocabulary_writes_keywords_as_they_come(
     tmp_path: Path,
 ) -> None:
     """Clearing is how you get the model's own wording back."""
-    window._load_vocabulary(_keyword_file(tmp_path))  # noqa: SLF001
-    assert window._vocabulary is not None  # noqa: SLF001
+    window._keyword_rules_dialog.load_vocabulary(_keyword_file(tmp_path))  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary is not None  # noqa: SLF001
 
-    window._load_vocabulary(None)  # noqa: SLF001
+    window._keyword_rules_dialog.load_vocabulary(None)  # noqa: SLF001
 
-    assert window._vocabulary_path is None  # noqa: SLF001
-    assert window._vocabulary_field.text() == ""  # noqa: SLF001
-    assert "No vocabulary" in window._vocabulary_label.text()  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary_path is None  # noqa: SLF001
+    assert window._keyword_rules_dialog._vocabulary_field.text() == ""  # noqa: SLF001
+    assert "No vocabulary" in window._keyword_rules_dialog._vocabulary_label.text()  # noqa: SLF001
+
+
+def test_keyword_rules_build_button_opens_the_vocabulary_builder(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vocabulary can be built from where it is chosen, without a trip through the Tools menu."""
+    opened: list[bool] = []
+    monkeypatch.setattr(window._builder_dialog, "exec", lambda: opened.append(True))  # noqa: SLF001
+    buttons = window._keyword_rules_dialog.findChildren(QPushButton)  # noqa: SLF001
+
+    next(button for button in buttons if button.text() == "Build...").click()
+
+    assert opened == [True]
 
 
 def test_generation_summary_reports_what_the_vocabulary_changed(
@@ -4865,9 +4879,9 @@ def test_keyword_rules_persist_to_the_config_file(
 ) -> None:
     """Save Settings as Defaults carries the rules over to CLI runs too."""
     listing = _keyword_file(tmp_path)
-    window._load_vocabulary(listing)  # noqa: SLF001
-    window._strict_box.setChecked(True)  # noqa: SLF001
-    window._session_gap_box.setValue(45.0)  # noqa: SLF001
+    window._keyword_rules_dialog.load_vocabulary(listing)  # noqa: SLF001
+    window._keyword_rules_dialog._strict_box.setChecked(True)  # noqa: SLF001
+    window._keyword_rules_dialog._session_gap_box.setValue(45.0)  # noqa: SLF001
 
     values = window._current_config_values()  # noqa: SLF001
 
@@ -4899,7 +4913,7 @@ def test_harmonizing_makes_a_shoot_agree_with_itself(
     window._items[str(a)].keywords = ["Osprey"]  # noqa: SLF001
     window._items[str(b)].keywords = ["Ospreys"]  # noqa: SLF001
     monkeypatch.setattr("photo_tagger.sessions.read_capture_times", lambda *_a, **_k: {})
-    window._session_gap = 60.0  # noqa: SLF001
+    window._keyword_rules_dialog._session_gap_box.setValue(60.0)  # noqa: SLF001
 
     assert window._start_harmonize() is True  # noqa: SLF001
     _drain_harmonize(window)
@@ -4910,7 +4924,7 @@ def test_harmonizing_makes_a_shoot_agree_with_itself(
 
 def test_harmonize_now_needs_a_session_gap(window: gui.MainWindow) -> None:
     """Without a gap there are no shoots to harmonize, so the window says what to set."""
-    window._session_gap = 0.0  # noqa: SLF001
+    window._keyword_rules_dialog._session_gap_box.setValue(0.0)  # noqa: SLF001
 
     window._harmonize_now()  # noqa: SLF001
 
@@ -4920,7 +4934,7 @@ def test_harmonize_now_needs_a_session_gap(window: gui.MainWindow) -> None:
 
 def test_harmonizing_with_nothing_generated_says_so(window: gui.MainWindow) -> None:
     """Harmonization works on proposals, so an empty list is a nudge rather than a no-op."""
-    window._session_gap = 60.0  # noqa: SLF001
+    window._keyword_rules_dialog._session_gap_box.setValue(60.0)  # noqa: SLF001
 
     assert window._start_harmonize() is False  # noqa: SLF001
     assert "generate some photos first" in window._status.text()  # noqa: SLF001
@@ -4936,7 +4950,7 @@ def test_a_finished_run_harmonizes_when_a_gap_is_set(
     window._items[str(a)].keywords = ["Sunset"]  # noqa: SLF001
     window._items[str(b)].keywords = ["Sunsets"]  # noqa: SLF001
     monkeypatch.setattr("photo_tagger.sessions.read_capture_times", lambda *_a, **_k: {})
-    window._session_gap = 60.0  # noqa: SLF001
+    window._keyword_rules_dialog._session_gap_box.setValue(60.0)  # noqa: SLF001
 
     window._after_generation()  # noqa: SLF001
     _drain_harmonize(window)
@@ -5814,9 +5828,9 @@ def test_a_finished_build_offers_to_use_the_file(
     # The window fixture answers every question dialog with Yes.
     window._on_build_done("Wrote 2 keyword(s) to keywords.txt, dropped 0.", 2)  # noqa: SLF001
 
-    assert window._vocabulary_path == listing  # noqa: SLF001
-    assert window._vocabulary is not None  # noqa: SLF001
-    assert window._vocabulary.match("ospreys") == "Osprey"  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary_path == listing  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary is not None  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary.match("ospreys") == "Osprey"  # noqa: SLF001
 
 
 def test_changing_the_metadata_language_reloads_the_vocabulary(
@@ -5831,14 +5845,14 @@ def test_changing_the_metadata_language_reloads_the_vocabulary(
     config = tmp_path / "config.toml"
     config.write_text("", encoding="utf-8")
     monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(config))
-    window._load_vocabulary(_keyword_file(tmp_path, "Landschaft\n"))  # noqa: SLF001
-    assert window._vocabulary is not None  # noqa: SLF001
-    assert window._vocabulary.fold_plurals is True  # noqa: SLF001
+    window._keyword_rules_dialog.load_vocabulary(_keyword_file(tmp_path, "Landschaft\n"))  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary is not None  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary.fold_plurals is True  # noqa: SLF001
 
     window._set_output_language("German")  # noqa: SLF001
 
-    assert window._vocabulary is not None  # noqa: SLF001
-    assert window._vocabulary.fold_plurals is False  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary is not None  # noqa: SLF001
+    assert window._keyword_rules_dialog.vocabulary.fold_plurals is False  # noqa: SLF001
 
 
 def test_undo_waits_for_a_run_in_progress(
@@ -5866,7 +5880,7 @@ def test_saving_writes_the_vocabulary_spelling_verbatim(
     photo = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": photo})
-    window._load_vocabulary(_keyword_file(tmp_path, "gegenlicht\n"))  # noqa: SLF001
+    window._keyword_rules_dialog.load_vocabulary(_keyword_file(tmp_path, "gegenlicht\n"))  # noqa: SLF001
     captured = _capture_write(monkeypatch)
     _select(window, window._leaf_for(photo))  # noqa: SLF001
     window._keywords.setPlainText("gegenlicht")  # noqa: SLF001

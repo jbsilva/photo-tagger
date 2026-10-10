@@ -112,6 +112,7 @@ from photo_tagger.gui.common import (
     STATUS_RANK_ROLE,
 )
 from photo_tagger.gui.copyright import CopyrightDialog
+from photo_tagger.gui.keyword_rules import KeywordRulesDialog
 from photo_tagger.gui.pacing import PacingDialog
 from photo_tagger.gui.save_options import SaveOptionsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
@@ -219,7 +220,6 @@ from photo_tagger.gui_state import (
     keyword_lines,
     keywords_to_text,
     load_sidecar_overrides,
-    load_vocabulary_file,
     location_crumb,
     mark_mixed_script,
     matches_extension,
@@ -258,7 +258,6 @@ from photo_tagger.gui_state import (
     tooltip,
     undo_details_text,
     undo_summary,
-    vocabulary_status,
     vocabulary_summary,
     watch_status_text,
     wrap_tooltip,
@@ -310,7 +309,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from photo_tagger.undo import UndoJournal, UndoResult, WriteRecord
-    from photo_tagger.vocabulary import Vocabulary
 
 
 # The on-screen preview in the detail pane. Not what the model sees: that is
@@ -575,7 +573,6 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._refresh_save_tooltips()
         self._show_empty()
-        self._load_vocabulary(self._vocabulary_path, announce=False)
         self._watch_activity()
 
     def _build_dialogs(self) -> None:
@@ -666,15 +663,10 @@ class MainWindow(QMainWindow):
         """
         Seed the settings that decide which keywords a run ends up writing.
 
-        The vocabulary file itself is read at the end of construction (it is disk IO, and a failure
-        needs the status bar to report it); this only records what was configured.
+        The vocabulary and the session gap live in the Keyword Rules dialog; this records the rest
+        of what was configured.
         """
         output = self._defaults.output
-        self._vocabulary_path: Path | None = output.vocabulary
-        self._vocabulary: Vocabulary | None = None
-        self._vocabulary_error = ""
-        self._vocabulary_strict = output.vocabulary_strict
-        self._session_gap = output.session_gap_minutes
         self._repair_language = self._defaults.inference.repair_language
         self._sidecar_overrides, overrides_error = load_sidecar_overrides(output.sidecar_overrides)
         if overrides_error:
@@ -1124,10 +1116,11 @@ class MainWindow(QMainWindow):
             # is the whole point of the dialog; letting it out of a Qt slot crashed the window.
             QMessageBox.warning(self, _(CONFIG_SAVE_ERROR_TITLE), str(exc))
             return
-        if self._vocabulary_path is not None:
+        rules = self._keyword_rules_dialog
+        if rules.vocabulary_path is not None:
             # The language decides whether plurals fold onto their singular, and that shapes the
             # vocabulary's lookup index, so it has to be built again for the new one.
-            self._load_vocabulary(self._vocabulary_path, announce=False)
+            rules.load_vocabulary(rules.vocabulary_path, announce=False)
         self._status.setText(
             _("Metadata language set to {language} for the next generation.").format(
                 language=normalized,
@@ -1181,9 +1174,9 @@ class MainWindow(QMainWindow):
             recursive=self._recursive.isChecked(),
             **self._save_options_menu.config_values(),
             telemetry_enabled=self._telemetry_enabled,
-            vocabulary=self._vocabulary_path,
-            vocabulary_strict=self._vocabulary_strict,
-            session_gap_minutes=self._session_gap,
+            vocabulary=self._keyword_rules_dialog.vocabulary_path,
+            vocabulary_strict=self._keyword_rules_dialog.strict,
+            session_gap_minutes=self._keyword_rules_dialog.session_gap,
             undo_log=self._undo_log_action.isChecked(),
             notify=self._notify_action.isChecked(),
             notify_sound=self._notify_sound_action.isChecked(),
@@ -3649,7 +3642,8 @@ class MainWindow(QMainWindow):
         lower case. A catalog that writes "gegenlicht" means it, so its spellings are handed over
         untouched; without this the window would write the near-duplicate the vocabulary prevents.
         """
-        return self._vocabulary.exact if self._vocabulary else None
+        vocabulary = self._keyword_rules_dialog.vocabulary
+        return vocabulary.exact if vocabulary else None
 
     def _write_fields_chosen(self) -> bool:
         """Report whether a save would write anything: a picked field, or the copyright block."""
@@ -3983,8 +3977,8 @@ class MainWindow(QMainWindow):
             options=GenerateOptions(
                 output_language=self._output_language,
                 hints={str(item.path): item.hint for item in items if item.hint},
-                vocabulary=self._vocabulary,
-                vocabulary_strict=self._vocabulary_strict,
+                vocabulary=self._keyword_rules_dialog.vocabulary,
+                vocabulary_strict=self._keyword_rules_dialog.strict,
                 repair_language=self._repair_language,
                 pacing=self._pacing_dialog.plan,
                 jpeg_dimensions=self._model_image_size,
@@ -4362,121 +4356,24 @@ class MainWindow(QMainWindow):
 
     # --- keyword rules: the vocabulary and the session gap -----------------------------------
 
-    def _build_keyword_rules_dialog(self) -> QDialog:
-        """Build the dialog holding the two settings that decide which keywords get written."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle(_("Keyword rules"))
-        dialog.setMinimumWidth(620)
-        box = QVBoxLayout(dialog)
-        box.addWidget(self._build_vocabulary_group())
-        box.addWidget(self._build_session_group())
-        note = QLabel(
-            _(
-                "Kept for this session. Settings > Save Settings as Defaults writes them to the "
-                "config file, which CLI runs read too.",
-            ),
+    def _build_keyword_rules_dialog(self) -> KeywordRulesDialog:
+        """Build the Keyword Rules dialog and put the configured vocabulary file in force."""
+        dialog = KeywordRulesDialog(
+            self,
+            self._defaults.output,
+            output_language=lambda: self._output_language,
         )
-        note.setObjectName("hint")
-        note.setWordWrap(True)
-        box.addWidget(note)
-        close = QPushButton(_(CLOSE_LABEL))
-        close.setDefault(True)
-        close.clicked.connect(dialog.accept)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(close)
-        box.addLayout(buttons)
+        dialog.status.connect(self._status.setText)
+        dialog.used.connect(self._count)
+        dialog.build_requested.connect(self._show_vocabulary_builder)
+        # Read once the status bar exists: it is disk IO, and a refused file needs reporting.
+        dialog.load_vocabulary(dialog.vocabulary_path, announce=False)
         return dialog
-
-    def _build_vocabulary_group(self) -> QGroupBox:
-        """Build the controlled-vocabulary half of the Keyword rules dialog."""
-        group = QGroupBox(_("Controlled vocabulary"))
-        layout = QVBoxLayout(group)
-        blurb = QLabel(
-            _(
-                "Restrict generated keywords to the terms in a keyword file: every match is "
-                "rewritten to the file's own spelling and hierarchy, so a run cannot fill your "
-                "catalog with near-duplicates of keywords you already have.",
-            ),
-        )
-        blurb.setWordWrap(True)
-        layout.addWidget(blurb)
-
-        self._vocabulary_field = QLineEdit(str(self._vocabulary_path or ""))
-        self._vocabulary_field.setReadOnly(True)
-        self._vocabulary_field.setPlaceholderText(_("(no vocabulary file)"))
-        choose = QPushButton(_(CHOOSE_LABEL))
-        choose.clicked.connect(self._choose_vocabulary)
-        clear = QPushButton(_("Clear"))
-        clear.clicked.connect(lambda: self._load_vocabulary(None))
-        build = QPushButton(_("Build..."))
-        build.setToolTip(tooltip("Write one from the keywords your own photos already carry."))
-        build.clicked.connect(self._show_vocabulary_builder)
-        row = QHBoxLayout()
-        row.addWidget(self._vocabulary_field, stretch=1)
-        row.addWidget(choose)
-        row.addWidget(clear)
-        row.addWidget(build)
-        layout.addLayout(row)
-
-        self._vocabulary_label = QLabel(vocabulary_status(None, None))
-        self._vocabulary_label.setObjectName("hint")
-        self._vocabulary_label.setWordWrap(True)
-        layout.addWidget(self._vocabulary_label)
-
-        self._strict_box = QCheckBox(_("Write only keywords the vocabulary covers"))
-        self._strict_box.setChecked(self._vocabulary_strict)
-        self._strict_box.setToolTip(
-            tooltip(
-                "Drop generated keywords the vocabulary does not have instead of writing them as "
-                "they came. The status bar names what was dropped, so the vocabulary can grow on "
-                "purpose rather than by accident.",
-            ),
-        )
-        self._strict_box.toggled.connect(self._on_strict_toggled)
-        layout.addWidget(self._strict_box)
-        return group
-
-    def _build_session_group(self) -> QGroupBox:
-        """Build the shoot-harmonization half of the Keyword rules dialog."""
-        group = QGroupBox(_("Shoot harmonization"))
-        layout = QVBoxLayout(group)
-        blurb = QLabel(
-            _(
-                "Group photos into shoots separated by this many idle minutes (by capture time, "
-                "falling back to the file date) and make each shoot's keywords agree with itself: "
-                "the spelling and the hierarchy most of the shoot used win for all of it. It runs "
-                "over the proposals after each generation, so you still review before saving.",
-            ),
-        )
-        blurb.setWordWrap(True)
-        layout.addWidget(blurb)
-
-        self._session_gap_box = QDoubleSpinBox()
-        self._session_gap_box.setRange(0.0, 1440.0)
-        self._session_gap_box.setDecimals(0)
-        self._session_gap_box.setSingleStep(15.0)
-        self._session_gap_box.setValue(self._session_gap)
-        self._session_gap_box.setSuffix(_(" minutes"))
-        self._session_gap_box.setSpecialValueText(_("off"))
-        self._session_gap_box.setToolTip(
-            tooltip("Zero treats every photo on its own, which is the default."),
-        )
-        self._session_gap_box.valueChanged.connect(self._on_session_gap_changed)
-        row = QHBoxLayout()
-        row.addWidget(QLabel(_("Split shoots after")))
-        row.addWidget(self._session_gap_box)
-        row.addStretch(1)
-        layout.addLayout(row)
-        return group
 
     def _show_keyword_rules(self) -> None:
         """Open the Keyword rules dialog on the values currently in force."""
         self._count("keyword_rules")
-        self._vocabulary_field.setText(str(self._vocabulary_path or ""))
-        self._strict_box.setChecked(self._vocabulary_strict)
-        self._session_gap_box.setValue(self._session_gap)
-        self._refresh_vocabulary_label()
+        self._keyword_rules_dialog.refresh()
         self._keyword_rules_dialog.exec()
 
     # --- pacing and copyright: the settings every run and every save follow -------------------
@@ -4523,68 +4420,12 @@ class MainWindow(QMainWindow):
         self._copyright_dialog.refresh()
         self._copyright_dialog.exec()
 
-    def _choose_vocabulary(self) -> None:
-        """Pick a keyword file and put it in force for the next generation."""
-        self._count("choose_vocabulary")
-        chosen, _filter = QFileDialog.getOpenFileName(
-            self._keyword_rules_dialog,
-            _("Choose a vocabulary file"),
-            str(self._vocabulary_path or ""),
-            _("Keyword files (*.txt *.csv);;All files (*)"),
-        )
-        if chosen:
-            self._load_vocabulary(Path(chosen))
-
-    def _load_vocabulary(self, path: Path | None, *, announce: bool = True) -> None:
-        """
-        Put *path* in force as the controlled vocabulary, or clear it when None.
-
-        A file that cannot be used is kept as the chosen path but not as a vocabulary, so the dialog
-        can show which file was refused and why instead of quietly writing without one.
-        """
-        self._vocabulary_path = path
-        self._vocabulary = None
-        self._vocabulary_error = ""
-        if path is not None:
-            self._vocabulary, self._vocabulary_error = load_vocabulary_file(
-                path,
-                output_language=self._output_language,
-            )
-            if self._vocabulary is None:
-                logger.warning(
-                    "gui_vocabulary_unusable",
-                    file=str(path),
-                    error=self._vocabulary_error,
-                )
-        self._vocabulary_field.setText(str(path or ""))
-        self._refresh_vocabulary_label()
-        if announce or self._vocabulary_error:
-            self._status.setText(
-                vocabulary_status(self._vocabulary_path, self._vocabulary, self._vocabulary_error),
-            )
-
-    def _refresh_vocabulary_label(self) -> None:
-        """Keep the dialog's status line describing the vocabulary actually in force."""
-        self._vocabulary_label.setText(
-            vocabulary_status(self._vocabulary_path, self._vocabulary, self._vocabulary_error),
-        )
-
-    def _on_strict_toggled(self, strict: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
-        """Remember whether keywords outside the vocabulary are dropped."""
-        self._count("vocabulary_strict")
-        self._vocabulary_strict = strict
-
-    def _on_session_gap_changed(self, minutes: float) -> None:
-        """Remember the idle gap that separates one shoot from the next."""
-        self._count("session_gap")
-        self._session_gap = minutes
-
     # --- shoot harmonization -----------------------------------------------------------------
 
     def _harmonize_now(self) -> None:
         """Menu action: harmonize the proposals on hand, explaining when there is nothing to do."""
         self._count("harmonize_now")
-        if self._session_gap <= 0:
+        if self._keyword_rules_dialog.session_gap <= 0:
             self._status.setText(_("Set a session gap first: Settings > Keyword Rules."))
             return
         self._start_harmonize()
@@ -4596,7 +4437,8 @@ class MainWindow(QMainWindow):
         Grouping photos into shoots reads every capture time through exiftool, so it does not run in
         the click handler. Callers use the return value to know whether to wait for it.
         """
-        if self._harmonize_thread is not None or self._busy() or self._session_gap <= 0:
+        gap = self._keyword_rules_dialog.session_gap
+        if self._harmonize_thread is not None or self._busy() or gap <= 0:
             return False
         self._commit_current()
         keywords = {
@@ -4609,7 +4451,7 @@ class MainWindow(QMainWindow):
         self._harmonize_thread = QThread(self)
         self._harmonize_worker = HarmonizeWorker(
             keywords,
-            gap_minutes=self._session_gap,
+            gap_minutes=gap,
             output_language=self._output_language,
         )
         self._harmonize_worker.moveToThread(self._harmonize_thread)
@@ -4949,7 +4791,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self._load_vocabulary(self._built_vocabulary)
+            self._keyword_rules_dialog.load_vocabulary(self._built_vocabulary)
 
     def _on_build_failed(self, message: str) -> None:
         """Report a build that produced nothing, in the dialog and the status bar."""
@@ -5617,6 +5459,7 @@ class MainWindow(QMainWindow):
         backend = get_backend(self._provider_name())
         typed = self._url.text().strip()
         watching = self._watch_settings or WatchSettings()
+        vocabulary = self._keyword_rules_dialog.vocabulary
         return window_settings(
             self._current_config_values(),
             WindowFacts(
@@ -5625,7 +5468,7 @@ class MainWindow(QMainWindow):
                 api_key=bool(backend.resolve_api_key(self._api_key_value())),
                 cache=self._cache_action.isChecked(),
                 jpeg_dimensions=self._model_image_size,
-                vocabulary_terms=len(self._vocabulary.terms) if self._vocabulary else 0,
+                vocabulary_terms=len(vocabulary.terms) if vocabulary else 0,
                 copyright=self._copyright_dialog.fields,
                 watch_interval=watching.interval,
                 watch_settle=watching.settle,
