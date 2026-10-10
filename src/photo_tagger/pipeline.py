@@ -973,6 +973,31 @@ def _notify_success(ctx: _BatchContext, image_file: Path) -> None:
         logger.exception("on_success_callback_failed", file=image_file.name, error=str(exc))
 
 
+@dataclass(slots=True)
+class _PassTally:
+    """The photos one pass finished, so the serial and the threaded pass count them the same way."""
+
+    successes: int = 0
+    failed: list[Path] = field(default_factory=list)
+
+    def settle(self, ctx: _BatchContext, image_file: Path, *, ok: bool, retry: bool) -> None:
+        """Count one photo, log a failure, and tick the progress bar when the photo is done."""
+        if ok:
+            self.successes += 1
+            _notify_success(ctx, image_file)
+        else:
+            if retry:
+                logger.error("file_failed_after_retry", file=image_file.name)
+            else:
+                logger.warning("file_queued_for_retry", file=image_file.name)
+            self.failed.append(image_file)
+        # A first-pass failure waits for the retry pass, so it must not tick yet: the bar would
+        # overshoot when the retry ticks it again. A session's photos tick later too, because the
+        # flush writes them and reports each one with the result of its write.
+        if ctx.progress is not None and (ok or retry) and ctx.pending is None:
+            ctx.progress(image_file, ok)
+
+
 def _run_pass_serial(
     image_files: list[Path],
     ctx: _BatchContext,
@@ -988,8 +1013,7 @@ def _run_pass_serial(
     that were not yet attempted land in the failed list so they show up in the summary too.
     """
     total = len(image_files)
-    successes = 0
-    failed: list[Path] = []
+    tally = _PassTally()
     for idx, image_file in enumerate(image_files, start=1):
         try:
             ok = execute_process(
@@ -1001,26 +1025,10 @@ def _run_pass_serial(
             )
         except KeyboardInterrupt:
             logger.warning("batch_interrupted_by_user", remaining=total - idx + 1)
-            failed.extend(image_files[idx - 1 :])
-            return successes, failed, True
-        if ok:
-            successes += 1
-            _notify_success(ctx, image_file)
-        elif retry:
-            logger.error("file_failed_after_retry", file=image_file.name)
-            failed.append(image_file)
-        else:
-            logger.warning("file_queued_for_retry", file=image_file.name)
-            failed.append(image_file)
-        # Advance the bar only when we're truly done with this file: a success
-        # at any point, or any outcome in the retry pass. A first-pass failure
-        # is still pending retry, so it must not tick yet (otherwise the bar
-        # would overshoot once the retry pass also ticks).
-        # A session's photos are not finished when they analyze: the flush writes them and
-        # reports each one with the result of its write.
-        if ctx.progress is not None and (ok or retry) and ctx.pending is None:
-            ctx.progress(image_file, ok)
-    return successes, failed, False
+            tally.failed.extend(image_files[idx - 1 :])
+            return tally.successes, tally.failed, True
+        tally.settle(ctx, image_file, ok=ok, retry=retry)
+    return tally.successes, tally.failed, False
 
 
 def _run_pass_concurrent(
@@ -1042,8 +1050,7 @@ def _run_pass_concurrent(
     interrupted from the outside, so this is a best-effort quick stop rather than an instant abort.
     """
     total = len(image_files)
-    successes = 0
-    failed: list[Path] = []
+    tally = _PassTally()
     interrupted = False
     indexed = list(enumerate(image_files, start=1))
 
@@ -1077,20 +1084,7 @@ def _run_pass_concurrent(
                         error=str(exc),
                     )
                     ok = False
-
-                if ok:
-                    successes += 1
-                    _notify_success(ctx, image_file)
-                elif retry:
-                    logger.error("file_failed_after_retry", file=image_file.name)
-                    failed.append(image_file)
-                else:
-                    logger.warning("file_queued_for_retry", file=image_file.name)
-                    failed.append(image_file)
-                # See _run_pass_serial: tick only when this file is finally done.
-                # Silent during a session's analysis; the flush reports those photos.
-                if ctx.progress is not None and (ok or retry) and ctx.pending is None:
-                    ctx.progress(image_file, ok)
+                tally.settle(ctx, image_file, ok=ok, retry=retry)
         except KeyboardInterrupt:
             interrupted = True
             # Workers asleep in a pacing rest would otherwise hold the drain below for minutes.
@@ -1102,10 +1096,8 @@ def _run_pass_concurrent(
             # Images the interrupt caught before submission are pending too.
             submitted = set(future_to_image.values())
             never_submitted = [img for _, img in indexed if img not in submitted]
-            successes += drained_ok
-            failed.extend(drained_failed)
-            failed.extend(cancelled)
-            failed.extend(never_submitted)
+            tally.successes += drained_ok
+            tally.failed.extend([*drained_failed, *cancelled, *never_submitted])
             logger.warning(
                 "batch_interrupted_by_user",
                 pending=len(cancelled) + len(never_submitted),
@@ -1113,7 +1105,7 @@ def _run_pass_concurrent(
             )
     finally:
         pool.shutdown(wait=True)
-    return successes, failed, interrupted
+    return tally.successes, tally.failed, interrupted
 
 
 def _drain_after_interrupt(
