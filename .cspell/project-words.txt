@@ -22,6 +22,7 @@ Casefolded
 CGNAT
 charliermarsh
 chave
+chdir
 CHEVRONLIGHT
 Cim
 CIPA
@@ -251,6 +252,7 @@ tamasfe
 tasklist
 testpypi
 testsdeselect
+tfstate
 THAANA
 timespec
 titlecase
@@ -270,6 +272,7 @@ usefixtures
 venv
 viewmode
 viewports
+weur
 WinRT
 workpath
 xdist

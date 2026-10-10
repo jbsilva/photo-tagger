@@ -14,15 +14,14 @@ compatibility_date = "2025-06-01"
 binding = "TELEMETRY"
 dataset = "photo_tagger_telemetry"
 
-# Long-term storage: AE keeps three months, D1 keeps everything. The Worker writes to D1 only while
-# this binding exists. To turn it on (see README.md, "Keep every event"): run
-# `wrangler d1 create photo-tagger-telemetry`, uncomment the block and paste the id it printed, run
-# `wrangler d1 migrations apply photo-tagger-telemetry --remote`, then deploy.
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "photo-tagger-telemetry"
-# database_id = "<paste the id wrangler printed>"
-# migrations_dir = "migrations"
+# Long-term storage: AE keeps three months, D1 keeps everything. OpenTofu in infra/ creates the
+# database (`tofu output d1_database_id` prints this id), and CI applies the migrations in
+# migrations/ before each deploy.
+[[d1_databases]]
+binding = "DB"
+database_name = "photo-tagger-telemetry"
+database_id = "fb3c2ad8-1808-4e07-bb8e-ea5b936ad7d8"
+migrations_dir = "migrations"
 
 # Serve the collector from the project's own subdomain instead of *.workers.dev. tagger.photo must
 # already exist as a zone on the same Cloudflare account; Wrangler then provisions the DNS record

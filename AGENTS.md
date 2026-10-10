@@ -43,6 +43,9 @@ module owns one slice of that pipeline:
   tracking for telemetry (runs, sessions, busy and idle time, edits before a save). The GUI is
   additive: no pipeline code is Qt-aware. PySide6 lives behind the `[gui]` extra and is imported
   lazily.
+- `telemetry/` (outside the package): the collector. It holds the Cloudflare Worker, its D1
+  migrations, the marimo dashboard, and the OpenTofu configuration for the Cloudflare resources in
+  `telemetry/infra/`. See `telemetry/README.md`.
 
 The version is single-sourced: `photo_tagger.__version__` reads installed distribution metadata, so
 `pyproject.toml`'s `[project].version` is the only code-side source. Do not reintroduce a hardcoded

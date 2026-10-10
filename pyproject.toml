@@ -184,6 +184,22 @@ help = "Open the telemetry dashboard on made-up events"
 cmd = "uvx marimo run --sandbox telemetry/dashboard.py"
 env = { PHOTO_TAGGER_DASHBOARD_DEMO = "1" }
 
+[tool.poe.groups.telemetry.tasks.infra-plan]
+help = "Show what OpenTofu would change in the collector's Cloudflare resources"
+sequence = [
+    { cmd = "tofu -chdir=telemetry/infra init -input=false" },
+    { cmd = "tofu -chdir=telemetry/infra plan -input=false" },
+]
+env = { TF_VAR_account_id = "${CLOUDFLARE_ACCOUNT_ID}" }
+
+[tool.poe.groups.telemetry.tasks.infra-apply]
+help = "Apply those OpenTofu changes (asks before it changes anything)"
+sequence = [
+    { cmd = "tofu -chdir=telemetry/infra init -input=false" },
+    { cmd = "tofu -chdir=telemetry/infra apply" },
+]
+env = { TF_VAR_account_id = "${CLOUDFLARE_ACCOUNT_ID}" }
+
 [tool.poe.groups.telemetry.tasks.test-worker]
 help = "Test the telemetry collector (needs Node)"
 cmd = "node --experimental-detect-module --test telemetry/worker.test.mjs"

@@ -39,3 +39,13 @@ site/
 
 # marimo notebook session cache (written next to telemetry/dashboard.py on run)
 __marimo__/
+
+# OpenTofu for the telemetry collector: provider downloads and the local state. The state is
+# encrypted, but it holds the values of the tokens it creates, so it stays out of git as well. The
+# lock file (.terraform.lock.hcl) is committed.
+telemetry/infra/.terraform/
+telemetry/infra/*.tfstate
+telemetry/infra/*.tfstate.*
+telemetry/infra/crash.log
+# Wrangler's local cache, written next to wrangler.toml by any wrangler command.
+telemetry/.wrangler/

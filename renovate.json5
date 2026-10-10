@@ -69,6 +69,14 @@
       // The slug is both what github-tags queries and what the packageRules below match on.
       datasourceTemplate: "github-tags",
     },
+    {
+      customType: "regex",
+      description: "The wrangler version the telemetry deploy pins",
+      managerFilePatterns: ["/(^|/)\\.github/workflows/deploy-telemetry\\.yml$/"],
+      matchStrings: ["wranglerVersion:\\s*[\"'](?<currentValue>[^\"']+)[\"']"],
+      depNameTemplate: "wrangler",
+      datasourceTemplate: "npm",
+    },
   ],
 
   // PR titles read "build(deps): ...".
@@ -77,6 +85,22 @@
   semanticCommitScope: "deps",
 
   packageRules: [
+    // The collector's infrastructure (telemetry/infra) runs on OpenTofu, and its lock file names
+    // the OpenTofu registry. Renovate assumes the Terraform registry unless told otherwise.
+    {
+      description: "Look up providers and modules in the OpenTofu registry",
+      matchDatasources: ["terraform-provider", "terraform-module"],
+      registryUrls: ["https://registry.opentofu.org"],
+    },
+    // Renovate reads required_version against the Terraform releases, and OpenTofu's version
+    // numbers are its own (Terraform 1.16 is no OpenTofu release), so it would raise the floor to a
+    // version tofu refuses. The floor is the oldest OpenTofu with the encryption the state needs.
+    {
+      description: "Do not bump the OpenTofu required_version",
+      matchManagers: ["terraform"],
+      matchDepTypes: ["required_version"],
+      enabled: false,
+    },
     // requires-python is a deliberate minimum-supported-version decision, not a routine dependency
     // floor: bumping it to the latest patch (e.g. >=3.14,<4 -> >=3.14.7,<4) would needlessly narrow
     // who can install the package. "replace" is what holds it back: the global "bump" strategy
