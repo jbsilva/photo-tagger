@@ -1815,9 +1815,89 @@ def test_capture_year_falls_back_to_today_for_a_file_it_cannot_stat(tmp_path: Pa
     assert capture_year(tmp_path / "ghost.jpg", None) == datetime.now(tz=UTC).astimezone().year
 
 
+def test_fit_bytes_never_cuts_inside_a_character() -> None:
+    """A cut that lands inside a multi-byte character drops the whole character."""
+    from photo_tagger.metadata import _fit_bytes  # noqa: PLC0415
+
+    assert _fit_bytes("a" * 31 + "Ł", 32) == "a" * 31
+    assert _fit_bytes("short", 32) == "short"
+
+
+def test_fit_iptc_cuts_only_iptc_values_with_a_known_limit() -> None:
+    """XMP has no such limit, and an IPTC dataset without a known one is left to ExifTool."""
+    from photo_tagger.metadata import _fit_iptc  # noqa: PLC0415
+
+    long = "x" * 100
+    fitted = _fit_iptc(
+        {"IPTC:By-line": long, "IPTC:Keywords": [long], "XMP-dc:Creator": long, "IPTC:Foo": long},
+    )
+    assert fitted == {
+        "IPTC:By-line": "x" * 32,
+        "IPTC:Keywords": ["x" * 64],
+        "XMP-dc:Creator": long,
+        "IPTC:Foo": long,
+    }
+
+
+def test_iptc_recoding_only_when_a_new_value_needs_utf8() -> None:
+    """ASCII values keep the block as it is; a non-ASCII one re-encodes the values already there."""
+    from photo_tagger.metadata import _iptc_recoding  # noqa: PLC0415
+
+    current = {"IPTC:City": "Zürich", "IPTC:ApplicationRecordVersion": 4, "XMP:Title": "t"}
+    assert _iptc_recoding({"IPTC:By-line": "Ada"}, current) == {}
+    assert _iptc_recoding({"IPTC:By-line": "Łukasz"}, current) == {
+        "IPTC:CodedCharacterSet": "UTF8",
+        "IPTC:City": "Zürich",
+    }
+    utf8 = {**current, "IPTC:CodedCharacterSet": "\x1b%G"}
+    assert _iptc_recoding({"IPTC:By-line": "Łukasz"}, utf8) == {}
+
+
+def test_writable_in_drops_the_groups_a_file_type_cannot_hold() -> None:
+    """IPTC goes nowhere in a WebP or a CR3, so it is not sent there at all."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from photo_tagger.metadata import _writable_in  # noqa: PLC0415
+
+    tags = {"IPTC:Keywords": ["a"], "XMP-dc:Subject": ["a"], "EXIF:Artist": "Ada"}
+    assert _writable_in(Path("x.webp"), tags) == {"XMP-dc:Subject": ["a"], "EXIF:Artist": "Ada"}
+    assert _writable_in(Path("x.CR3"), tags) == {"XMP-dc:Subject": ["a"], "EXIF:Artist": "Ada"}
+    assert _writable_in(Path("x.jpg"), tags) == tags
+
+
 def test_changed_payload_matches_tag_names_whatever_their_case() -> None:
     """``xmp-dc:rights`` reads back as XMP:Rights, so the same value is not written again."""
     from photo_tagger.metadata import _changed_payload  # noqa: PLC0415
 
     payload: dict[str, str | list[str]] = {"xmp-dc:rights": "R"}
     assert _changed_payload(payload, {"XMP:Rights": "R"}, use_sidecar=False) == {}
+
+
+def test_tag_family_knows_multi_group_and_family_one_names() -> None:
+    """EXIF:IFD0:Copyright and IFD0:Copyright are EXIF, so a GIF drops them before comparing."""
+    from photo_tagger.metadata import _tag_family  # noqa: PLC0415
+
+    assert _tag_family("EXIF:IFD0:Copyright") == "EXIF"
+    assert _tag_family("IFD0:Copyright") == "EXIF"
+    assert _tag_family("XMP-dc:Title") == "XMP"
+    assert _tag_family("Artist") == ""
+
+
+def test_iptc_recoding_is_case_insensitive_and_skips_an_unread_block() -> None:
+    """A --set in lower case replaces the value, and a failed read re-encodes nothing."""
+    from photo_tagger.metadata import _iptc_recoding  # noqa: PLC0415
+
+    current = {"IPTC:City": "Zürich", "IPTC:Headline": "(Binary data 50 bytes, use -b option)"}
+    recoded = _iptc_recoding({"iptc:city": "Łódź"}, current)
+    assert "IPTC:City" not in recoded
+    assert "IPTC:Headline" not in recoded
+    assert _iptc_recoding({"IPTC:City": "Łódź"}, None) == {}
+
+
+def test_a_set_of_processing_software_wins_over_the_stamp_in_any_spelling() -> None:
+    """A --set of the tag, with or without a group, is the user's choice and is not overwritten."""
+    from photo_tagger.metadata import _software_stamp  # noqa: PLC0415
+
+    for tag in ("EXIF:ProcessingSoftware", "IFD0:processingsoftware", "ProcessingSoftware"):
+        assert _software_stamp({tag: "MyTool"}, use_sidecar=False) == {}
+    assert _software_stamp({"XMP-dc:Title": "t"}, use_sidecar=False)

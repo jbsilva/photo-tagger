@@ -1181,6 +1181,163 @@ def _build_write_payload(
     return payload
 
 
+# Tag groups a file type cannot hold, by suffix. ExifTool drops such a tag without complaint, so it
+# never reads back, the unchanged check sees it as missing on every run, and the file is rewritten
+# (and its history grows) each time. WebP was measured; the others follow ExifTool's list of the
+# groups each format can write (HEIF and AVIF, CR3, and JPEG XL hold EXIF and XMP; GIF holds XMP).
+_UNWRITABLE_GROUPS: dict[str, frozenset[str]] = {
+    ".webp": frozenset({"IPTC"}),
+    ".heic": frozenset({"IPTC"}),
+    ".heif": frozenset({"IPTC"}),
+    ".avif": frozenset({"IPTC"}),
+    ".cr3": frozenset({"IPTC"}),
+    ".jxl": frozenset({"IPTC"}),
+    ".gif": frozenset({"IPTC", "EXIF"}),
+}
+
+
+# EXIF's family-1 group names, which a --set may use instead of EXIF itself.
+_EXIF_FAMILY_ONE = frozenset({"IFD0", "IFD1", "EXIFIFD", "GPS", "INTEROPIFD", "SUBIFD"})
+
+
+def _tag_family(tag: str) -> str:
+    """
+    Return the family-0 group a tag name starts with, upper-cased.
+
+    ``XMP-dc:Title`` is XMP, ``EXIF:IFD0:Copyright`` and ``IFD0:Copyright`` are EXIF, and a tag with
+    no group has none.
+    """
+    group, _sep, _name = tag.rpartition(":")
+    first = group.split(":", 1)[0].split("-", 1)[0].upper()
+    return "EXIF" if first in _EXIF_FAMILY_ONE else first
+
+
+def _writable_in(target: Path, tags: Mapping[str, str | list[str]]) -> dict[str, str | list[str]]:
+    """Keep the tags *target*'s file type can hold (see :data:`_UNWRITABLE_GROUPS`)."""
+    unwritable = _UNWRITABLE_GROUPS.get(target.suffix.lower(), frozenset())
+    return {tag: value for tag, value in tags.items() if _tag_family(tag) not in unwritable}
+
+
+# IPTC's byte limit per dataset, for the ones photo-tagger and a --set commonly write. ExifTool cuts
+# a longer value itself, but not on a character boundary, so what it writes never reads back as
+# what was sent and the file would be rewritten on every save. photo-tagger cuts first instead.
+_IPTC_MAX_BYTES = {
+    "By-line": 32,
+    "By-lineTitle": 32,
+    "Caption-Abstract": 2000,
+    "City": 32,
+    "CopyrightNotice": 128,
+    "Country-PrimaryLocationName": 64,
+    "Credit": 32,
+    "Headline": 256,
+    "Keywords": 64,
+    "ObjectName": 64,
+    "Province-State": 32,
+    "Source": 32,
+    "Sub-location": 32,
+    "SupplementalCategories": 32,
+    "Writer-Editor": 32,
+}
+_IPTC_CHARSET_TAG = "IPTC:CodedCharacterSet"
+# The escape sequence that marks IPTC text as UTF-8, as a read under -n returns it, and its name.
+_IPTC_UTF8_VALUES = frozenset({"\x1b%G", "UTF8"})
+# Datasets that describe the IPTC block itself and are not copied when it is re-encoded.
+_IPTC_STRUCTURAL = frozenset(
+    {"CodedCharacterSet", "EnvelopeRecordVersion", "ApplicationRecordVersion"},
+)
+
+
+_IPTC_LIMITS_BY_NAME = {name.casefold(): limit for name, limit in _IPTC_MAX_BYTES.items()}
+
+
+def _fit_bytes(text: str, limit: int) -> str:
+    """Cut *text* to at most *limit* bytes of UTF-8, never inside a character."""
+    return text.encode("utf-8")[:limit].decode("utf-8", errors="ignore")
+
+
+def _fit_iptc(payload: Mapping[str, str | list[str]]) -> dict[str, str | list[str]]:
+    """Cut every IPTC value in *payload* to its dataset's limit (see :data:`_IPTC_MAX_BYTES`)."""
+    fitted: dict[str, str | list[str]] = {}
+    for tag, value in payload.items():
+        if not isinstance(value, str | list):
+            fitted[tag] = value  # a number carried over from the file, never too long
+            continue
+        name = tag.rpartition(":")[2].casefold()
+        limit = _IPTC_LIMITS_BY_NAME.get(name) if _tag_family(tag) == "IPTC" else None
+        if limit is None:
+            fitted[tag] = value
+        elif isinstance(value, list):
+            fitted[tag] = [
+                _fit_bytes(item, limit) if isinstance(item, str) else item for item in value
+            ]
+        else:
+            fitted[tag] = _fit_bytes(value, limit)
+    return fitted
+
+
+def _iptc_recoding(
+    pending: Mapping[str, str | list[str]],
+    current: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Return the tags that switch *current*'s IPTC block to UTF-8, or nothing when none is needed.
+
+    Without the CodedCharacterSet marker ExifTool writes IPTC as Latin-1, where a name like "Łukasz"
+    becomes "?ukasz". The marker alone would make the values already in the file read wrong, so each
+    of them is written again with it, in the same call: the block is re-encoded whole. Needed only
+    when a new IPTC value is not plain ASCII and the block is not UTF-8 yet. Nothing is re-encoded
+    when the block could not be read, since the marker alone would garble what is there.
+    """
+    if current is None or current.get(_IPTC_CHARSET_TAG) in _IPTC_UTF8_VALUES:
+        return {}
+    iptc_values = [
+        item
+        for tag, value in pending.items()
+        if _tag_family(tag) == "IPTC"
+        for item in (value if isinstance(value, list) else [value])
+    ]
+    if all(str(item).isascii() for item in iptc_values):
+        return {}
+    written = {tag.casefold() for tag in pending}
+    kept = {
+        tag: _recovered(value)
+        for tag, value in current.items()
+        if tag.startswith("IPTC:")
+        and tag.partition(":")[2] not in _IPTC_STRUCTURAL
+        and tag.casefold() not in written
+        and not _is_binary_placeholder(value)
+    }
+    fitted = _fit_iptc(kept)
+    if fitted != kept:
+        logger.warning(
+            "iptc_values_cut_to_fit_utf8",
+            tags=sorted(t for t in kept if fitted[t] != kept[t]),
+        )
+    return {_IPTC_CHARSET_TAG: "UTF8", **fitted}
+
+
+def _is_binary_placeholder(value: Any) -> bool:  # noqa: ANN401 - an exiftool value of any JSON type.
+    """Say whether *value* is ExifTool's placeholder for binary data, never written back."""
+    return isinstance(value, str) and value.startswith("(Binary data ")
+
+
+def _recovered(value: Any) -> Any:  # noqa: ANN401 - an exiftool value of any JSON type.
+    """
+    Undo a UTF-8 value read as Latin-1, as some tools write UTF-8 IPTC without the marker.
+
+    ExifTool then reads "José" as "JosÃ©". Re-encoding that as UTF-8 would keep the garbled text for
+    good, so a value that decodes cleanly as UTF-8 once taken back to bytes is taken as UTF-8.
+    """
+    if isinstance(value, list):
+        return [_recovered(item) for item in value]
+    if not isinstance(value, str) or value.isascii():
+        return value
+    try:
+        return value.encode("cp1252").decode("utf-8")
+    except UnicodeError:
+        return value
+
+
 # The name every save stamps into the files it changes, as digiKam and Lightroom do.
 SOFTWARE_AGENT = f"photo-tagger {__version__}"
 
@@ -1202,7 +1359,9 @@ def _software_stamp(
     Empty for a sidecar, which holds XMP only, and when *payload* already names the tag (a ``--set``
     by hand wins).
     """
-    if use_sidecar or TAG_EXIF_PROCESSING_SOFTWARE in payload:
+    if use_sidecar or any(
+        tag.casefold().rpartition(":")[2] == "processingsoftware" for tag in payload
+    ):
         return {}
     return {TAG_EXIF_PROCESSING_SOFTWARE: SOFTWARE_AGENT}
 
@@ -1492,6 +1651,18 @@ def _changed_payload(
     }
 
 
+def _read_list(payload: Mapping[str, str | list[str]]) -> list[str]:
+    """
+    Name what to read before a write: the payload's tags, and the IPTC block if it writes IPTC.
+
+    A switch to UTF-8 re-encodes every value in that block (see :func:`_iptc_recoding`).
+    """
+    tags = list(payload)
+    if any(_tag_family(tag) == "IPTC" for tag in tags):
+        tags.append("IPTC:all")
+    return tags
+
+
 def _read_current(
     helper: ExifToolHelper,
     target: Path,
@@ -1577,13 +1748,15 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         use_sidecar=use_sidecar,
         extra=extra,
     )
+    if not use_sidecar:
+        payload = _fit_iptc(_writable_in(target_path, payload))
     if not payload:
         logger.warning("no_data_to_write", file=image_path.name)
         return WriteResult.FAILED
 
     try:
         with managed_helper(et) as helper:
-            current = _read_current(helper, target_path, payload)
+            current = _read_current(helper, target_path, _read_list(payload))
             pending = (
                 payload
                 if current is None
@@ -1596,8 +1769,10 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
             # never match (the history grows with every save), and no file would stay untouched.
             params: list[str] = [] if backup else ["-overwrite_original"]
             params.append(history_event_param(datetime.now().astimezone()))
+            stamp = _writable_in(target_path, _software_stamp(payload, use_sidecar=use_sidecar))
+            recoding = {} if use_sidecar else _iptc_recoding(pending, current)
             set_kwargs: dict[str, Any] = {
-                "tags": pending | _software_stamp(payload, use_sidecar=use_sidecar),
+                "tags": pending | stamp | recoding,
                 "files": [str(target_path)],
                 "params": params,
             }

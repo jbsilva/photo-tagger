@@ -94,6 +94,63 @@ def test_saving_the_same_values_again_leaves_the_file_alone(
     assert target.stat().st_mtime_ns == before
 
 
+def _iptc(path: Path) -> dict[str, object]:
+    """Read the whole IPTC block of *path*, the way photo-tagger reads it."""
+    with ExifToolHelper() as helper:
+        return dict(helper.get_tags(files=[str(path)], tags=["IPTC:all"])[0])
+
+
+def test_a_non_latin_name_reaches_iptc_intact_and_a_rerun_leaves_it(tmp_path: Path) -> None:
+    """
+    IPTC gets UTF-8, cut to its byte limit on a character boundary, and a rerun writes nothing.
+
+    Without the charset marker ExifTool writes Latin-1 ("?ukasz"), and its own cut can split a
+    character, so the value never read back as sent and every save rewrote the file.
+    """
+    img = _write_jpeg(tmp_path / "img.jpg")
+    name = "Łukasz Żółwiński Fotografia Studio"  # 38 bytes: over By-line's 32
+    extra = {"IPTC:By-line": name, "IPTC:CopyrightNotice": f"© 2024 {name}"}
+
+    assert write_metadata(img, KeywordSet(), extra=extra, backup=False, use_sidecar=False)
+    iptc = _iptc(img)
+    assert iptc["IPTC:By-line"] == "Łukasz Żółwiński Fotografia"
+    assert iptc["IPTC:CopyrightNotice"] == f"© 2024 {name}"
+
+    again = write_metadata(img, KeywordSet(), extra=extra, backup=False, use_sidecar=False)
+    assert again == WriteResult.UNCHANGED
+
+
+def test_switching_iptc_to_utf8_keeps_the_values_already_there(tmp_path: Path) -> None:
+    """A Latin-1 caption written by another program reads the same after the block is re-encoded."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+    with ExifToolHelper() as helper:
+        helper.set_tags(
+            files=[str(img)],
+            tags={"IPTC:Caption-Abstract": "Café crème", "IPTC:City": "Zürich"},
+            params=["-overwrite_original"],
+        )
+
+    extra = {"IPTC:By-line": "Łukasz"}
+    assert write_metadata(img, KeywordSet(), extra=extra, backup=False, use_sidecar=False)
+
+    iptc = _iptc(img)
+    assert iptc["IPTC:By-line"] == "Łukasz"
+    assert iptc["IPTC:Caption-Abstract"] == "Café crème"
+    assert iptc["IPTC:City"] == "Zürich"
+
+
+def test_a_webp_save_is_left_alone_the_second_time(tmp_path: Path) -> None:
+    """WebP holds no IPTC, so the IPTC mirrors are not sent and a rerun finds nothing to change."""
+    img = tmp_path / "img.webp"
+    Image.new("RGB", (4, 4), color="red").save(img, format="WEBP")
+    values = {"keywords": KeywordSet(subject=["Frog"]), "title": "A frog"}
+
+    assert write_metadata(img, **values, backup=False, use_sidecar=False)  # type: ignore[arg-type]
+    again = write_metadata(img, **values, backup=False, use_sidecar=False)  # type: ignore[arg-type]
+
+    assert again == WriteResult.UNCHANGED
+
+
 def test_a_save_stamps_the_software_and_keeps_the_camera_firmware(tmp_path: Path) -> None:
     """
     A write names photo-tagger in ProcessingSoftware and in the history, and leaves Software alone.
