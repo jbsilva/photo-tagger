@@ -30,6 +30,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- pydantic-ai's first-run observability banner no longer prints. It landed in the middle of a batch,
+  in the stdout stream `--json` consumers parse, and in the terminal behind the GUI window.
 - The system prompt now rules out a foreign word used *as* the concept name (a title reading
   `Decorated陶笛 with Geometric Pattern` when the output language is English). Its language rule only
   covered mixed spelling before.

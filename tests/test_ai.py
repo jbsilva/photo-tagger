@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import httpx2
+import pydantic_ai
 import pytest
 
 from photo_tagger import ai as ai_module
@@ -42,6 +43,11 @@ def _patch_listing(
 
     monkeypatch.setattr(httpx2, "get", fake_get)
     return requests
+
+
+def test_importing_ai_disables_the_pydantic_ai_banner() -> None:
+    """Importing the agent module is enough to keep pydantic-ai's first-run banner off stderr."""
+    assert pydantic_ai.BANNER_ENABLED is False
 
 
 # ---------------------------------------------------------------------------

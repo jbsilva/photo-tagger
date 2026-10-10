@@ -4,6 +4,7 @@ import contextlib
 import time
 from typing import TYPE_CHECKING
 
+import pydantic_ai
 from loguru import logger
 from pydantic_ai import Agent, AgentRunResult, ModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -26,6 +27,14 @@ from photo_tagger.providers import ProviderName, get_backend
 
 if TYPE_CHECKING:
     from pydantic_ai import BinaryContent
+
+
+# pydantic-ai greets a first run with a multi-line banner advertising observability. photo-tagger
+# owns its output: that banner lands on stderr in the middle of a batch, between the log lines, and
+# in the terminal behind the GUI window, none of which asked for it. Set here rather
+# than through the PYDANTIC_AI_NO_BANNER environment variable so it holds for every way the app is
+# started, and in this module because every path that builds an Agent imports it.
+pydantic_ai.BANNER_ENABLED = False
 
 
 def build_chat_model(
