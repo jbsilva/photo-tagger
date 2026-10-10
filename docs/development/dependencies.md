@@ -30,13 +30,15 @@ release that new.
 
 The project splits its non-core dependencies in two ways. Each way has a different purpose:
 
-- `[project.optional-dependencies]` are user-facing extras that ship with the package. The only one
-    is `gui` (PySide6). Users install it on demand with `pip install 'photo-tagger[gui]'` or
-    `uv tool install 'photo-tagger[gui]'`. Because the GUI is an extra, the base install stays
-    Qt-free.
-- `[dependency-groups]` (`dev`, `test`, `docs`) are contributor tooling. The project does not
-    publish them to end users. You sync them with `uv sync --group dev --group test`. CI installs
-    the linters, type checker, test runner, and docs builder the same way.
+- `[project.optional-dependencies]` are user-facing extras that ship with the package. There are
+    two. `gui` (PySide6) is the desktop GUI. Users install it on demand with
+    `pip install 'photo-tagger[gui]'` or `uv tool install 'photo-tagger[gui]'`. Because the GUI is
+    an extra, the base install stays Qt-free. `otel` (the OpenTelemetry SDK and its OTLP/HTTP
+    exporter) is what `--otel` needs.
+- `[dependency-groups]` (`dev`, `test`, `docs`, `package`) are contributor tooling. `package` holds
+    PyInstaller, for the macOS app bundle. The project does not publish them to end users. You sync
+    them with `uv sync --group dev --group test`. CI installs the linters, type checker, test
+    runner, and docs builder the same way.
 
 To work on the GUI locally, sync the extra alongside the dev groups:
 
@@ -48,12 +50,14 @@ uv sync --extra gui --group dev --group test
 
 [`renovate.json5`](https://github.com/jbsilva/photo-tagger/blob/main/renovate.json5) controls the
 automated dependency updates. It replaces the old `.github/dependabot.yml`. It extends
-`config:best-practices` and covers three update domains:
+`config:best-practices` and covers five update domains:
 
 - `pyproject.toml` plus `uv.lock` (the Python dependencies).
 - GitHub Actions in `.github/workflows/`, pinned to a full commit SHA with the version kept in a
     trailing comment.
 - `prek.toml` hook revs.
+- The OpenTofu providers of the telemetry infrastructure in `telemetry/infra/`.
+- The wrangler version that `deploy-telemetry.yml` pins.
 
 !!! note "Why prek hooks need a custom manager"
 
