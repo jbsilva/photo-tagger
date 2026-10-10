@@ -870,8 +870,10 @@ class TelemetryConfig:
                 "OS, CPU/GPU model, RAM size, timing, outcomes) and anonymous crash reports (error "
                 "type and stack trace, code locations only) to help guide development. No photos, "
                 "file paths, filenames, tags, prompts, error messages, or personal data are ever "
-                "sent. Disable with --no-telemetry, PHOTO_TAGGER_TELEMETRY=0, or the cross-tool "
-                "DO_NOT_TRACK=1. PHOTO_TAGGER_TELEMETRY=1 sends anyway when DO_NOT_TRACK is set"
+                "sent. Disable with --no-telemetry, enabled = false under [telemetry] in the "
+                "config file, PHOTO_TAGGER_TELEMETRY=0, or the cross-tool DO_NOT_TRACK=1 (the last "
+                "three also cover the commands without this flag). PHOTO_TAGGER_TELEMETRY=1 sends "
+                "anyway when DO_NOT_TRACK is set"
             ),
         ),
     ] = True

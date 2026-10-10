@@ -3,8 +3,8 @@ Anonymous, opt-out usage telemetry.
 
 Small JSON beacons tell the project how photo-tagger is used: which models, settings, and features
 people pick, how runs go, and on what machines. One is sent at the end of each run, for each other
-command, when a GUI window opens and closes, and when the app crashes. It is deliberately
-privacy-preserving:
+command, when a GUI window opens and closes, when a ``watch`` stops, and when the app crashes. It
+is deliberately privacy-preserving:
 
 - **No personal or content data.** File paths, filenames, photo pixels, generated tags, titles,
   descriptions, prompts, hints, API keys, and server URLs are never collected. A setting is sent as
@@ -12,12 +12,15 @@ privacy-preserving:
   beacons carry the exception *type* and its stack trace as code locations (module, function, and
   line), never the message. The dataclasses below and :func:`build_payload` are the closed set of
   what leaves the machine.
-- **Opt-out, three ways.** Set ``PHOTO_TAGGER_TELEMETRY=0`` (or the cross-tool ``DO_NOT_TRACK=1``)
-  in the environment, pass ``--no-telemetry``, or put ``enabled = false`` under ``[telemetry]`` in
-  the config file. Any opt-out beats any opt-in, except that ``PHOTO_TAGGER_TELEMETRY=1`` overrules
-  the cross-tool ``DO_NOT_TRACK`` (see :func:`resolve_consent`).
+- **Opt-out, four ways.** Set ``PHOTO_TAGGER_TELEMETRY=0`` (or the cross-tool ``DO_NOT_TRACK=1``)
+  in the environment, pass ``--no-telemetry`` to ``tag`` or ``watch``, put ``enabled = false``
+  under ``[telemetry]`` in the config file, or clear the GUI's telemetry toggle. Any opt-out beats
+  any opt-in, with two exceptions: ``PHOTO_TAGGER_TELEMETRY=1`` overrules the cross-tool
+  ``DO_NOT_TRACK``, and a GUI toggle checked by hand overrules ``enabled = false`` (see
+  :func:`resolve_consent`).
 - **Never in the way.** Sending happens on a daemon thread with a short timeout, and every failure
-  is swallowed. Telemetry must never crash, slow, or block a tagging run.
+  is swallowed. Telemetry must never crash or block a tagging run. At exit, the CLI and the GUI
+  wait at most :data:`_FLUSH_TIMEOUT_SECONDS` for a beacon still on its way.
 
 The collector is our own Cloudflare Worker at ``telemetry.tagger.photo`` (its source lives in the
 ``telemetry/`` directory of this repo). No third-party analytics service is involved.

@@ -14,13 +14,13 @@ it off.
 
 ## When a beacon is sent
 
-| Event     | When                                                                                                        |
-| --------- | ----------------------------------------------------------------------------------------------------------- |
-| `run`     | A run ends: a CLI batch, one `watch` batch, or one GUI generation or save.                                  |
-| `session` | A GUI window closes, or a `watch` stops.                                                                    |
-| `launch`  | A GUI window opens.                                                                                         |
-| `command` | Any other command ends (`show`, `set`, `vocabulary`, `undo`, `doctor`), or a run stops at the command line. |
-| `crash`   | The app hits an error it did not expect.                                                                    |
+| Event     | When                                                                                                                                                                              |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run`     | A run ends: a CLI batch, one `watch` batch, or one GUI generation or save.                                                                                                        |
+| `session` | A GUI window closes, or a `watch` stops.                                                                                                                                          |
+| `launch`  | A GUI window opens.                                                                                                                                                               |
+| `command` | Any other command ends (`show`, `set`, `vocabulary`, `undo`, `doctor`), or a run stops at the command line. `--help`, `--version`, and a command line with an error send one too. |
+| `crash`   | The app hits an error it did not expect.                                                                                                                                          |
 
 ## How runs and sessions are counted
 
@@ -55,8 +55,9 @@ Every value is a switch, a number, a mode name, a hardware model name, or one of
 Configuration values are sent as switches, counts, and mode names, never as the text or the path
 that they hold. For example, a vocabulary file becomes `vocabulary` (set or not) and
 `vocabulary_terms` (a count). A hint becomes `hint` and `hint_chars`. The dataclasses in
-[`telemetry.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/telemetry.py)
-are the closed list of what leaves the machine.
+[`telemetry.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/telemetry.py),
+together with the functions there that build the payload from them (`build_payload` and its
+helpers), are the closed list of what leaves the machine.
 
 ### Every beacon
 
@@ -92,7 +93,7 @@ are the closed list of what leaves the machine.
 | Field                                                         | Example                 | What it is                                                                                                                                                   |
 | ------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `job`                                                         | `tag`                   | `tag` for a CLI batch, `generate` or `save` for a GUI run.                                                                                                   |
-| `trigger`                                                     | `batch`                 | What started the run: `batch`, `single`, `hint`, `retry`, or `watch`.                                                                                        |
+| `trigger`                                                     | `batch`                 | What started the run. In the GUI: `batch`, `single`, `hint`, `retry`, or `watch`. In the CLI: `watch` for a `watch` batch, empty for `tag`.                  |
 | `outcome`                                                     | `ok`                    | `ok`, `partial`, `failed`, `cancelled`, `interrupted`, `empty`, or `setup-failed`.                                                                           |
 | `error_kind`                                                  | `ProviderError`         | The error class that stopped a run before its first photo.                                                                                                   |
 | `provider`, `model`                                           | `lmstudio`              | The backend and the model name. A path keeps only its file name, and a fine-tuned id only its base model.                                                    |
@@ -113,7 +114,7 @@ are the closed list of what leaves the machine.
 | `shoots`                                                      | `3`                     | The shoots the batch split into (`--session-gap`).                                                                                                           |
 | `photo_seconds_median`, `photo_seconds_p90`                   | `3.1`, `5.4`            | The model time per photo.                                                                                                                                    |
 | `keywords_mean`, `title_chars_mean`, `description_chars_mean` | `18.2`                  | The size of the generated text, never the text.                                                                                                              |
-| `power`, `battery_percent`                                    | `ac`, `80`              | At the end of the run: charger or battery, and the charge.                                                                                                   |
+| `power`, `battery_percent`                                    | `ac`, `80`              | At the end of the run: charger or battery, and the charge. A machine with no battery sends `none` and `-1`.                                                  |
 | `settings`, `setup`                                           |                         | See [`settings`](#settings) and [`setup`](#setup).                                                                                                           |
 | `gui`, `review`                                               |                         | GUI runs only. See [GUI runs](#gui-runs) and [Review](#review).                                                                                              |
 
@@ -143,10 +144,10 @@ are the closed list of what leaves the machine.
 | `details`          | `photos: 12`     | A few counts from a fixed list of names. `problems` holds fixed codes, such as `not-found`. |
 | `setup`            |                  | See [Setup](#setup).                                                                        |
 
-The names in `details` depend on the command. `show` and `set` report `photos`, `written`, and
-`failed`. `undo` reports `entries`, `put_back`, and `left_alone`. `vocabulary` reports `source`,
-`keywords_read`, `keywords_kept`, and `keywords_dropped`. `doctor` reports `checks_failed` and
-`problems`.
+The names in `details` depend on the command. `show` reports `photos`. `set` reports `photos`,
+`written`, and `failed`. `undo` reports `entries`, `put_back`, and `left_alone`. `vocabulary`
+reports `source`, `keywords_read`, `keywords_kept`, and `keywords_dropped`. `doctor` reports
+`checks_failed` and `problems`.
 
 ### Launch
 
@@ -188,7 +189,9 @@ beacon never carries the error message, because messages can contain file paths.
 | GUI                     | `autosave` (**Save After Generating**)                                                                                                                                                                                    |
 
 The `duty`, `battery_floor`, and `battery_resume` fields are percentages, and `watch_interval` and
-`watch_settle` are seconds. Each field has the name of the configuration key it reports.
+`watch_settle` are seconds. Most fields have the name of the configuration key that they report.
+Some do not: for example, `backup` reports `backup_xmp`, `cache` reports `cache_file`, and
+`autosave` reports `save_after_generating`.
 
 The `endpoint` tells where the model server runs, never its URL. It is `localhost`, `lan` (your own
 network), `tailnet`, `public`, or the name of a known service, such as `api.openai.com`.
@@ -265,10 +268,13 @@ queries that run against it are in the
 [`telemetry/`](https://github.com/jbsilva/photo-tagger/tree/main/telemetry) directory of the
 repository.
 
-Events are kept with no expiry date, so trends can be compared across releases.
+The collector stores each event in two places. The copy in Cloudflare Analytics Engine expires after
+three months. The copy in the D1 database has no expiry date, so trends can be compared across
+releases.
 
-Sending happens on a background thread with a short timeout, and every failure is ignored. Telemetry
-cannot crash, slow down, or block a tagging run.
+Sending happens on a background thread, and every failure is ignored. Telemetry cannot crash or
+block a tagging run. When the work is done, the CLI waits at most 2.5 seconds for each beacon before
+it exits. The GUI does the same when its window closes.
 
 ## The first-run notice
 
@@ -280,17 +286,20 @@ quiet. When a release adds a new kind of data, the notice shows once more.
 
 Any one of these turns telemetry off:
 
-- Pass `--no-telemetry` on the command line.
+- Pass `--no-telemetry` to `tag` or `watch`. The other commands do not take this flag. For them, use
+    the environment or the configuration file.
 - Set `PHOTO_TAGGER_TELEMETRY=0` (or the cross-tool `DO_NOT_TRACK=1`) in your environment.
 - Put `enabled = false` under `[telemetry]` in your
     [configuration file](getting-started/configuration.md).
 - In the desktop GUI, clear **Settings > Send Anonymous Telemetry**. The GUI keeps the choice for
     the next launch.
 
-An opt-out anywhere wins over an opt-in, so exporting `PHOTO_TAGGER_TELEMETRY=0` once disables
-telemetry everywhere, including the GUI. Any value other than `1`, `true`, `yes`, or `on` also turns
-it off, so `PHOTO_TAGGER_TELEMETRY=disabled` does what it says. The `PHOTO_TAGGER_NO_TELEMETRY=1` of
-version 0.9 and earlier still turns telemetry off too.
+An opt-out in the environment wins over every opt-in, so exporting `PHOTO_TAGGER_TELEMETRY=0` once
+disables telemetry everywhere, including the GUI. Any value other than `1`, `true`, `yes`, or `on`
+also turns it off, so `PHOTO_TAGGER_TELEMETRY=disabled` does what it says. An empty value counts as
+not set. The other opt-outs also win over an opt-in, with one exception: in the GUI, a toggle that
+you check by hand overrules `enabled = false` (see the full order below). The
+`PHOTO_TAGGER_NO_TELEMETRY=1` of version 0.9 and earlier still turns telemetry off too.
 
 ## Sending anyway when DO_NOT_TRACK is set
 
