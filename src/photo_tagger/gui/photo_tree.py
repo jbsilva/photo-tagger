@@ -22,15 +22,12 @@ from photo_tagger.gui.common import (
 from photo_tagger.gui.widgets import SortableTreeItem, check_state
 from photo_tagger.gui_state import (
     FAILED,
-    PENDING,
-    READY,
     SAVED,
-    WORKING,
     build_tree,
     file_type_label,
     flat_labels,
     foreign_terms_note,
-    mark_mixed_script,
+    status_label,
     status_sort_rank,
     tagged_legend,
     tagged_summary,
@@ -38,7 +35,7 @@ from photo_tagger.gui_state import (
     tooltip,
     wrap_tooltip,
 )
-from photo_tagger.i18n import _, gettext_noop
+from photo_tagger.i18n import _
 
 
 if TYPE_CHECKING:
@@ -50,15 +47,6 @@ if TYPE_CHECKING:
 
 # Status colors: failures pop red, saved photos settle green; other states use the palette.
 _STATUS_COLOR = {FAILED: QColor("#f85149"), SAVED: QColor("#3fb950")}
-
-# Short status word shown in the tree's second column.
-_STATUS_LABEL = {
-    PENDING: "",
-    WORKING: gettext_noop("working..."),
-    READY: gettext_noop("ready"),
-    SAVED: gettext_noop("saved ✓"),
-    FAILED: gettext_noop("failed ✗"),
-}
 
 
 class PhotoTree(QTreeWidget):
@@ -270,10 +258,7 @@ class PhotoTree(QTreeWidget):
 
 def _render_status_cells(leaf: QTreeWidgetItem, item: PhotoItem) -> None:
     """Paint the Status and Tagged columns for *item*'s row."""
-    label = _(_STATUS_LABEL[item.status]) if _STATUS_LABEL[item.status] else ""
-    if item.status == READY and item.from_cache:
-        label = _("ready (cached)")
-    leaf.setText(COL_STATUS, mark_mixed_script(label, item.foreign_terms))
+    leaf.setText(COL_STATUS, status_label(item))
     leaf.setData(COL_STATUS, STATUS_RANK_ROLE, status_sort_rank(item.status))
     color = _STATUS_COLOR.get(item.status)
     leaf.setData(

@@ -159,6 +159,7 @@ from photo_tagger.gui_state import (
     sidecar_overrides_summary,
     sort_photos,
     source_label,
+    status_label,
     status_sort_rank,
     status_summary,
     step_zoom,
@@ -167,6 +168,7 @@ from photo_tagger.gui_state import (
     tagged_tooltip,
     telemetry_toggle_note,
     thumb_badges,
+    thumb_tooltip,
     tooltip,
     undo_action_label,
     undo_details_text,
@@ -1115,6 +1117,40 @@ def test_apply_proposal_carries_the_existing_copyright() -> None:
     )
     apply_proposal(item, proposal)
     assert item.existing_copyright == "© 2019 Ada"
+
+
+def test_status_label_words_each_lifecycle_state() -> None:
+    """The Status cell names the state; a photo not generated yet shows nothing."""
+    assert status_label(PhotoItem(path=Path("/a.jpg"), status=PENDING)) == ""
+    assert status_label(PhotoItem(path=Path("/a.jpg"), status=WORKING)) == "working..."
+    assert status_label(PhotoItem(path=Path("/a.jpg"), status=READY)) == "ready"
+    assert status_label(PhotoItem(path=Path("/a.jpg"), status=SAVED)) == "saved ✓"
+    assert status_label(PhotoItem(path=Path("/a.jpg"), status=FAILED)) == "failed ✗"
+
+
+def test_status_label_says_cached_and_marks_mixed_script() -> None:
+    """A cache replay says so, and mixed-script text adds the mark, even with no word to follow."""
+    cached = PhotoItem(path=Path("/a.jpg"), status=READY, from_cache=True)
+    assert status_label(cached) == "ready (cached)"
+    # Only a READY photo says cached: a saved one was written, wherever the text came from.
+    assert status_label(replace(cached, status=SAVED)) == "saved ✓"
+    flagged = PhotoItem(path=Path("/a.jpg"), status=READY, foreign_terms=["猫"])
+    assert status_label(flagged) == f"ready {MIXED_SCRIPT_MARK}"
+    assert status_label(replace(flagged, status=PENDING)) == MIXED_SCRIPT_MARK
+
+
+def test_thumb_tooltip_names_the_file_then_each_badge() -> None:
+    """One line per badge after the name, in badge order; no badges leaves the name alone."""
+    item = PhotoItem(path=Path("/d/a.jpg"), status=SAVED)
+    assert thumb_tooltip(item, []) == "a.jpg"
+    assert thumb_tooltip(item, [BADGE_SAVED, BADGE_SIDECAR]) == "a.jpg\nsaved\nhas an XMP sidecar"
+
+
+def test_thumb_tooltip_ends_a_failed_photo_on_its_error() -> None:
+    """The reason a photo failed is the last line; a stale error on another state is not shown."""
+    failed = PhotoItem(path=Path("/d/a.jpg"), status=FAILED, error="model timed out")
+    assert thumb_tooltip(failed, [BADGE_FAILED]) == "a.jpg\ngeneration failed\nmodel timed out"
+    assert "model timed out" not in thumb_tooltip(replace(failed, status=READY), [])
 
 
 def test_thumb_badges_lifecycle_and_info_markers() -> None:

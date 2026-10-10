@@ -32,7 +32,6 @@ from photo_tagger.gui_state import (
     BADGE_SAVED,
     BADGE_SIDECAR,
     BADGE_UNSAVED,
-    FAILED,
     FILTER_ALL,
     FILTER_CHOICES,
     SORT_CHOICES,
@@ -41,9 +40,10 @@ from photo_tagger.gui_state import (
     paths_under,
     sort_photos,
     thumb_badges,
+    thumb_tooltip,
     tooltip,
 )
-from photo_tagger.i18n import _, gettext_noop, ngettext
+from photo_tagger.i18n import _, ngettext
 
 
 if TYPE_CHECKING:
@@ -71,15 +71,6 @@ _BADGE_STYLE = {
     BADGE_COPYRIGHT: ("#8957e5", "C"),  # purple: the file carries a copyright notice
     BADGE_SIDECAR: ("#0e7490", "S"),  # an XMP sidecar exists
     BADGE_MIXED_SCRIPT: ("#d29922", "!"),  # amber: the text mixes writing systems
-}
-_BADGE_TEXT = {
-    BADGE_FAILED: gettext_noop("generation failed"),
-    BADGE_SAVED: gettext_noop("saved"),
-    BADGE_UNSAVED: gettext_noop("generated, not saved yet"),
-    BADGE_METADATA: gettext_noop("already has metadata"),
-    BADGE_COPYRIGHT: gettext_noop("has a copyright notice"),
-    BADGE_SIDECAR: gettext_noop("has an XMP sidecar"),
-    BADGE_MIXED_SCRIPT: gettext_noop("mixes writing systems"),
 }
 _LIFECYCLE_BADGES = frozenset({BADGE_FAILED, BADGE_SAVED, BADGE_UNSAVED})
 
@@ -304,10 +295,7 @@ class FolderGrid(QWidget):
             base = self._thumbs.get(key, self._placeholder)
             badges = thumb_badges(item, has_sidecar=item.path.with_suffix(".xmp").exists())
             cell.setIcon(QIcon(_badged_pixmap(base, badges)))
-            notes = [_(_BADGE_TEXT[name]) for name in badges]
-            if item.status == FAILED and item.error:
-                notes.append(item.error)
-            cell.setToolTip("\n".join([item.path.name, *notes]))
+            cell.setToolTip(thumb_tooltip(item, badges))
         finally:
             self._syncing = was_syncing
 

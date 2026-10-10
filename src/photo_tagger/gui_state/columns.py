@@ -13,6 +13,9 @@ from photo_tagger.gui_state.items import (
     WORKING,
     PhotoItem,
 )
+from photo_tagger.gui_state.review import (
+    mark_mixed_script,
+)
 from photo_tagger.i18n import _, gettext_noop, pgettext
 from photo_tagger.metadata import (
     FIELD_COPYRIGHT,
@@ -44,6 +47,29 @@ def status_sort_rank(status: str) -> int:
         return STATUS_SORT_ORDER.index(status)
     except ValueError:
         return len(STATUS_SORT_ORDER)
+
+
+# Short status word shown in the tree's Status column. A photo not generated yet shows nothing.
+_STATUS_LABELS = {
+    PENDING: "",
+    WORKING: gettext_noop("working..."),
+    READY: gettext_noop("ready"),
+    SAVED: gettext_noop("saved ✓"),
+    FAILED: gettext_noop("failed ✗"),
+}
+
+
+def status_label(item: PhotoItem) -> str:
+    """
+    Word the tree's Status cell for *item*: its lifecycle state, and the mixed-script mark.
+
+    A proposal replayed from the cache says so, since no model call made it this time.
+    """
+    word = _STATUS_LABELS.get(item.status, "")
+    label = _(word) if word else ""
+    if item.status == READY and item.from_cache:
+        label = _("ready (cached)")
+    return mark_mixed_script(label, item.foreign_terms)
 
 
 # The Tagged indicator's letter and display label per field, in display order. The letters go
@@ -227,3 +253,27 @@ def thumb_badges(item: PhotoItem, *, has_sidecar: bool) -> list[str]:
     if item.foreign_terms:
         badges.append(BADGE_MIXED_SCRIPT)
     return badges
+
+
+# What each badge means, for the thumbnail's tooltip: the glyphs alone are too small to explain.
+_BADGE_NOTES = {
+    BADGE_FAILED: gettext_noop("generation failed"),
+    BADGE_SAVED: gettext_noop("saved"),
+    BADGE_UNSAVED: gettext_noop("generated, not saved yet"),
+    BADGE_METADATA: gettext_noop("already has metadata"),
+    BADGE_COPYRIGHT: gettext_noop("has a copyright notice"),
+    BADGE_SIDECAR: gettext_noop("has an XMP sidecar"),
+    BADGE_MIXED_SCRIPT: gettext_noop("mixes writing systems"),
+}
+
+
+def thumb_tooltip(item: PhotoItem, badges: Iterable[str]) -> str:
+    """
+    Build a thumbnail's tooltip: the file name, then one line per badge from :func:`thumb_badges`.
+
+    A failed photo adds its error last, so the reason can be read without opening the photo.
+    """
+    lines = [item.path.name, *(_(_BADGE_NOTES[name]) for name in badges)]
+    if item.status == FAILED and item.error:
+        lines.append(item.error)
+    return "\n".join(lines)

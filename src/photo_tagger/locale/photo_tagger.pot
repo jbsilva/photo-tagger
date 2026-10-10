@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-10 20:27+0200\n"
+"POT-Creation-Date: 2026-10-10 20:31+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -429,67 +429,39 @@ msgid ""
 "replaces it."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:76
-msgid "generation failed"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:77
-msgid "saved"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:78
-msgid "generated, not saved yet"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:79
-msgid "already has metadata"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:80
-msgid "has a copyright notice"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:81
-msgid "has an XMP sidecar"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:82
-msgid "mixes writing systems"
-msgstr ""
-
-#: src/photo_tagger/gui/folder_grid.py:158
+#: src/photo_tagger/gui/folder_grid.py:149
 msgid "Show"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:162
+#: src/photo_tagger/gui/folder_grid.py:153
 msgid "Show only the photos in the chosen state."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:167
+#: src/photo_tagger/gui/folder_grid.py:158
 msgid "Sort by"
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:172
+#: src/photo_tagger/gui/folder_grid.py:163
 msgid "Order the thumbnails by name, file type, status, or existing metadata."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:181
-#: src/photo_tagger/gui/folder_grid.py:225
+#: src/photo_tagger/gui/folder_grid.py:172
+#: src/photo_tagger/gui/folder_grid.py:216
 msgid "Ascending. Click to sort descending."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:223
+#: src/photo_tagger/gui/folder_grid.py:214
 msgid "Descending. Click to sort ascending."
 msgstr ""
 
-#: src/photo_tagger/gui/folder_grid.py:423
+#: src/photo_tagger/gui/folder_grid.py:411
 #, python-brace-format
 msgid "{n} photo in {folder}."
 msgid_plural "{n} photos in {folder}."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/photo_tagger/gui/folder_grid.py:427
+#: src/photo_tagger/gui/folder_grid.py:415
 #, python-brace-format
 msgid "Showing {shown} of {total} in {folder}."
 msgstr ""
@@ -1267,52 +1239,32 @@ msgstr ""
 msgid "Rest at most"
 msgstr ""
 
-#: src/photo_tagger/gui/photo_tree.py:57
-msgid "working..."
-msgstr ""
-
-#: src/photo_tagger/gui/photo_tree.py:58
-msgid "ready"
-msgstr ""
-
-#: src/photo_tagger/gui/photo_tree.py:59
-msgid "saved ✓"
-msgstr ""
-
-#: src/photo_tagger/gui/photo_tree.py:60
-msgid "failed ✗"
-msgstr ""
-
-#: src/photo_tagger/gui/photo_tree.py:87
+#: src/photo_tagger/gui/photo_tree.py:75
 msgid "Photos"
 msgstr ""
 
-#: src/photo_tagger/gui/photo_tree.py:87
-#: src/photo_tagger/gui_state/columns.py:139
+#: src/photo_tagger/gui/photo_tree.py:75
+#: src/photo_tagger/gui_state/columns.py:165
 msgid "Type"
 msgstr ""
 
-#: src/photo_tagger/gui/photo_tree.py:87
+#: src/photo_tagger/gui/photo_tree.py:75
 #: src/photo_tagger/gui/select_menu.py:185
-#: src/photo_tagger/gui_state/columns.py:140
+#: src/photo_tagger/gui_state/columns.py:166
 msgid "Status"
 msgstr ""
 
-#: src/photo_tagger/gui/photo_tree.py:87
-#: src/photo_tagger/gui_state/columns.py:141
+#: src/photo_tagger/gui/photo_tree.py:75
+#: src/photo_tagger/gui_state/columns.py:167
 msgid "Tagged"
 msgstr ""
 
-#: src/photo_tagger/gui/photo_tree.py:106
+#: src/photo_tagger/gui/photo_tree.py:94
 #, python-brace-format
 msgid ""
 "Click a column header to sort. Type: file extension, +xmp when a sidecar "
 "exists.\n"
 "Tagged: metadata already on the file ({legend})."
-msgstr ""
-
-#: src/photo_tagger/gui/photo_tree.py:275
-msgid "ready (cached)"
 msgstr ""
 
 #: src/photo_tagger/gui/run_bar.py:89
@@ -1492,19 +1444,19 @@ msgstr ""
 
 #: src/photo_tagger/gui/save_options.py:306
 #: src/photo_tagger/gui/save_options.py:338
-#: src/photo_tagger/gui_state/columns.py:54
+#: src/photo_tagger/gui_state/columns.py:80
 msgid "title"
 msgstr ""
 
 #: src/photo_tagger/gui/save_options.py:307
 #: src/photo_tagger/gui/save_options.py:339
-#: src/photo_tagger/gui_state/columns.py:55
+#: src/photo_tagger/gui_state/columns.py:81
 msgid "description"
 msgstr ""
 
 #: src/photo_tagger/gui/save_options.py:308
 #: src/photo_tagger/gui/select_menu.py:82
-#: src/photo_tagger/gui_state/columns.py:56
+#: src/photo_tagger/gui_state/columns.py:82
 msgid "keywords"
 msgstr ""
 
@@ -2316,41 +2268,89 @@ msgstr[1] ""
 msgid "Organizing {n} keyword(s) with {model}..."
 msgstr ""
 
+#: src/photo_tagger/gui_state/columns.py:55
+msgid "working..."
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:56
+msgid "ready"
+msgstr ""
+
 #: src/photo_tagger/gui_state/columns.py:57
-msgid "copyright"
+msgid "saved ✓"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:58
+msgid "failed ✗"
 msgstr ""
 
 #: src/photo_tagger/gui_state/columns.py:71
+msgid "ready (cached)"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:83
+msgid "copyright"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:97
 msgctxt "Tagged column letter"
 msgid "T"
 msgstr ""
 
-#: src/photo_tagger/gui_state/columns.py:73
+#: src/photo_tagger/gui_state/columns.py:99
 msgctxt "Tagged column letter"
 msgid "D"
 msgstr ""
 
-#: src/photo_tagger/gui_state/columns.py:75
+#: src/photo_tagger/gui_state/columns.py:101
 msgctxt "Tagged column letter"
 msgid "K"
 msgstr ""
 
-#: src/photo_tagger/gui_state/columns.py:77
+#: src/photo_tagger/gui_state/columns.py:103
 msgctxt "Tagged column letter"
 msgid "C"
 msgstr ""
 
-#: src/photo_tagger/gui_state/columns.py:118
+#: src/photo_tagger/gui_state/columns.py:144
 #, python-brace-format
 msgid "Already on the file: {fields}"
 msgstr ""
 
-#: src/photo_tagger/gui_state/columns.py:118
+#: src/photo_tagger/gui_state/columns.py:144
 msgid "nothing"
 msgstr ""
 
-#: src/photo_tagger/gui_state/columns.py:138
+#: src/photo_tagger/gui_state/columns.py:164
 msgid "Name"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:260
+msgid "generation failed"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:261
+msgid "saved"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:262
+msgid "generated, not saved yet"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:263
+msgid "already has metadata"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:264
+msgid "has a copyright notice"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:265
+msgid "has an XMP sidecar"
+msgstr ""
+
+#: src/photo_tagger/gui_state/columns.py:266
+msgid "mixes writing systems"
 msgstr ""
 
 #: src/photo_tagger/gui_state/connection.py:22
