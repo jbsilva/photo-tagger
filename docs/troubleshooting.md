@@ -4,9 +4,10 @@ icon: lucide/wrench
 
 # Troubleshooting
 
-The three failures below are the cause of almost every run that will not start. Each entry shows the
-symptom first, then the fix. If you are not sure of the cause, run the built-in pre-flight check. It
-tests exactly the two external parts (ExifTool and the model server) that cause these failures:
+The first three failures below are the cause of almost every run that will not start. The last one
+is about Lightroom Classic. Each entry shows the symptom first, then the fix. If you are not sure of
+the cause, run the built-in pre-flight check. It tests exactly the two external parts (ExifTool and
+the model server) that cause these failures:
 
 ```bash
 photo-tagger doctor
@@ -14,7 +15,9 @@ photo-tagger doctor
 
 ## "exiftool not found"
 
-Symptom: the run (or `doctor`) fails immediately with a message that `exiftool` was not found.
+Symptom: the photos of a run fail with the message
+`exiftool is not on PATH: install it, or set exiftool_path in the config file`. Or `doctor` reports
+`'exiftool' not found`.
 
 photo-tagger runs the [ExifTool](https://exiftool.org/) binary for all metadata reads and writes.
 photo-tagger does not include ExifTool. Install it with your system package manager:
@@ -76,8 +79,9 @@ Before photo-tagger processes any photo, it compares the `-m/--model` identifier
 that the server actually serves. As a result, a typo or a model that you never pulled makes the run
 fail at the start. To fix it:
 
-- List what the server serves. If the check fails, `photo-tagger doctor` prints the available
-    models. In the GUI, press the **Refresh** button next to the model dropdown.
+- List what the server serves. If the check fails, the error message of the run lists the available
+    models. `photo-tagger doctor` reports only that the model is not served. In the GUI, press the
+    **Refresh** button next to the model dropdown.
 - Pull or load the model first. For Ollama, run `ollama pull <model>`. For LM Studio, download the
     model in its UI. Then load it into the server. For llama.cpp, start `llama-server` with the
     model file.
