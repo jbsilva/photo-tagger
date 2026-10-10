@@ -155,8 +155,8 @@ class CopyrightDialog(QDialog):
         """Report whether there is a copyright to write at all."""
         return self._fields is not None and not self._fields.is_empty
 
-    def values(self) -> dict[str, str | bool | None]:
-        """Return the dialog's fields as the config file stores them."""
+    def config_values(self) -> dict[str, str | bool | None]:
+        """Return the dialog's fields as the config file stores them, keyed like GuiConfigValues."""
         return {
             "artist": self._artist_field.text().strip(),
             "copyright_notice": self._notice_field.text().strip(),

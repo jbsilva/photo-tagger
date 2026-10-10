@@ -1428,7 +1428,7 @@ def test_hierarchy_preview_updates_from_keywords(
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    window._overwrite_actions[FIELD_KEYWORDS].setChecked(True)  # noqa: SLF001
+    window._save_options_menu.overwrite_actions[FIELD_KEYWORDS].setChecked(True)  # noqa: SLF001
     window._keywords.setPlainText("Duck<Bird<Animal")  # noqa: SLF001 - triggers textChanged
     assert window._hierarchy.toPlainText() == "Animal\n└─ Bird\n   └─ Duck"  # noqa: SLF001
 
@@ -1489,7 +1489,7 @@ def test_save_writes_both_targets_and_journals_each(
     monkeypatch.setattr(window, "_single_save_journal", lambda: journal)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    window._sidecar_actions["both"].setChecked(True)  # noqa: SLF001
+    window._save_options_menu.sidecar_actions["both"].setChecked(True)  # noqa: SLF001
     window._save_current()  # noqa: SLF001
 
     assert targets == [False, True]  # the photo, then its sidecar
@@ -1516,7 +1516,7 @@ def test_save_keeps_a_caption_whose_overwrite_entry_is_off(
     monkeypatch.setattr(metadata, "write_metadata", fake_write)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    window._overwrite_actions[FIELD_DESCRIPTION].setChecked(False)  # noqa: SLF001
+    window._save_options_menu.overwrite_actions[FIELD_DESCRIPTION].setChecked(False)  # noqa: SLF001
     window._description.setPlainText("A new caption.")  # noqa: SLF001
     window._keywords.setPlainText("Eagle")  # noqa: SLF001
     window._save_current()  # noqa: SLF001
@@ -2130,7 +2130,7 @@ def test_save_writes_only_title_and_description_when_keywords_unchecked(
     window._title.setText("New Title")  # noqa: SLF001
     window._description.setPlainText("New description.")  # noqa: SLF001
     window._keywords.setPlainText("Eagle")  # noqa: SLF001
-    window._write_keywords.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.write_keywords.setChecked(False)  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
 
@@ -2152,7 +2152,7 @@ def test_save_skips_title_when_title_unchecked(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     window._title.setText("New Title")  # noqa: SLF001
-    window._write_title.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.write_title.setChecked(False)  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
 
@@ -2171,7 +2171,8 @@ def test_save_with_no_write_fields_nags_and_writes_nothing(
     monkeypatch.setattr(metadata, "write_metadata", lambda *_a, **_k: wrote.append(1) or True)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    for checkbox in (window._write_title, window._write_description, window._write_keywords):  # noqa: SLF001
+    options = window._save_options_menu  # noqa: SLF001
+    for checkbox in (options.write_title, options.write_description, options.write_keywords):
         checkbox.setChecked(False)
 
     window._save_current()  # noqa: SLF001
@@ -2194,7 +2195,7 @@ def test_save_keeps_the_exiftool_backup_by_default(
 
     window._save_current()  # noqa: SLF001
 
-    assert window._backup.isChecked()  # noqa: SLF001
+    assert window._save_options_menu.backup.isChecked()  # noqa: SLF001
     assert captured["backup"] is True
 
 
@@ -2209,7 +2210,7 @@ def test_unchecking_backup_writes_without_an_original_copy(
     captured = _capture_write(monkeypatch)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    window._backup.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.backup.setChecked(False)  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
 
@@ -2227,9 +2228,9 @@ def test_unchecking_write_keywords_disables_overwrite_and_blanks_diff(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
 
-    window._write_keywords.setChecked(False)  # noqa: SLF001 - fires _on_write_field_toggled
+    window._save_options_menu.write_keywords.setChecked(False)  # noqa: SLF001 - fires _on_write_field_toggled
 
-    assert not window._overwrite_actions[FIELD_KEYWORDS].isEnabled()  # noqa: SLF001
+    assert not window._save_options_menu.overwrite_actions[FIELD_KEYWORDS].isEnabled()  # noqa: SLF001
     assert "keywords will not be written" in window._diff.toPlainText().lower()  # noqa: SLF001
 
 
@@ -3688,16 +3689,17 @@ def test_details_toggle_summarizes_keyword_changes(
 
 def test_save_options_default_to_writing_all_fields(window: gui.MainWindow) -> None:
     """The Save options menu defaults match the CLI: write every field, merge, sidecar."""
-    for action in (window._write_title, window._write_description, window._write_keywords):  # noqa: SLF001
+    options = window._save_options_menu  # noqa: SLF001
+    for action in (options.write_title, options.write_description, options.write_keywords):
         assert action.isCheckable()
         assert action.isChecked()
-    overwrite = window._overwrite_actions  # noqa: SLF001
+    overwrite = window._save_options_menu.overwrite_actions  # noqa: SLF001
     assert not overwrite[FIELD_KEYWORDS].isChecked()  # merge, not overwrite
     # A title and a description hold one value each, so the generated one replaces it.
     assert overwrite[FIELD_TITLE].isChecked()
     assert overwrite[FIELD_DESCRIPTION].isChecked()
-    assert window._sidecar_mode() == "all"  # noqa: SLF001 - sidecar, not embed
-    assert window._backup.isChecked()  # noqa: SLF001 - keep ExifTool's *_original
+    assert window._save_options_menu.sidecar_mode() == "all"  # noqa: SLF001 - sidecar, not embed
+    assert window._save_options_menu.backup.isChecked()  # noqa: SLF001 - keep ExifTool's *_original
 
 
 def test_file_menu_offers_csv_export(window: gui.MainWindow) -> None:
@@ -3766,13 +3768,14 @@ def test_help_menu_links_the_documentation(window: gui.MainWindow) -> None:
 
 def test_save_buttons_share_the_options_menu(window: gui.MainWindow) -> None:
     """Both Save buttons carry the same arrow menu holding the write toggles."""
-    actions = window._save_options_menu.actions()  # noqa: SLF001
-    assert window._write_title in actions  # noqa: SLF001
-    assert window._backup in actions  # noqa: SLF001
+    options = window._save_options_menu  # noqa: SLF001
+    actions = options.actions()
+    assert options.write_title in actions
+    assert options.backup in actions
     # The Write To and Overwrite Existing choices hang off submenus of that same menu.
     submenus = [action.menu() for action in actions if action.menu() is not None]
-    assert any(window._sidecar_actions["raw"] in menu.actions() for menu in submenus)  # noqa: SLF001
-    keywords = window._overwrite_actions[FIELD_KEYWORDS]  # noqa: SLF001
+    assert any(options.sidecar_actions["raw"] in menu.actions() for menu in submenus)
+    keywords = options.overwrite_actions[FIELD_KEYWORDS]
     assert any(keywords in menu.actions() for menu in submenus)
 
 
@@ -3783,7 +3786,7 @@ def _unwrapped(tip: str) -> str:
 
 def test_long_tooltips_are_wrapped_into_lines(window: gui.MainWindow) -> None:
     """Tooltips are hard-wrapped, since Qt draws a long plain-text one as a single wide line."""
-    tip = window._backup.toolTip()  # noqa: SLF001
+    tip = window._save_options_menu.backup.toolTip()  # noqa: SLF001
     assert "\n" in tip
     assert max(len(line) for line in tip.splitlines()) <= TOOLTIP_WIDTH
 
@@ -3793,22 +3796,22 @@ def test_save_tooltips_follow_the_chosen_options(window: gui.MainWindow) -> None
     assert "title, description, keywords" in _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
     assert "XMP sidecar" in _unwrapped(window._save_button.toolTip())  # noqa: SLF001
 
-    window._write_description.setChecked(False)  # noqa: SLF001
-    window._sidecar_actions["none"].setChecked(True)  # noqa: SLF001
+    window._save_options_menu.write_description.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.sidecar_actions["none"].setChecked(True)  # noqa: SLF001
 
     tip = _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
     assert "title, keywords" in tip
     assert "into the image file" in tip
     assert "keeping a *_original backup" in tip
 
-    window._sidecar_actions["raw"].setChecked(True)  # noqa: SLF001
+    window._save_options_menu.sidecar_actions["raw"].setChecked(True)  # noqa: SLF001
     assert "to a sidecar for RAW" in _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
 
-    window._sidecar_actions["both"].setChecked(True)  # noqa: SLF001
+    window._save_options_menu.sidecar_actions["both"].setChecked(True)  # noqa: SLF001
     tip = _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
     assert "into the image file and an XMP sidecar" in tip
 
-    window._backup.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.backup.setChecked(False)  # noqa: SLF001
     assert "with no *_original backup" in _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
 
 
@@ -4589,8 +4592,8 @@ def test_save_config_writes_the_gui_choices(
     window._model.setCurrentText("qwen/qwen3-vl-30b")  # noqa: SLF001
     window._api_key.setText("sk-secret")  # noqa: SLF001 - must NOT be written
     window._extensions.setText("jpg,cr3")  # noqa: SLF001
-    window._sidecar_actions["raw"].setChecked(True)  # noqa: SLF001
-    window._backup.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.sidecar_actions["raw"].setChecked(True)  # noqa: SLF001
+    window._save_options_menu.backup.setChecked(False)  # noqa: SLF001
 
     window._save_config()  # noqa: SLF001
 
@@ -5145,7 +5148,7 @@ def test_the_generate_tooltip_names_what_a_chained_save_writes(
 ) -> None:
     """The mode's whole risk is writing something you did not mean to, so the button says it."""
     window._autosave_action.setChecked(True)  # noqa: SLF001
-    window._write_description.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.write_description.setChecked(False)  # noqa: SLF001
 
     tip = _unwrapped(window._generate_button.toolTip())  # noqa: SLF001
 
@@ -5177,7 +5180,8 @@ def test_turning_the_toggle_on_with_nothing_to_write_says_so(
     window: gui.MainWindow,
 ) -> None:
     """Promising an unattended write the save options cannot make is worth catching early."""
-    for action in (window._write_title, window._write_description, window._write_keywords):  # noqa: SLF001
+    options = window._save_options_menu  # noqa: SLF001
+    for action in (options.write_title, options.write_description, options.write_keywords):
         action.setChecked(False)
 
     window._autosave_action.setChecked(True)  # noqa: SLF001
@@ -5194,7 +5198,8 @@ def test_an_unwritable_run_reports_instead_of_saving_nothing(
     _ready_pair_for_autosave(window, tmp_path, monkeypatch)
     saved: list[list[Path]] = []
     monkeypatch.setattr(window, "_run_save", lambda items: saved.append([i.path for i in items]))
-    for action in (window._write_title, window._write_description, window._write_keywords):  # noqa: SLF001
+    options = window._save_options_menu  # noqa: SLF001
+    for action in (options.write_title, options.write_description, options.write_keywords):
         action.setChecked(False)
 
     window._continue_after_run()  # noqa: SLF001
@@ -6327,7 +6332,7 @@ def test_the_copyright_row_compares_the_file_with_what_a_save_writes(
     window._copyright_dialog._preserve_copyright_box.setChecked(False)  # noqa: SLF001
     assert window._planned_copyright.text() == "Copyright (c) 2011 Ada Lovelace"  # noqa: SLF001
 
-    window._write_copyright.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.write_copyright.setChecked(False)  # noqa: SLF001
     assert window._planned_copyright.text() == "(not written)"  # noqa: SLF001
 
 
@@ -6431,7 +6436,8 @@ def test_a_copyright_alone_is_enough_to_save(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
-    for action in (window._write_title, window._write_description, window._write_keywords):  # noqa: SLF001
+    options = window._save_options_menu  # noqa: SLF001
+    for action in (options.write_title, options.write_description, options.write_keywords):
         action.setChecked(False)
 
     window._save_current()  # noqa: SLF001
@@ -6783,7 +6789,7 @@ def test_write_copyright_toggle_skips_the_block(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     _fill_copyright(window)
-    window._write_copyright.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.write_copyright.setChecked(False)  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
 
@@ -6797,7 +6803,7 @@ def test_write_copyright_toggle_reaches_the_save_summary(window: gui.MainWindow)
     _fill_copyright(window)
     assert "copyright" in window._save_options_summary()  # noqa: SLF001
 
-    window._write_copyright.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.write_copyright.setChecked(False)  # noqa: SLF001
 
     assert "copyright" not in window._save_options_summary()  # noqa: SLF001
 
@@ -6805,23 +6811,24 @@ def test_write_copyright_toggle_reaches_the_save_summary(window: gui.MainWindow)
 def test_write_copyright_is_grayed_out_until_there_is_one(window: gui.MainWindow) -> None:
     """A toggle for something that cannot happen yet says so instead of looking like a choice."""
     _fill_copyright(window, artist="", notice="", marked=None)
-    assert not window._write_copyright.isEnabled()  # noqa: SLF001
-    assert "Settings > Copyright" in window._write_copyright.toolTip()  # noqa: SLF001
+    assert not window._save_options_menu.write_copyright.isEnabled()  # noqa: SLF001
+    assert "Settings > Copyright" in window._save_options_menu.write_copyright.toolTip()  # noqa: SLF001
 
     _fill_copyright(window)
 
-    assert window._write_copyright.isEnabled()  # noqa: SLF001
-    assert window._write_copyright.isChecked()  # noqa: SLF001
+    assert window._save_options_menu.write_copyright.isEnabled()  # noqa: SLF001
+    assert window._save_options_menu.write_copyright.isChecked()  # noqa: SLF001
 
 
 def test_a_copyright_alone_needs_its_toggle_on(window: gui.MainWindow) -> None:
     """With every field off and the copyright skipped, a save would write nothing and says so."""
     _fill_copyright(window)
-    for action in (window._write_title, window._write_description, window._write_keywords):  # noqa: SLF001
+    options = window._save_options_menu  # noqa: SLF001
+    for action in (options.write_title, options.write_description, options.write_keywords):
         action.setChecked(False)
     assert window._write_fields_chosen()  # noqa: SLF001
 
-    window._write_copyright.setChecked(False)  # noqa: SLF001
+    window._save_options_menu.write_copyright.setChecked(False)  # noqa: SLF001
 
     assert not window._write_fields_chosen()  # noqa: SLF001
 

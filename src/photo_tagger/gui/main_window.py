@@ -76,14 +76,12 @@ from PySide6.QtWidgets import (
 
 from photo_tagger import __version__, i18n, telemetry
 from photo_tagger.cli_options import (
-    OutputConfig,
     known_config_keys,
     load_defaults,
     resolve_notify,
-    resolve_sidecar_mode,
     to_pacing_plan,
 )
-from photo_tagger.config import DEFAULT_OUTPUT_LANGUAGE, DEFAULT_SIDECAR_MODE, SidecarMode
+from photo_tagger.config import DEFAULT_OUTPUT_LANGUAGE
 from photo_tagger.config_file import (
     config_file_kind,
     find_config_file,
@@ -115,6 +113,7 @@ from photo_tagger.gui.common import (
 )
 from photo_tagger.gui.copyright import CopyrightDialog
 from photo_tagger.gui.pacing import PacingDialog
+from photo_tagger.gui.save_options import SaveOptionsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
 from photo_tagger.gui.viewer import ImageViewerDialog
 from photo_tagger.gui.widgets import (
@@ -247,7 +246,6 @@ from photo_tagger.gui_state import (
     save_options_for,
     save_targets,
     search_summary,
-    sidecar_overrides_summary,
     sort_photos,
     source_label,
     status_sort_rank,
@@ -472,69 +470,6 @@ _SELECT_STATUSES: tuple[tuple[str, str], ...] = (
     (FILTER_MIXED_SCRIPT, gettext_noop("Mixed writing systems")),
 )
 
-# The Write To submenu, mirroring the CLI's --sidecar-mode. Each entry is (mode, menu label,
-# tooltip). Exclusive: a save writes one way, and the mixed mode decides per photo.
-_WRITE_TO_CHOICES: tuple[tuple[SidecarMode, str, str], ...] = (
-    (
-        "all",
-        gettext_noop("XMP Sidecar"),
-        gettext_noop("Write a .xmp file next to every photo, leaving the photos untouched."),
-    ),
-    (
-        "none",
-        gettext_noop("The Photo Itself"),
-        gettext_noop("Write into every image file, creating no sidecars."),
-    ),
-    (
-        "raw",
-        gettext_noop("Sidecar for RAW, Photo Otherwise"),
-        gettext_noop(
-            "Write a .xmp file beside each RAW photo and write into everything else. For a "
-            "folder of RAW+JPEG pairs.",
-        ),
-    ),
-    (
-        "both",
-        gettext_noop("Both, Photo and Sidecar"),
-        gettext_noop(
-            "Write into every photo and put the same metadata in a .xmp beside it. Twice the "
-            "writes, and the photo travels tagged even where the sidecar is left behind.",
-        ),
-    ),
-)
-
-# The Overwrite Existing submenu, as (field, label, tooltip). Keywords merge, so that entry starts
-# unchecked; a title and a description hold one value each, and replacing is what clears a
-# camera-written placeholder.
-_OVERWRITE_CHOICES: tuple[tuple[str, str, str], ...] = (
-    (
-        FIELD_TITLE,
-        gettext_noop("Title"),
-        gettext_noop("Replace an existing title. Uncheck to fill in only photos without one."),
-    ),
-    (
-        FIELD_DESCRIPTION,
-        gettext_noop("Description"),
-        gettext_noop(
-            "Replace an existing description. Uncheck to fill in only photos without one.",
-        ),
-    ),
-    (
-        FIELD_KEYWORDS,
-        gettext_noop("Keywords"),
-        gettext_noop("Replace existing keywords instead of merging the new ones in."),
-    ),
-)
-
-# How each Write To mode reads inside the Save buttons' "Currently writes ..." sentence. Lambdas,
-# not strings: the sentence is built on demand, so each phrase has to be translated on demand too.
-_WRITE_TO_SUMMARIES: dict[SidecarMode, Callable[[], str]] = {
-    "all": lambda: _("to an XMP sidecar"),
-    "none": lambda: _("into the image file"),
-    "raw": lambda: _("to a sidecar for RAW, into the image file otherwise"),
-    "both": lambda: _("into the image file and an XMP sidecar"),
-}
-
 # Grace period _stop_scan gives an in-flight batched exiftool call to finish on its own before
 # detaching rather than blocking the caller. Comfortably above a normal scan's duration.
 _SCAN_STOP_TIMEOUT_MS = 3000
@@ -614,7 +549,12 @@ class MainWindow(QMainWindow):
         # Where the vocabulary builder last wrote, so a finished build can offer to use it.
         self._built_vocabulary: Path | None = None
         # Built before the panes: both Save buttons (detail pane and bottom bar) attach it.
-        self._save_options_menu = self._build_save_options_menu()
+        self._save_options_menu = SaveOptionsMenu(
+            self,
+            self._defaults.output,
+            sidecar_overrides=self._sidecar_overrides,
+        )
+        self._save_options_menu.changed.connect(self._on_save_options_changed)
         # Same here, for the one action both Generate buttons offer in their arrow menus.
         self._autosave_action = self._build_autosave_action()
 
@@ -1239,15 +1179,7 @@ class MainWindow(QMainWindow):
             api_base_url=self._url.text().strip() or None,
             extensions=self._extensions.text().strip(),
             recursive=self._recursive.isChecked(),
-            write_title=self._write_title.isChecked(),
-            write_description=self._write_description.isChecked(),
-            write_keywords=self._write_keywords.isChecked(),
-            write_copyright=self._write_copyright.isChecked(),
-            preserve_keywords=not self._overwrites(FIELD_KEYWORDS),
-            preserve_title=not self._overwrites(FIELD_TITLE),
-            preserve_description=not self._overwrites(FIELD_DESCRIPTION),
-            sidecar_mode=self._sidecar_mode(),
-            backup_xmp=self._backup.isChecked(),
+            **self._save_options_menu.config_values(),
             telemetry_enabled=self._telemetry_enabled,
             vocabulary=self._vocabulary_path,
             vocabulary_strict=self._vocabulary_strict,
@@ -1256,7 +1188,7 @@ class MainWindow(QMainWindow):
             notify=self._notify_action.isChecked(),
             notify_sound=self._notify_sound_action.isChecked(),
             repair_language=self._repair_language,
-            **self._copyright_dialog.values(),
+            **self._copyright_dialog.config_values(),
             save_after_generating=self._autosave_action.isChecked(),
             duty=pacing.duty_percent,
             battery_floor=pacing.battery_floor,
@@ -2533,182 +2465,20 @@ class MainWindow(QMainWindow):
         self._details_toggle.setArrowType(arrow)
         self._details_panel.setVisible(expanded)
 
-    def _build_save_options_menu(self) -> QMenu:
-        """Build the menu deciding what a save writes: fields, merge mode, sidecar, backup."""
-        # Titled because this one menu appears in four places: the popup of both Save buttons,
-        # where it needs no title, and a submenu of both Generate menus, where it does. Every
-        # save goes through it, including the one a run chains for itself, and a button that is
-        # about to write has to be able to say what it will write.
-        menu = QMenu(_("Save Options"), self)
-        menu.setToolTipsVisible(True)
-        self._write_title = QAction(_("Write Title"), self)
-        self._write_title.setToolTip(
-            tooltip("Write the title. Uncheck to leave the existing title as is."),
-        )
-        self._write_description = QAction(_("Write Description"), self)
-        self._write_description.setToolTip(
-            tooltip("Write the description. Uncheck to leave the existing description as is."),
-        )
-        self._write_keywords = QAction(_("Write Keywords"), self)
-        self._write_keywords.setToolTip(
-            tooltip(
-                "Write keywords. Uncheck to leave existing keywords untouched, e.g. to refresh "
-                "only the title and description.",
-            ),
-        )
-        # Its tooltip and enabled state follow whether a copyright is set at all, so both are left
-        # to _sync_copyright_enabled, which the dialog calls as it is built.
-        self._write_copyright = QAction(_("Write Copyright"), self)
-        # Defaults come from the config file, so choices saved via Settings > Save Settings as
-        # Defaults come back on the next launch.
-        output = self._defaults.output
-        for action, checked in (
-            (self._write_title, output.write_title),
-            (self._write_description, output.write_description),
-            (self._write_keywords, output.write_keywords),
-            (self._write_copyright, output.write_copyright),
-        ):
-            action.setCheckable(True)
-            action.setChecked(checked)
-            menu.addAction(action)
-        menu.addSeparator()
-        menu.addMenu(self._build_overwrite_menu(output))
-        # Connect only after the Overwrite submenu exists, since the handler enables and disables
-        # its entries.
-        for action in (self._write_title, self._write_description, self._write_keywords):
-            action.toggled.connect(self._on_write_field_toggled)
-
-        self._backup = QAction(_("Keep ExifTool Backup"), self)
-        self._backup.setToolTip(
-            tooltip(
-                "Let ExifTool save the untouched file as *_original before writing. Uncheck to "
-                "write in place, which leaves no extra copies filling up the disk on a large "
-                "batch (make sure you have a backup elsewhere).",
-            ),
-        )
-        self._backup.setCheckable(True)
-        self._backup.setChecked(output.backup_xmp)
-        menu.addAction(self._backup)
-        menu.addMenu(self._build_write_to_menu(resolve_sidecar_mode(output)))
-        # A config that starts with a field off must also start with its Overwrite entry grayed out.
-        self._sync_overwrite_enabled()
-        # Every toggle refreshes the Save buttons' option summary. Connected after the
-        # setChecked calls above so construction never fires into the not-yet-built buttons.
-        for action in (
-            self._write_title,
-            self._write_description,
-            self._write_keywords,
-            self._write_copyright,
-            *self._overwrite_actions.values(),
-            self._backup,
-            *self._sidecar_actions.values(),
-        ):
-            action.toggled.connect(self._refresh_save_tooltips)
-            action.toggled.connect(lambda _on: self._count("save_options"))
-        self._write_copyright.toggled.connect(lambda _on: self._refresh_planned_copyright())
-        return menu
-
-    def _build_overwrite_menu(self, output: OutputConfig) -> QMenu:
-        """Build the Overwrite Existing submenu, each entry pre-picked from the config file."""
-        checked = {
-            FIELD_TITLE: not output.preserve_title,
-            FIELD_DESCRIPTION: not output.preserve_description,
-            FIELD_KEYWORDS: not output.preserve_keywords,
-        }
-        menu = QMenu(_("Overwrite Existing"), self)
-        menu.setToolTipsVisible(True)
-        menu.setToolTip(tooltip("Which fields a save replaces when the photo already has one."))
-        self._overwrite_actions: dict[str, QAction] = {}
-        for field_name, label, hint in _OVERWRITE_CHOICES:
-            action = QAction(_(label), self)
-            action.setCheckable(True)
-            action.setChecked(checked[field_name])
-            action.setToolTip(tooltip(hint))
-            menu.addAction(action)
-            self._overwrite_actions[field_name] = action
-        self._overwrite_actions[FIELD_KEYWORDS].toggled.connect(self._refresh_derived)
-        return menu
-
-    def _overwrites(self, field_name: str) -> bool:
-        """Report whether a save replaces *field_name* on a photo that already carries one."""
-        return self._overwrite_actions[field_name].isChecked()
-
-    def _build_write_to_menu(self, mode: SidecarMode) -> QMenu:
-        """Build the exclusive Write To submenu, with *mode* pre-picked."""
-        menu = QMenu(_("Write To"), self)
-        menu.setToolTipsVisible(True)
-        menu.setToolTip(tooltip("Where a save puts the metadata."))
-        group = self._sidecar_group = QActionGroup(self)
-        self._sidecar_actions = {}
-        for value, label, hint in _WRITE_TO_CHOICES:
-            action = QAction(_(label), self)
-            action.setCheckable(True)
-            action.setChecked(value == mode)
-            action.setToolTip(tooltip(hint))
-            group.addAction(action)
-            menu.addAction(action)
-            self._sidecar_actions[value] = action
-        if overrides := sidecar_overrides_summary(self._sidecar_overrides):
-            # Set in the config file, with no control here, so the menu at least says so.
-            menu.addSeparator()
-            note = QAction(_("From the config file: {overrides}").format(overrides=overrides), self)
-            note.setEnabled(False)
-            menu.addAction(note)
-        return menu
-
-    def _sidecar_mode(self) -> SidecarMode:
-        """Return the picked Write To mode; the action group keeps exactly one checked."""
-        for value, action in self._sidecar_actions.items():
-            if action.isChecked():
-                return value
-        return DEFAULT_SIDECAR_MODE
+    def _on_save_options_changed(self) -> None:
+        """Follow a Save Options toggle into everything that describes or previews a save."""
+        self._count("save_options")
+        self._refresh_save_tooltips()
+        self._refresh_derived()
+        self._refresh_planned_copyright()
 
     def _save_options_summary(self) -> str:
-        """Describe what a save currently writes, for the Save buttons' tooltips."""
-        fields = [
-            name
-            for action, name in (
-                (self._write_title, _("title")),
-                (self._write_description, _("description")),
-                (self._write_keywords, _("keywords")),
-            )
-            if action.isChecked()
-        ]
-        if self._writes_copyright():
-            fields.append(_("your copyright"))
-        parts = [", ".join(fields) if fields else _("nothing (pick a field in the arrow menu)")]
-        if self._write_keywords.isChecked():
-            parts.append(
-                _("overwriting existing keywords")
-                if self._overwrites(FIELD_KEYWORDS)
-                else _("merging with existing keywords"),
-            )
-        if kept := self._kept_captions():
-            parts.append(_("keeping any existing {fields}").format(fields=", ".join(kept)))
-        parts.append(_WRITE_TO_SUMMARIES[self._sidecar_mode()]())
-        if overrides := sidecar_overrides_summary(self._sidecar_overrides):
-            parts.append(_("but {overrides}").format(overrides=overrides))
-        parts.append(
-            _("keeping a *_original backup")
-            if self._backup.isChecked()
-            else _("with no *_original backup"),
-        )
-        return ", ".join(parts)
+        """Describe what a save currently writes, for the Save and Generate buttons' tooltips."""
+        return self._save_options_menu.summary(writes_copyright=self._writes_copyright())
 
     def _writes_copyright(self) -> bool:
         """Report whether a save stamps a copyright: one is set, and Write Copyright is on."""
-        return self._write_copyright.isChecked() and self._copyright_dialog.usable
-
-    def _kept_captions(self) -> list[str]:
-        """Name the text fields a save writes only where the photo has none, for the summary."""
-        return [
-            name
-            for action, field_name, name in (
-                (self._write_title, FIELD_TITLE, _("title")),
-                (self._write_description, FIELD_DESCRIPTION, _("description")),
-            )
-            if action.isChecked() and not self._overwrites(field_name)
-        ]
+        return self._save_options_menu.write_copyright.isChecked() and self._copyright_dialog.usable
 
     def _refresh_save_tooltips(self) -> None:
         """Keep both Save buttons' tooltips describing the currently chosen options."""
@@ -3193,7 +2963,7 @@ class MainWindow(QMainWindow):
             target = target.with_suffix(".csv")
         # Fold any unsaved edits in the open photo into its row before exporting.
         self._commit_current()
-        overwrite = self._overwrites(FIELD_KEYWORDS)
+        overwrite = self._save_options_menu.overwrites(FIELD_KEYWORDS)
         verbatim = self._verbatim_spellings()
         rows = [
             photo_item_to_report_row(item, overwrite=overwrite, verbatim=verbatim)
@@ -3807,32 +3577,18 @@ class MainWindow(QMainWindow):
         self._viewer_cache = (key, pixmap)
         return pixmap
 
-    def _on_write_field_toggled(self) -> None:
-        """Follow a field being switched on or off: its Overwrite entry and the keyword preview."""
-        self._sync_overwrite_enabled()
-        self._refresh_derived()
-
-    def _sync_overwrite_enabled(self) -> None:
-        """Replace-or-keep only matters for a field being written; gray the rest out."""
-        for field_name, action in (
-            (FIELD_TITLE, self._write_title),
-            (FIELD_DESCRIPTION, self._write_description),
-            (FIELD_KEYWORDS, self._write_keywords),
-        ):
-            self._overwrite_actions[field_name].setEnabled(action.isChecked())
-
     def _refresh_derived(self) -> None:
         """Recompute the keyword-change diff and hierarchy preview from the edited fields."""
         if self._current is None:
             return
-        if not self._write_keywords.isChecked():
+        if not self._save_options_menu.write_keywords.isChecked():
             # Keywords are not being written, so the diff and hierarchy do not apply.
             self._diff.setHtml(_("(keywords will not be written)"))
             self._hierarchy.setPlainText(_(NONE_LABEL))
             self._details_toggle.setText(_("Keyword changes (not written)"))
             return
         edited = parse_keyword_lines(self._keywords.toPlainText())
-        overwrite = self._overwrites(FIELD_KEYWORDS)
+        overwrite = self._save_options_menu.overwrites(FIELD_KEYWORDS)
         existing = self._current.existing_keywords
         verbatim = self._verbatim_spellings()
         paths = hierarchy_preview(existing, edited, overwrite=overwrite, verbatim=verbatim)
@@ -3880,21 +3636,9 @@ class MainWindow(QMainWindow):
 
     def _save_options(self) -> SaveOptions:
         """Snapshot the save toggles, so a background write never has to read a widget."""
-        write_copyright = self._write_copyright.isChecked()
-        return SaveOptions(
-            write_title=self._write_title.isChecked(),
-            write_description=self._write_description.isChecked(),
-            write_keywords=self._write_keywords.isChecked(),
-            overwrite_title=self._overwrites(FIELD_TITLE),
-            overwrite_description=self._overwrites(FIELD_DESCRIPTION),
-            overwrite_keywords=self._overwrites(FIELD_KEYWORDS),
-            backup=self._backup.isChecked(),
-            sidecar_mode=self._sidecar_mode(),
-            sidecar_overrides=self._sidecar_overrides,
+        return self._save_options_menu.options(
+            copyright_fields=self._copyright_dialog.fields,
             verbatim=self._verbatim_spellings(),
-            # None when Write Copyright is off, so an unchecked toggle skips the whole block
-            # without anyone having to empty the dialog that holds it.
-            extra_fields=self._copyright_dialog.fields if write_copyright else None,
         )
 
     def _verbatim_spellings(self) -> dict[str, str] | None:
@@ -4744,28 +4488,9 @@ class MainWindow(QMainWindow):
 
     def _on_copyright_changed(self) -> None:
         """Follow an edit in the Copyright dialog: the toggle, the Save tooltips, the open photo."""
-        self._sync_copyright_enabled()
+        self._save_options_menu.set_copyright_usable(usable=self._copyright_dialog.usable)
         self._refresh_save_tooltips()
         self._refresh_planned_copyright()
-
-    def _sync_copyright_enabled(self) -> None:
-        """
-        Gray out Write Copyright while there is no copyright to write.
-
-        The same rule the Overwrite entries follow: a toggle for something that cannot happen yet
-        should say so rather than look like a choice. It stays checked while disabled, so filling
-        the dialog in switches it straight on.
-        """
-        usable = self._copyright_dialog.usable
-        self._write_copyright.setEnabled(usable)
-        self._write_copyright.setToolTip(
-            tooltip(
-                "Write the credit and copyright notice from Settings > Copyright. Uncheck to skip "
-                "them for now without clearing what you typed there.",
-            )
-            if usable
-            else tooltip("Nothing to write yet. Fill in Settings > Copyright first."),
-        )
 
     def _preview_year(self) -> int:
         """
@@ -4782,9 +4507,10 @@ class MainWindow(QMainWindow):
         """Say in the Copyright row what a save writes on the open photo, if anything."""
         if self._current is None:
             return
-        fields = self._copyright_dialog.fields if self._write_copyright.isChecked() else None
+        options = self._save_options()
+        fields = options.extra_fields
         sources = self._current.field_sources
-        targets = save_targets(self._save_options(), self._current.path)
+        targets = save_targets(options, self._current.path)
         if keeps_copyright(fields, sources, targets):
             self._planned_copyright.setText(_("(keeps the notice it has)"))
             return
