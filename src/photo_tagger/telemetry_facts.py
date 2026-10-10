@@ -12,7 +12,10 @@ import json
 import locale
 import os
 import re
+import site
 import sys
+import sysconfig
+import traceback
 from dataclasses import fields
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +25,7 @@ from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
+    from types import TracebackType
 
 
 # Where a model server runs, when it is not a known public service.
@@ -225,6 +229,28 @@ MAX_MODEL_CHARS = 100
 _HUB_ID_SLASHES = 1
 # The collector's clamp for a string inside a beacon (MAX_JSON_STR in telemetry/worker.js).
 MAX_JOINED_CHARS = 1000
+# A stack frame with no safe name: outside every import root, or under a folder whose name is not a
+# Python identifier (a folder of photos, a user name with a space in it).
+UNKNOWN_MODULE = "?"
+# Generated code (a dataclass __init__, a template) runs from a pseudo-file such as "<string>".
+_PSEUDO_FILE = re.compile(r"<[a-z_]+>")
+# The deepest frames a crash beacon keeps from the whole stack.
+MAX_STACK_FRAMES = 40
+# The exceptions a crash beacon names from the chain behind the one that escaped.
+MAX_CHAINED_EXCEPTIONS = 5
+# The libraries a crash most often comes from. A crash beacon reports the versions installed.
+CRASH_LIBRARIES = (
+    "cyclopts",
+    "httpx",
+    "httpx2",
+    "openai",
+    "pillow",
+    "pydantic",
+    "pydantic-ai-slim",
+    "pyexiftool",
+    "pyside6",
+    "rawpy",
+)
 
 _LOCALE_PATTERN = re.compile(r"^([a-z]{2,3})(?:[_-]([a-z]{2}|\d{3}))?\b", re.IGNORECASE)
 
@@ -506,3 +532,100 @@ def quantile(values: Sequence[float], q: float) -> float:
 def mean(values: Sequence[float]) -> float:
     """Return the arithmetic mean of *values*, or 0.0 when empty."""
     return sum(values) / len(values) if values else 0.0
+
+
+def frame_module(filename: str, roots: Sequence[str] | None = None) -> str:
+    """
+    Name the module a stack frame ran in, or :data:`UNKNOWN_MODULE`.
+
+    A frame's file path can hold the user's name and folders, so only the part below an import root
+    (a ``sys.path`` entry) is kept, and only when every part is a Python identifier: a package path
+    such as ``pydantic_ai.agent``, never a folder of photos. photo-tagger's own modules are found by
+    the package name, so a checkout and the bundled app name them too.
+    """
+    if _PSEUDO_FILE.fullmatch(filename):
+        return filename
+    if filename.startswith("<frozen ") and filename.endswith(">"):
+        return _dotted(filename.removeprefix("<frozen ").removesuffix(">").split("."))
+    path = Path(filename)
+    parts = path.with_suffix("").parts
+    if "photo_tagger" in parts:
+        anchor = len(parts) - 1 - parts[::-1].index("photo_tagger")
+        return _dotted(parts[anchor:])
+    if not path.is_absolute():
+        # A script run by a relative path is the user's own file, in a folder of theirs.
+        return UNKNOWN_MODULE
+    # The longest root first, so site-packages wins over the Python directory that holds it.
+    for root in sorted(_import_roots() if roots is None else roots, key=len, reverse=True):
+        if path.is_relative_to(root):
+            return _dotted(path.relative_to(root).with_suffix("").parts)
+    return UNKNOWN_MODULE
+
+
+def _dotted(parts: Sequence[str]) -> str:
+    """Join module path parts with dots, or name no module if a part is not an identifier."""
+    names = list(parts)
+    if names and names[-1] == "__init__":
+        names.pop()
+    if names and all(name.isidentifier() for name in names):
+        return ".".join(names)
+    return UNKNOWN_MODULE
+
+
+def _import_roots() -> list[str]:
+    """
+    Return the folders library code is imported from: the standard library and site-packages.
+
+    Any other ``sys.path`` entry (the working directory, a folder a user put on ``PYTHONPATH``) can
+    sit in their home folder and name it, so a frame there names no module.
+    """
+    paths = sysconfig.get_paths()
+    roots = [paths[key] for key in ("stdlib", "platstdlib", "purelib", "platlib") if key in paths]
+    if site.ENABLE_USER_SITE and (user_site := site.getusersitepackages()):
+        roots.append(user_site)
+    if bundle := getattr(sys, "_MEIPASS", None):
+        roots.append(str(bundle))  # the PyInstaller app, whose modules live under its own folder
+    return [root for root in dict.fromkeys(roots) if Path(root).is_absolute()]
+
+
+def stack_frames(tb: TracebackType | None) -> list[tuple[str, str, int]]:
+    """
+    Return each frame of *tb*, outermost first, as ``(module, function, line)``.
+
+    No file path, source line, or local value is kept: a function name and a line number are facts
+    about photo-tagger's code and its libraries, never about the user.
+    """
+    roots = _import_roots()
+    return [
+        (frame_module(frame.filename, roots), frame.name, frame.lineno or 0)
+        for frame in traceback.extract_tb(tb)
+    ]
+
+
+def exception_chain(exc: BaseException) -> str:
+    """
+    Name *exc* and the exceptions behind it, outermost first: ``"FieldError<KeyError"``.
+
+    It follows ``raise ... from`` and the implicit context the way a traceback prints them, and
+    stops at :data:`MAX_CHAINED_EXCEPTIONS` names or at a loop.
+    """
+    names: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen and len(names) < MAX_CHAINED_EXCEPTIONS:
+        seen.add(id(current))
+        names.append(type(current).__name__)
+        implicit = None if current.__suppress_context__ else current.__context__
+        current = current.__cause__ or implicit
+    return "<".join(names)
+
+
+def library_versions(names: Iterable[str] = CRASH_LIBRARIES) -> str:
+    """Return ``name=version`` for each library in *names* that is installed, comma-joined."""
+    found: list[str] = []
+    for name in names:
+        try:
+            found.append(f"{name}={importlib.metadata.version(name)}")
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return ",".join(found)

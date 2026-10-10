@@ -836,9 +836,9 @@ class TelemetryConfig:
             help=(
                 "Send anonymous usage stats (the settings and features used, model, batch size, "
                 "OS, CPU/GPU model, RAM size, timing, outcomes) and anonymous crash reports (error "
-                "type and in-app code location only) to help guide development. No photos, file "
-                "paths, filenames, tags, prompts, error messages, or personal data are ever sent. "
-                "Disable with --no-telemetry, PHOTO_TAGGER_TELEMETRY=0, or the cross-tool "
+                "type and stack trace, code locations only) to help guide development. No photos, "
+                "file paths, filenames, tags, prompts, error messages, or personal data are ever "
+                "sent. Disable with --no-telemetry, PHOTO_TAGGER_TELEMETRY=0, or the cross-tool "
                 "DO_NOT_TRACK=1. PHOTO_TAGGER_TELEMETRY=1 sends anyway when DO_NOT_TRACK is set"
             ),
         ),

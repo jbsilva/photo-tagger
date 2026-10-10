@@ -298,6 +298,7 @@ class RunTally:
     save_failures: int = 0
     review: ReviewTally = field(default_factory=ReviewTally)
     failures: dict[str, str] = field(default_factory=dict)  # photo key -> failure kind
+    failure_types: dict[str, str] = field(default_factory=dict)  # photo key -> exception type
     photo_seconds: list[float] = field(default_factory=list)
     keywords: list[float] = field(default_factory=list)
     titles: list[float] = field(default_factory=list)
@@ -319,6 +320,7 @@ class RunTally:
             elif not proposal.foreign_terms:
                 self.mixed_pass_fixed += 1
         self.failures.pop(key, None)
+        self.failure_types.pop(key, None)
         self.cache_hits += int(proposal.from_cache)
         self.language_repairs += int(proposal.repaired)
         self.vocabulary_mapped += proposal.vocabulary_mapped
@@ -335,11 +337,13 @@ class RunTally:
         self.titles.append(len(proposal.title))
         self.descriptions.append(len(proposal.description))
 
-    def failed(self, key: str, kind: str) -> None:
+    def failed(self, key: str, kind: str, error_type: str = "") -> None:
         """Count one photo that failed; a later success in a pass takes it back."""
         if self.passing is None:
             self.initial_failures += 1
         self.failures[key] = kind
+        if error_type:
+            self.failure_types[key] = error_type
 
     def generation_ended(self, now: float, *, rested: float, rests: int) -> None:
         """Close a generation pass, adding the time and the pacing rests it took."""
@@ -409,6 +413,7 @@ def run_info(tally: RunTally, end: RunEnd) -> telemetry.RunInfo:
         inference_calls=tally.inference_calls,
         inference_seconds=tally.inference_seconds,
         failure_kinds=telemetry.failure_kinds_summary(Counter(tally.failures.values())),
+        failure_types=telemetry.failure_kinds_summary(Counter(tally.failure_types.values())),
         language_repairs=tally.language_repairs,
         flagged=end.flagged,
         vocabulary_mapped=tally.vocabulary_mapped,

@@ -9,6 +9,7 @@ import importlib.metadata
 import io
 import locale
 import sys
+import sysconfig
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -300,3 +301,109 @@ def test_joined_keeps_the_names_that_fit_after_one_that_does_not() -> None:
     """One overlong name must not push every later name out of the list."""
     result = facts.joined(["a" * 2000, "b", "c"])
     assert result == "b,c"
+
+
+@pytest.mark.parametrize(
+    ("filename", "roots", "expected"),
+    [
+        ("<string>", [], "<string>"),
+        ("<frozen importlib._bootstrap>", [], "importlib._bootstrap"),
+        ("/Users/x/Dev/photo-tagger/src/photo_tagger/pipeline.py", [], "photo_tagger.pipeline"),
+        ("/Applications/Photo Tagger.app/photo_tagger/__init__.py", [], "photo_tagger"),
+        ("pydantic_ai/agent.py", [], facts.UNKNOWN_MODULE),  # relative: a folder of the user's
+        (
+            "/venv/lib/python3.14/site-packages/pydantic_ai/agent/__init__.py",
+            ["/usr/lib/python3.14", "/venv/lib/python3.14/site-packages"],
+            "pydantic_ai.agent",
+        ),
+        (
+            "/usr/lib/python3.14/site-packages/httpx/_client.py",
+            ["/usr/lib/python3.14", "/usr/lib/python3.14/site-packages"],
+            "httpx._client",
+        ),
+        (
+            "/usr/lib/python3.14/asyncio/base_events.py",
+            ["/usr/lib/python3.14"],
+            "asyncio.base_events",
+        ),
+        ("/Users/alice/My Photos/tool.py", ["/Users/alice"], facts.UNKNOWN_MODULE),
+        ("/Users/alice/secret/thing.py", [], facts.UNKNOWN_MODULE),
+    ],
+)
+def test_frame_module_names_modules_never_folders(
+    filename: str,
+    roots: list[str],
+    expected: str,
+) -> None:
+    """Only a package path below an import root survives; a user's folder never does."""
+    assert facts.frame_module(filename, roots) == expected
+
+
+def test_import_roots_are_only_where_libraries_live(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """
+    A ``sys.path`` entry of the user's own (the working directory, a PYTHONPATH folder) is no root.
+
+    Such a folder can sit in the home folder, and naming a module below it would name the folder.
+    """
+    mine = tmp_path / "my_photos"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "path", [str(tmp_path), str(mine), "", "relative/dir"])
+    roots = facts._import_roots()  # noqa: SLF001
+    assert str(mine) not in roots
+    assert str(tmp_path) not in roots
+    assert sysconfig.get_paths()["purelib"] in roots
+    assert facts.frame_module(str(mine / "secret_client" / "script.py")) == facts.UNKNOWN_MODULE
+
+
+def _nested_failure() -> BaseException:
+    def inner() -> None:
+        msg = "/Users/someone/IMG_0001.CR3"
+        raise ValueError(msg)
+
+    try:
+        inner()
+    except ValueError as exc:
+        return exc
+    msg = "inner() must raise"  # pragma: no cover
+    raise AssertionError(msg)  # pragma: no cover
+
+
+def test_stack_frames_keep_functions_and_lines_only() -> None:
+    """Each frame is (module, function, line), outermost first, with no path in any part."""
+    frames = facts.stack_frames(_nested_failure().__traceback__)
+    assert [function for _, function, _ in frames] == ["_nested_failure", "inner"]
+    assert all(line > 0 for _, _, line in frames)
+    assert all("/" not in module and "IMG" not in module for module, _, _ in frames)
+
+
+def test_exception_chain_follows_causes_and_stops() -> None:
+    """Explicit and implicit causes come outermost first; a hidden context or a loop ends it."""
+    explicit = ValueError()
+    explicit.__cause__ = KeyError()
+    assert facts.exception_chain(explicit) == "ValueError<KeyError"
+    implicit = TypeError()
+    implicit.__context__ = KeyError()
+    assert facts.exception_chain(implicit) == "TypeError<KeyError"
+    hidden = TypeError()
+    hidden.__context__ = KeyError()
+    hidden.__suppress_context__ = True
+    assert facts.exception_chain(hidden) == "TypeError"
+    looped = RuntimeError()
+    looped.__cause__ = looped
+    assert facts.exception_chain(looped) == "RuntimeError"
+    chained: BaseException = OSError()
+    for _ in range(8):
+        outer = RuntimeError()
+        outer.__cause__ = chained
+        chained = outer
+    assert facts.exception_chain(chained).count("<") == facts.MAX_CHAINED_EXCEPTIONS - 1
+
+
+def test_library_versions_name_installed_ones_only() -> None:
+    """A library that is not installed is left out rather than reported as missing."""
+    versions = facts.library_versions(["pydantic", "not-a-real-package-xyz"])
+    assert versions.startswith("pydantic=")
+    assert "not-a-real-package-xyz" not in versions

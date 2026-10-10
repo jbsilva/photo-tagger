@@ -258,6 +258,7 @@ def _():
             "success_count": size - failed,
             "failure_count": failed,
             "failure_kinds": f"timeout:{failed}" if failed else "",
+            "failure_types": f"ReadTimeout:{failed}" if failed else "",
             "cache_hits": rng.randrange(max(1, size // 3)),
             "total_tokens": size * rng.randrange(900, 1500),
             "inference_seconds": size * seconds,
@@ -326,8 +327,13 @@ def _(UTC, datetime, demo_envelope, demo_run, demo_settings, random, timedelta, 
                 | {
                     "event": "crash",
                     "exception_type": exception,
+                    "exception_module": "builtins",
+                    "exception_chain": exception,
                     "crash_location": location,
                     "crash_frames": frames,
+                    "crash_stack": "cyclopts.core:__call__:1320>"
+                    + ">".join(f"photo_tagger.{frame}" for frame in frames.split(">")),
+                    "libraries": "openai=2.1.0,pydantic=2.13.5,pydantic-ai-slim=2.46.0",
                 },
             ]
         run = demo_run(rng, base, demo_settings(rng, "cli"), "tag", "", rng.randrange(1, 400))
@@ -605,9 +611,14 @@ def _(pd):
         "ui_language",
         "file_types",
         "failure_kinds",
+        "failure_types",
         "exception_type",
+        "exception_module",
+        "exception_chain",
         "crash_location",
         "crash_frames",
+        "crash_stack",
+        "libraries",
         "power",
         "view_mode",
         "setup.config_file",
@@ -2246,50 +2257,79 @@ def _(COLORS, chart_card, counts, crashes, ev, filled, hbar, mo, pair, trend_lin
 
 
 @app.cell
-def _(COLORS, chart_card, counts, empty, hbar, mo, pair, pd, runs):
+def _(pd):
+    def tallied(frame: pd.DataFrame, column: str, name: str) -> pd.DataFrame:
+        """Sum a "name:count,name:count" *column* over *frame*, each event by its weight."""
+        pairs = [
+            (label, int(count) * weight)
+            for cell, weight in zip(frame[column], frame["weight"], strict=True)
+            for label, _, count in (entry.rpartition(":") for entry in str(cell).split(","))
+            if label and count.isdigit()
+        ]
+        return (
+            pd.DataFrame(pairs, columns=[name, "photos"])
+            .groupby(name, as_index=False)["photos"]
+            .sum()
+            .sort_values("photos", ascending=False)
+        )
+
+    return (tallied,)
+
+
+@app.cell
+def _(COLORS, chart_card, counts, empty, hbar, mo, pair, pd, runs, save_runs, tallied):
     mo.stop(runs.empty, empty("No runs in this window."))
-    _kinds = runs[runs["failure_kinds"] != ""]
-    _pairs = []
-    for _text, _weight in zip(_kinds["failure_kinds"], _kinds["weight"], strict=True):
-        for _entry in _text.split(","):
-            _kind, _, _count = _entry.partition(":")
-            if _kind and _count.isdigit():
-                _pairs.append((_kind, int(_count) * _weight))
-    _failures = (
-        pd.DataFrame(_pairs, columns=["kind", "photos"])
-        .groupby("kind", as_index=False)["photos"]
-        .sum()
-        .sort_values("photos", ascending=False)
-    )
+    _every = pd.concat([runs, save_runs])
+    _kinds = tallied(_every, "failure_kinds", "kind")
+    _errors = tallied(_every, "failure_types", "error")
     _setup = counts(runs[runs["outcome"] == "setup-failed"], "error_kind")
-    pair(
-        chart_card(
-            hbar(
-                _failures,
-                "kind",
-                "photos",
-                title="Why photos fail",
-                subtitle="final failures after the retry pass, by coarse cause",
-                color=COLORS["critical"],
+    _none = mo.md("_No per-photo failures in this window._").callout(kind="success")
+    mo.vstack(
+        [
+            pair(
+                chart_card(
+                    hbar(
+                        _kinds,
+                        "kind",
+                        "photos",
+                        title="Why photos fail",
+                        subtitle="final failures after the retry pass, by coarse cause",
+                        color=COLORS["critical"],
+                    ),
+                    _kinds,
+                )
+                if not _kinds.empty
+                else _none,
+                chart_card(
+                    hbar(
+                        _errors,
+                        "error",
+                        "photos",
+                        title="The errors behind them",
+                        subtitle="error class, and the HTTP status of an HTTP error (v3 on)",
+                        color=COLORS["critical"],
+                    ),
+                    _errors,
+                )
+                if not _errors.empty
+                else empty("No error classes yet (schema v3 only)."),
             ),
-            _failures,
-        )
-        if not _failures.empty
-        else mo.md("_No per-photo failures in this window._").callout(kind="success"),
-        chart_card(
-            hbar(
+            chart_card(
+                hbar(
+                    _setup,
+                    "error_kind",
+                    "events",
+                    title="Why runs never start",
+                    subtitle="the error that stopped a run before its first photo",
+                    color=COLORS["critical"],
+                    label="label",
+                ),
                 _setup,
-                "error_kind",
-                "events",
-                title="Why runs never start",
-                subtitle="the error that stopped a run before its first photo",
-                color=COLORS["critical"],
-                label="label",
-            ),
-            _setup,
-        )
-        if not _setup.empty
-        else mo.md("_Every run in view got to its first photo._").callout(kind="success"),
+            )
+            if not _setup.empty
+            else mo.md("_Every run in view got to its first photo._").callout(kind="success"),
+        ],
+        gap=1,
     )
 
 
@@ -2301,7 +2341,10 @@ def _(crashes, empty, mo):
         .agg(
             crashes=("weight", "sum"),
             installs=("install_id", "nunique"),
+            chain=("exception_chain", "first"),
+            stack=("crash_stack", "first"),
             frames=("crash_frames", "first"),
+            libraries=("libraries", "first"),
         )
         .sort_values("crashes", ascending=False)
         .head(50)
@@ -2310,8 +2353,9 @@ def _(crashes, empty, mo):
         [
             mo.md(
                 "### Crash signatures\n"
-                "Exception type and the deepest photo-tagger frame (`module:function:line`); "
-                "messages are never collected, so a signature is the whole story a beacon tells.",
+                "The exception type and the deepest photo-tagger frame (`module:function:line`), "
+                "with the chain of causes, the whole stack by module (v3 on), and the library "
+                "versions. Messages are never collected.",
             ),
             mo.ui.table(_signatures, page_size=10),
         ],

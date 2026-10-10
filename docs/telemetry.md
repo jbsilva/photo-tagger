@@ -89,32 +89,33 @@ are the closed list of what leaves the machine.
 
 ### Run
 
-| Field                                                         | Example            | What it is                                                                                                                                                   |
-| ------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `job`                                                         | `tag`              | `tag` for a CLI batch, `generate` or `save` for a GUI run.                                                                                                   |
-| `trigger`                                                     | `batch`            | What started the run: `batch`, `single`, `hint`, `retry`, or `watch`.                                                                                        |
-| `outcome`                                                     | `ok`               | `ok`, `partial`, `failed`, `cancelled`, `interrupted`, `empty`, or `setup-failed`.                                                                           |
-| `error_kind`                                                  | `ProviderError`    | The error class that stopped a run before its first photo.                                                                                                   |
-| `provider`, `model`                                           | `lmstudio`         | The backend and the model name. A path keeps only its file name, and a fine-tuned id only its base model.                                                    |
-| `batch_size`                                                  | `42`               | The number of photos in the run.                                                                                                                             |
-| `duration_seconds`                                            | `183.5`            | The run from start to end.                                                                                                                                   |
-| `output_language`, `ui_language`                              | `English`, `pt_BR` | The language of the metadata (a known language name, else `other`) and of the app.                                                                           |
-| `file_types`                                                  | `cr3,jpg`          | The image formats in the batch. An unknown extension counts as `other`.                                                                                      |
-| `success_count`, `failure_count`, `initial_failures`          | `41`, `1`, `3`     | Photos done, photos still failing, and photos that failed at first. A photo is done when it is written, or for a GUI `generate` job, when it has a proposal. |
-| `cache_hits`, `retry_successes`, `workers`                    | `10`, `2`, `1`     | Answers from the cache, photos the retry saved, and the thread count.                                                                                        |
-| `input_tokens`, `output_tokens`, `total_tokens`               | `52000`            | The tokens the model used.                                                                                                                                   |
-| `inference_calls`, `inference_seconds`                        | `33`, `120.2`      | The model calls, and the time inside them.                                                                                                                   |
-| `dry_run`                                                     | `0`                | `1` for a run that wrote nothing.                                                                                                                            |
-| `failure_kinds`                                               | `timeout:3`        | Fixed failure categories, never error text.                                                                                                                  |
-| `language_repairs`, `flagged`                                 | `1`, `2`           | Extra calls for text in mixed writing systems, and photos still flagged.                                                                                     |
-| `vocabulary_mapped`, `vocabulary_dropped`                     | `12`, `3`          | Keywords the vocabulary rewrote, and distinct terms it dropped.                                                                                              |
-| `rested_seconds`, `rests_taken`                               | `600`, `2`         | Pacing rests.                                                                                                                                                |
-| `shoots`                                                      | `3`                | The shoots the batch split into (`--session-gap`).                                                                                                           |
-| `photo_seconds_median`, `photo_seconds_p90`                   | `3.1`, `5.4`       | The model time per photo.                                                                                                                                    |
-| `keywords_mean`, `title_chars_mean`, `description_chars_mean` | `18.2`             | The size of the generated text, never the text.                                                                                                              |
-| `power`, `battery_percent`                                    | `ac`, `80`         | At the end of the run: charger or battery, and the charge.                                                                                                   |
-| `settings`, `setup`                                           |                    | See [Settings](#settings) and [Setup](#setup).                                                                                                               |
-| `gui`, `review`                                               |                    | GUI runs only. See [GUI runs](#gui-runs) and [Review](#review).                                                                                              |
+| Field                                                         | Example                 | What it is                                                                                                                                                   |
+| ------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `job`                                                         | `tag`                   | `tag` for a CLI batch, `generate` or `save` for a GUI run.                                                                                                   |
+| `trigger`                                                     | `batch`                 | What started the run: `batch`, `single`, `hint`, `retry`, or `watch`.                                                                                        |
+| `outcome`                                                     | `ok`                    | `ok`, `partial`, `failed`, `cancelled`, `interrupted`, `empty`, or `setup-failed`.                                                                           |
+| `error_kind`                                                  | `ProviderError`         | The error class that stopped a run before its first photo.                                                                                                   |
+| `provider`, `model`                                           | `lmstudio`              | The backend and the model name. A path keeps only its file name, and a fine-tuned id only its base model.                                                    |
+| `batch_size`                                                  | `42`                    | The number of photos in the run.                                                                                                                             |
+| `duration_seconds`                                            | `183.5`                 | The run from start to end.                                                                                                                                   |
+| `output_language`, `ui_language`                              | `English`, `pt_BR`      | The language of the metadata (a known language name, else `other`) and of the app.                                                                           |
+| `file_types`                                                  | `cr3,jpg`               | The image formats in the batch. An unknown extension counts as `other`.                                                                                      |
+| `success_count`, `failure_count`, `initial_failures`          | `41`, `1`, `3`          | Photos done, photos still failing, and photos that failed at first. A photo is done when it is written, or for a GUI `generate` job, when it has a proposal. |
+| `cache_hits`, `retry_successes`, `workers`                    | `10`, `2`, `1`          | Answers from the cache, photos the retry saved, and the thread count.                                                                                        |
+| `input_tokens`, `output_tokens`, `total_tokens`               | `52000`                 | The tokens the model used.                                                                                                                                   |
+| `inference_calls`, `inference_seconds`                        | `33`, `120.2`           | The model calls, and the time inside them.                                                                                                                   |
+| `dry_run`                                                     | `0`                     | `1` for a run that wrote nothing.                                                                                                                            |
+| `failure_kinds`                                               | `timeout:3`             | Fixed failure categories, never error text.                                                                                                                  |
+| `failure_types`                                               | `ModelHTTPError(404):3` | The error class behind each failure, with the status of an HTTP error.                                                                                       |
+| `language_repairs`, `flagged`                                 | `1`, `2`                | Extra calls for text in mixed writing systems, and photos still flagged.                                                                                     |
+| `vocabulary_mapped`, `vocabulary_dropped`                     | `12`, `3`               | Keywords the vocabulary rewrote, and distinct terms it dropped.                                                                                              |
+| `rested_seconds`, `rests_taken`                               | `600`, `2`              | Pacing rests.                                                                                                                                                |
+| `shoots`                                                      | `3`                     | The shoots the batch split into (`--session-gap`).                                                                                                           |
+| `photo_seconds_median`, `photo_seconds_p90`                   | `3.1`, `5.4`            | The model time per photo.                                                                                                                                    |
+| `keywords_mean`, `title_chars_mean`, `description_chars_mean` | `18.2`                  | The size of the generated text, never the text.                                                                                                              |
+| `power`, `battery_percent`                                    | `ac`, `80`              | At the end of the run: charger or battery, and the charge.                                                                                                   |
+| `settings`, `setup`                                           |                         | See [Settings](#settings) and [Setup](#setup).                                                                                                               |
+| `gui`, `review`                                               |                         | GUI runs only. See [GUI runs](#gui-runs) and [Review](#review).                                                                                              |
 
 ### Session
 
@@ -156,13 +157,19 @@ The names in `details` depend on the command. `show` and `set` report `photos`, 
 
 ### Crash
 
-| Field            | Example                  | What it is                                 |
-| ---------------- | ------------------------ | ------------------------------------------ |
-| `exception_type` | `KeyError`               | The class of the error, never its message. |
-| `crash_location` | `pipeline:run_batch:714` | The deepest photo-tagger code location.    |
-| `crash_frames`   | `main:tag:1400>...`      | The last few photo-tagger code locations.  |
+| Field              | Example                                                    | What it is                                                                    |
+| ------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `exception_type`   | `KeyError`                                                 | The class of the error, never its message.                                    |
+| `exception_module` | `builtins`                                                 | The module that defines that class.                                           |
+| `exception_chain`  | `FieldError<KeyError`                                      | The error and the errors that caused it, the outermost first.                 |
+| `crash_location`   | `pipeline:run_batch:714`                                   | The deepest photo-tagger code location.                                       |
+| `crash_frames`     | `main:tag:1400>...`                                        | The last few photo-tagger code locations.                                     |
+| `crash_stack`      | `photo_tagger.main:tag:1400>...>pydantic_ai.agent:run:512` | The stack trace: each frame as module, function, and line, at most 40 frames. |
+| `libraries`        | `openai=2.1.0,pydantic=2.13.5`                             | The versions of the libraries that crashes most often come from.              |
 
-A crash beacon never carries the error message, because messages can contain file paths.
+The stack trace names library frames too, but only by module name. A frame outside the installed
+packages and the Python library shows as `?`, so a folder name never gets into the report. A crash
+beacon never carries the error message, because messages can contain file paths.
 
 ### Settings
 

@@ -32,6 +32,7 @@ from photo_tagger.pipeline import (
     _UsageAccumulator,
     classify_failure,
     execute_process,
+    failure_type,
     process_photo,
     run_batch,
 )
@@ -481,6 +482,7 @@ def test_run_batch_skips_retry_for_a_rejected_credential(
     assert totals.failed_files == [str(image)]
     assert totals.retry_successes == 0
     assert totals.failure_kinds == {FAILURE_MODEL_API: 1}
+    assert totals.failure_types == {"ModelHTTPError(401)": 1}
 
 
 def test_run_batch_still_reports_on_ctrl_c_during_the_retry_pause(
@@ -698,6 +700,31 @@ def test_run_batch_reports_failure_kinds_in_totals(tmp_path: Path) -> None:
         )
 
     assert received[0].failure_kinds == {"timeout": 1, "metadata-write": 1}
+    # A write that returned False raised nothing, so only the timeout has a type to report.
+    assert received[0].failure_types == {"TimeoutError": 1}
+
+
+class _Response:
+    status_code = 503
+
+
+class _BrokenResponseError(Exception):
+    @property
+    def response(self) -> object:
+        msg = "no response yet"
+        raise RuntimeError(msg)
+
+
+def test_failure_type_adds_the_http_status_when_there_is_one() -> None:
+    """The status comes from the exception or its response; an odd SDK property is survived."""
+    assert failure_type(ModelHTTPError(status_code=404, model_name="m")) == "ModelHTTPError(404)"
+    on_response = _exception_like("HTTPStatusError", "httpx2")
+    on_response.response = _Response()  # type: ignore[attr-defined]
+    assert failure_type(on_response) == "HTTPStatusError(503)"
+    assert failure_type(_BrokenResponseError()) == "_BrokenResponseError"
+    flagged = _exception_like("Weird")
+    flagged.status_code = True  # type: ignore[attr-defined]
+    assert failure_type(flagged) == "Weird"
 
 
 class _DictCache:

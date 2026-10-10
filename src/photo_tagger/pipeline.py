@@ -187,6 +187,7 @@ class _UsageAccumulator:
     inference_calls: int = 0
     cache_hits: int = 0
     failure_kinds: dict[str, int] = field(default_factory=dict)
+    failure_types: dict[str, int] = field(default_factory=dict)
     vocabulary_mapped: int = 0
     vocabulary_dropped: dict[str, int] = field(default_factory=dict)
     flagged_for_review: set[Path] = field(default_factory=set)
@@ -222,10 +223,13 @@ class _UsageAccumulator:
             self.output_tokens += output_tokens
             self.total_tokens += total_tokens
 
-    def add_failure(self, kind: str) -> None:
-        """Count one photo that failed for good, bucketed by coarse *kind*."""
+    def add_failure(self, kind: str, exc: BaseException | None = None) -> None:
+        """Count one photo that failed for good, by coarse *kind* and by the exception behind it."""
         with self._lock:
             self.failure_kinds[kind] = self.failure_kinds.get(kind, 0) + 1
+            if exc is not None:
+                name = failure_type(exc)
+                self.failure_types[name] = self.failure_types.get(name, 0) + 1
 
     def add_review(self, path: Path) -> None:
         """
@@ -288,6 +292,36 @@ def classify_failure(exc: BaseException) -> str:
     if "Status" in name or "HTTP" in name or "API" in name:
         return FAILURE_MODEL_API
     return FAILURE_OTHER
+
+
+def failure_type(exc: BaseException) -> str:
+    """
+    Name the exception behind a failed photo, with the HTTP status if it has one.
+
+    ``ModelHTTPError(404)`` tells a missing model from a rejected key, where the bucket only says
+    "model-api". A class name and a status code are facts about the code and the server, never text
+    from the photo or the server's reply.
+    """
+    name = type(exc).__name__
+    status = _status_code(exc)
+    return f"{name}({status})" if status is not None else name
+
+
+def _status_code(exc: BaseException) -> int | None:
+    """Return the HTTP status an SDK exception carries, on itself or on its response."""
+    for holder in (exc, _attribute(exc, "response")):
+        status = _attribute(holder, "status_code")
+        if isinstance(status, int) and not isinstance(status, bool):
+            return status
+    return None
+
+
+def _attribute(value: object, name: str) -> object:
+    """Read an attribute that an SDK may implement as a property that raises."""
+    try:
+        return getattr(value, name, None)
+    except Exception:  # noqa: BLE001 - an SDK property may raise anything; there is no status then.
+        return None
 
 
 # HTTP status codes that retrying cannot fix: the request itself is rejected, not the server
@@ -965,13 +999,13 @@ def execute_process(
             logger.exception(event, error=str(exc))
             if retry:
                 # Only the retry pass records a kind: it is the photo's final failure.
-                ctx.usage.add_failure(classify_failure(exc))
+                ctx.usage.add_failure(classify_failure(exc), exc)
             elif _is_permanent_failure(exc):
                 # No retry pass could recover this one (e.g. a rejected credential). This is
                 # its final failure too, so classify it now, and flag it so run_batch routes
                 # it straight to the tally instead of into a pass doomed to repeat it.
                 kind = classify_failure(exc)
-                ctx.usage.add_failure(kind)
+                ctx.usage.add_failure(kind, exc)
                 with ctx.permanently_failed_lock:
                     ctx.permanently_failed[image_file] = kind
             _emit_outcome(ctx.on_image_result, image_file, scratch, success=False, retry=retry)
@@ -1021,6 +1055,9 @@ class BatchTotals:
     # Final failures bucketed by coarse kind (timeout, connection, model-validation, ...), so
     # the summary file and telemetry can say WHY photos failed, not just how many.
     failure_kinds: dict[str, int] = field(default_factory=dict)
+    # The exception behind each of those failures, with an HTTP status when it has one:
+    # {"ModelHTTPError(404)": 3} says a model name is wrong, where "model-api" only says "the API".
+    failure_types: dict[str, int] = field(default_factory=dict)
     # What --vocabulary did: how many keywords it rewrote to the catalog's spelling, and which
     # terms strict mode rejected (with how often), so the summary file names the gaps to fill.
     vocabulary_mapped: int = 0
@@ -1615,6 +1652,7 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
         workers=workers,
         dry_run=options.dry_run,
         failure_kinds=dict(usage.failure_kinds),
+        failure_types=dict(usage.failure_types),
         vocabulary_mapped=usage.vocabulary_mapped,
         vocabulary_dropped=dict(usage.vocabulary_dropped),
         flagged_files=sorted(str(path) for path in usage.flagged_for_review),

@@ -1415,6 +1415,7 @@ def _batch_run(  # noqa: PLR0913 - the batch and its beacons and what the run tr
         inference_seconds=totals.inference_seconds,
         dry_run=totals.dry_run,
         failure_kinds=telemetry.failure_kinds_summary(totals.failure_kinds),
+        failure_types=telemetry.failure_kinds_summary(totals.failure_types),
         language_repairs=totals.language_repairs,
         flagged=len(totals.flagged_files),
         vocabulary_mapped=totals.vocabulary_mapped,
@@ -2273,9 +2274,9 @@ def main(argv: list[str] | None = None) -> None:
     Console entry point: run the CLI, reporting an unhandled crash before re-raising.
 
     Expected exits (SystemExit from clean error handling, Ctrl-C) pass through untouched; anything
-    else is a genuine crash, so an anonymous beacon (exception type and in-app code location only,
-    never the message) is sent before the traceback surfaces as usual. An invocation that sent no
-    beacon of its own gets a short command beacon on the way out.
+    else is a genuine crash, so an anonymous beacon (exception type and stack trace as code
+    locations, never the message) is sent before the traceback surfaces as usual. An invocation that
+    sent no beacon of its own gets a short command beacon on the way out.
     """
     tokens = sys.argv[1:] if argv is None else argv
     started = time.monotonic()

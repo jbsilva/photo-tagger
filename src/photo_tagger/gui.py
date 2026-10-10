@@ -331,7 +331,7 @@ from photo_tagger.pacing import (
     PacingPlan,
     build_pacer,
 )
-from photo_tagger.pipeline import FAILURE_OTHER, classify_failure
+from photo_tagger.pipeline import FAILURE_OTHER, classify_failure, failure_type
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
 from photo_tagger.script_guard import find_in_result
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
@@ -854,7 +854,7 @@ class GenerateWorker(QObject):
 
     started = Signal(int)
     file_done = Signal(object)  # Proposal
-    file_failed = Signal(str, str, str)  # path, error message, failure kind
+    file_failed = Signal(str, str, str, str)  # path, error message, failure kind, exception type
     resting = Signal(str)  # status line for a pacing rest
     finished = Signal()
 
@@ -978,7 +978,7 @@ class GenerateWorker(QObject):
             # disabled, photos stuck at "working...") for the rest of the session.
             logger.exception("gui_agent_construction_failed", error=str(exc))
             for path in self._paths:
-                self.file_failed.emit(str(path), str(exc), classify_failure(exc))
+                self.file_failed.emit(str(path), str(exc), classify_failure(exc), failure_type(exc))
             self.finished.emit()
             return
 
@@ -998,7 +998,12 @@ class GenerateWorker(QObject):
                 except Exception as exc:  # noqa: BLE001
                     # One photo's failure must not stop the rest of the batch.
                     logger.exception("gui_generate_failed", file=path.name, error=str(exc))
-                    self.file_failed.emit(str(path), str(exc), classify_failure(exc))
+                    self.file_failed.emit(
+                        str(path),
+                        str(exc),
+                        classify_failure(exc),
+                        failure_type(exc),
+                    )
                 else:
                     self.file_done.emit(proposal)
         finally:
@@ -2555,9 +2560,8 @@ class MainWindow(QMainWindow):
         self._telemetry_action.setEnabled(consent.reason != telemetry.CONSENT_ENV_OPT_OUT)
         text = tooltip(
             "Anonymous usage stats (the settings and features you use, model, batch size, timing, "
-            "OS, CPU/GPU, RAM, battery, screen) and crash reports (error type and code location "
-            "only). No "
-            "photos, text you type, error messages, or personal data.",
+            "OS, CPU/GPU, RAM, battery, screen) and crash reports (error type and stack trace, "
+            "code locations only). No photos, text you type, error messages, or personal data.",
         )
         if note := telemetry_toggle_note(consent.reason, do_not_track=telemetry.do_not_track()):
             text = f"{text}\n\n{wrap_tooltip(note)}"
@@ -5551,9 +5555,15 @@ class MainWindow(QMainWindow):
             self._show_item(item)
         self._update_status()
 
-    def _on_file_failed(self, path: str, message: str, kind: str = FAILURE_OTHER) -> None:
+    def _on_file_failed(
+        self,
+        path: str,
+        message: str,
+        kind: str = FAILURE_OTHER,
+        error_type: str = "",
+    ) -> None:
         if self._usage.run is not None:
-            self._usage.run.failed(path, kind)
+            self._usage.run.failed(path, kind, error_type)
         item = self._items.get(path)
         if item is None:
             return
@@ -7813,7 +7823,7 @@ def launch(argv: list[str] | None = None) -> int:
 
     # Qt swallows exceptions raised inside slots (they reach sys.excepthook and the loop keeps
     # running), so an unhandled slot crash never propagates out of app.exec(). Chain a hook that
-    # fires an anonymous crash beacon (type + in-app code location, never the message) first.
+    # fires an anonymous crash beacon (type and stack trace, never the message) first.
     previous_hook = sys.excepthook
 
     def _crash_hook(exc_type: type[BaseException], exc: BaseException, tb: object) -> None:

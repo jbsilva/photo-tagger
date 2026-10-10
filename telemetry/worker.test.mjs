@@ -106,8 +106,9 @@ test("sanitizing drops odd keys, lists, deep nesting, and clamps long strings", 
       schema_version: 3,
       "Bad Key": 1,
       list: [1, 2],
-      nested: { deeper: { deepest: 1 }, fine: "ok" },
+      nested: { deeper: { deepest: 1 }, fine: "ok", crash_stack: "y".repeat(5000) },
       long: "x".repeat(5000),
+      crash_stack: "z".repeat(9000),
     }),
     env,
     ctx,
@@ -115,8 +116,11 @@ test("sanitizing drops odd keys, lists, deep nesting, and clamps long strings", 
   const stored = JSON.parse(points[0].blobs[18]);
   assert.equal("Bad Key" in stored, false);
   assert.equal("list" in stored, false);
-  assert.deepEqual(stored.nested, { fine: "ok" });
+  assert.deepEqual(Object.keys(stored.nested), ["fine", "crash_stack"]);
   assert.equal(stored.long.length, 1000);
+  // Only a top-level crash stack gets the longer clamp.
+  assert.equal(stored.crash_stack.length, 6000);
+  assert.equal(stored.nested.crash_stack.length, 1000);
 });
 
 test("unknown schemas, bad JSON, big bodies, and other methods are refused", async () => {

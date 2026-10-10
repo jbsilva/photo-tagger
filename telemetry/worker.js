@@ -24,6 +24,9 @@ const KNOWN_SCHEMAS = new Set([1, 2, 3]);
 const MAX_STR = 200;
 // Clamp for strings inside the JSON payload. Lists like the flags a run used can run long.
 const MAX_JSON_STR = 1000;
+// Top-level fields allowed past MAX_JSON_STR. A crash stack names up to 40 frames by module,
+// function, and line, which is what makes a crash report worth reading.
+const LONG_JSON_STR = { crash_stack: 6000 };
 // A real beacon is a few KiB; anything bigger is not ours. Rejecting on Content-Length keeps a
 // hostile client from making the Worker parse megabytes of JSON.
 const MAX_BODY_BYTES = 32768;
@@ -45,10 +48,10 @@ const num = (v) => {
  * Reduce one value to what may be stored: a clamped string, a finite number, a boolean, null, or
  * (at the top level only) an object of those. Anything else is dropped.
  */
-function clean(value, nested, budget) {
+function clean(value, nested, budget, limit = MAX_JSON_STR) {
   switch (typeof value) {
     case "string":
-      return value.slice(0, MAX_JSON_STR);
+      return value.slice(0, limit);
     case "number":
       return Number.isFinite(value) ? value : 0;
     case "boolean":
@@ -67,7 +70,8 @@ function cleanObject(object, nested, budget) {
   for (const [key, value] of Object.entries(object)) {
     if (budget.keys-- <= 0) break;
     if (!KEY_PATTERN.test(key)) continue;
-    const kept = clean(value, nested, budget);
+    const limit = nested ? MAX_JSON_STR : (LONG_JSON_STR[key] ?? MAX_JSON_STR);
+    const kept = clean(value, nested, budget, limit);
     if (kept !== undefined) out[key] = kept;
   }
   return out;

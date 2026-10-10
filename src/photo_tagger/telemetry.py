@@ -9,8 +9,9 @@ privacy-preserving:
 - **No personal or content data.** File paths, filenames, photo pixels, generated tags, titles,
   descriptions, prompts, hints, API keys, and server URLs are never collected. A setting is sent as
   a bounded value (a switch, a count, a mode name), never as the text or path it holds. Crash
-  beacons carry only the exception *type* and code locations inside this package. The dataclasses
-  below and :func:`build_payload` are the closed set of what leaves the machine.
+  beacons carry the exception *type* and its stack trace as code locations (module, function, and
+  line), never the message. The dataclasses below and :func:`build_payload` are the closed set of
+  what leaves the machine.
 - **Opt-out, three ways.** Set ``PHOTO_TAGGER_TELEMETRY=0`` (or the cross-tool ``DO_NOT_TRACK=1``)
   in the environment, pass ``--no-telemetry``, or put ``enabled = false`` under ``[telemetry]`` in
   the config file. Any opt-out beats any opt-in, except that ``PHOTO_TAGGER_TELEMETRY=1`` overrules
@@ -32,10 +33,8 @@ import os
 import platform
 import threading
 import time
-import traceback
 import uuid
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 import httpx2
@@ -62,14 +61,18 @@ from photo_tagger.hardware import hardware_info
 from photo_tagger.pacing import read_battery
 from photo_tagger.telemetry_facts import (
     ENDPOINT_LOCALHOST,
+    MAX_STACK_FRAMES,
     attached_terminal,
+    exception_chain,
     extension_list,
     install_method,
     installer,
     language_label,
+    library_versions,
     local_clock,
     model_label,
     running_in_ci,
+    stack_frames,
     system_locale,
 )
 from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
@@ -77,6 +80,7 @@ from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
+    from pathlib import Path
 
 
 # The collector endpoint (our own Cloudflare Worker). Kept as a module constant so tests can patch
@@ -158,7 +162,7 @@ FIRST_RUN_NOTICE = (
     "where its server runs (local, your network, or which public service), batch size, file "
     "types, timing, outcomes, OS, CPU/GPU, RAM, power source and battery level, locale, and time "
     "zone, plus crash reports (error "
-    "type and code location only).\n"
+    "type and stack trace, code locations only).\n"
     "No photos, paths, filenames, tags, titles, descriptions, prompts, URLs, error messages, or "
     "personal data are ever sent. Details: https://jbsilva.github.io/photo-tagger/telemetry/\n"
     "Turn it off with --no-telemetry, PHOTO_TAGGER_TELEMETRY=0, or [telemetry] enabled = false "
@@ -452,6 +456,7 @@ class RunInfo:
     inference_seconds: float = 0.0  # time spent inside model calls (vs wall-clock duration)
     dry_run: bool = False
     failure_kinds: str = ""  # compact final-failure buckets, e.g. "timeout:3,metadata-write:1"
+    failure_types: str = ""  # the exception behind each final failure, e.g. "ModelHTTPError(404):3"
     language_repairs: int = 0  # extra calls that rewrote mixed-script text
     flagged: int = 0  # photos whose text still mixes writing systems
     vocabulary_mapped: int = 0
@@ -578,13 +583,13 @@ def outcome_for(total: int, failed: int, *, interrupted: bool = False) -> str:
     return OUTCOME_FAILED if failed >= total else OUTCOME_PARTIAL
 
 
-def failure_kinds_summary(kinds: dict[str, int]) -> str:
+def failure_kinds_summary(kinds: Mapping[str, int]) -> str:
     """
-    Encode per-run failure buckets as a compact, sorted string: ``"timeout:3,other:1"``.
+    Encode per-run failure counts as a compact, sorted string: ``"timeout:3,other:1"``.
 
     The keys are the pipeline's fixed coarse buckets (timeout, connection, model-validation, model-
-    api, image-read, metadata-write, other), never message text, so nothing user-derived can ride
-    along.
+    api, image-read, metadata-write, other) or exception class names with an HTTP status, never
+    message text, so nothing user-derived can ride along.
     """
     return ",".join(f"{kind}:{count}" for kind, count in sorted(kinds.items()) if count)
 
@@ -887,33 +892,20 @@ def build_payload(event: Event, *, consent: str = CONSENT_DEFAULT) -> dict[str, 
 
 def crash_summary(exc: BaseException) -> tuple[str, str, str]:
     """
-    Reduce *exc* to ``(exception_type, location, frames)`` safe to send.
+    Reduce *exc* to ``(exception_type, location, frames)`` for photo-tagger's own frames.
 
-    Only code coordinates inside the ``photo_tagger`` package leave the machine: each frame renders
-    as ``module:function:line`` (e.g. ``pipeline:run_batch:714``), *location* is the deepest such
-    frame, and *frames* is the chain of the last few, joined by ``>``. The exception **message is
-    deliberately dropped**: messages routinely embed file paths and other user data. Frames from the
-    stdlib or third-party packages are skipped; they carry no photo-tagger fix anyway.
+    Each frame renders as ``module:function:line`` (e.g. ``pipeline:run_batch:714``), *location* is
+    the deepest one, and *frames* joins the last few with ``>``. The whole stack, library frames
+    included, goes in ``crash_stack`` (see :func:`build_crash_payload`). The exception **message is
+    deliberately dropped**: messages routinely embed file paths and other user data.
     """
-    frames: list[str] = []
-    for frame in traceback.extract_tb(exc.__traceback__):
-        module = _frame_module(frame.filename)
-        if module is None:
-            continue
-        short = module.removeprefix("photo_tagger.")
-        frames.append(f"{short}:{frame.name}:{frame.lineno}")
+    frames = [
+        f"{module.removeprefix('photo_tagger.')}:{function}:{line}"
+        for module, function, line in stack_frames(exc.__traceback__)
+        if module.startswith("photo_tagger.")
+    ]
     kept = frames[-_MAX_CRASH_FRAMES:]
     return (type(exc).__name__, kept[-1] if kept else "", ">".join(kept))
-
-
-def _frame_module(filename: str) -> str | None:
-    """Map a traceback frame's file path to its dotted module inside this package, else None."""
-    parts = Path(filename).with_suffix("").parts
-    try:
-        anchor = len(parts) - 1 - parts[::-1].index("photo_tagger")
-    except ValueError:
-        return None
-    return ".".join(parts[anchor:])
 
 
 def build_crash_payload(
@@ -923,13 +915,26 @@ def build_crash_payload(
     command: str = "",
     consent: str = CONSENT_DEFAULT,
 ) -> dict[str, object]:
-    """Build the crash-beacon body: the envelope plus the sanitized exception coordinates."""
+    """
+    Build the crash-beacon body: the envelope plus the exception and where it was raised.
+
+    The stack names every frame by module, function, and line (never a file path), the deepest
+    :data:`~photo_tagger.telemetry_facts.MAX_STACK_FRAMES` of them. The chain names the exceptions
+    behind this one, and the library versions tell which release of a dependency was running.
+    """
     exception_type, location, frames = crash_summary(exc)
+    stack = [
+        f"{module}:{function}:{line}" for module, function, line in stack_frames(exc.__traceback__)
+    ]
     return {
         **_envelope(EVENT_CRASH, interface=interface, command=command, consent=consent),
         "exception_type": exception_type,
+        "exception_module": type(exc).__module__,
+        "exception_chain": exception_chain(exc),
         "crash_location": location,
         "crash_frames": frames,
+        "crash_stack": ">".join(stack[-MAX_STACK_FRAMES:]),
+        "libraries": library_versions(),
     }
 
 

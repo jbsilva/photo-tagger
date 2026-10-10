@@ -6,6 +6,7 @@ These prove the three things that actually matter: telemetry is off when the use
 never escape to the caller.
 """
 
+import json
 import platform
 import threading
 import time
@@ -346,6 +347,7 @@ _RUN_KEYS = {
     "inference_seconds",
     "dry_run",
     "failure_kinds",
+    "failure_types",
     "language_repairs",
     "flagged",
     "vocabulary_mapped",
@@ -362,7 +364,15 @@ _RUN_KEYS = {
     "battery_percent",
 }
 
-_EXPECTED_CRASH_KEYS = _ENVELOPE_KEYS | {"exception_type", "crash_location", "crash_frames"}
+_EXPECTED_CRASH_KEYS = _ENVELOPE_KEYS | {
+    "exception_type",
+    "exception_module",
+    "exception_chain",
+    "crash_location",
+    "crash_frames",
+    "crash_stack",
+    "libraries",
+}
 
 
 def test_build_payload_has_exactly_the_allowlisted_keys() -> None:
@@ -628,16 +638,19 @@ def test_crash_summary_never_carries_the_message() -> None:
     The exception message is dropped by construction.
 
     Messages routinely embed file paths ("could not open /Users/x/IMG.CR3"), so no part of the
-    summary may contain it.
+    summary, and nothing in the whole crash beacon, may contain it.
     """
     try:
         msg = "/Users/someone/secret/IMG_0001.CR3 could not be read"
         raise RuntimeError(msg)  # noqa: TRY301 - the test needs a real traceback.
     except RuntimeError as exc:
         summary = telemetry.crash_summary(exc)
+        payload = json.dumps(telemetry.build_crash_payload(exc, interface="cli"))
     assert all("/Users/" not in part and "IMG_0001" not in part for part in summary)
     # Raised in this test file, outside the package: no code coordinates at all.
     assert summary == ("RuntimeError", "", "")
+    assert "/Users/" not in payload
+    assert "IMG_0001" not in payload
 
 
 def test_build_crash_payload_has_exactly_the_allowlisted_keys() -> None:
@@ -647,6 +660,22 @@ def test_build_crash_payload_has_exactly_the_allowlisted_keys() -> None:
     assert payload["event"] == "crash"
     assert payload["command"] == "show"
     assert payload["exception_type"] == "AttributeError"
+
+
+def test_crash_payload_carries_the_whole_stack_by_module_never_by_path() -> None:
+    """Library and test frames appear by module name, the package's by its own, and no path."""
+    payload = telemetry.build_crash_payload(_package_exception(), interface="gui")
+    stack = str(payload["crash_stack"])
+    frames = stack.split(">")
+    assert frames[-1].startswith("photo_tagger.keywords:parse_hierarchical_keyword:")
+    assert any(":_package_exception:" in frame for frame in frames)
+    assert "/" not in stack
+    assert "\\" not in stack
+    assert (payload["exception_module"], payload["exception_chain"]) == (
+        "builtins",
+        "AttributeError",
+    )
+    assert "pydantic=" in str(payload["libraries"])
 
 
 def test_emit_crash_posts_when_enabled_and_respects_optout(

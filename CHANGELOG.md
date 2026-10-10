@@ -71,6 +71,9 @@ All notable changes to this project are documented here. The format is based on
   how long the window was busy, in use, or idle. [docs/telemetry.md](docs/telemetry.md) lists every
   field. You see the notice once more.
 
+- Crash reports now carry the stack trace as modules, functions, and lines (never a path or the
+  message), and a failed photo reports its error class and HTTP status.
+
 ### Changed
 
 - `PHOTO_TAGGER_TELEMETRY` replaces `PHOTO_TAGGER_NO_TELEMETRY`. `0` turns telemetry off, and `1`

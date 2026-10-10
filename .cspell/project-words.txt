@@ -133,6 +133,7 @@ Lychee
 machdep
 magiclink
 marimo
+MEIPASS
 meminfo
 memsize
 MemTotal
@@ -173,6 +174,8 @@ Piwigo
 pixmap
 pixmaps
 pixtral
+platlib
+platstdlib
 pmset
 poethepoet
 pofile
@@ -183,6 +186,7 @@ primarysplit
 procfs
 próprio
 psutil
+purelib
 pybabel
 pycache
 pycqa

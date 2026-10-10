@@ -176,12 +176,12 @@ def test_a_generation_run_counts_passes_repairs_and_failures(tmp_path: Path) -> 
     a, b, c = (tmp_path / name for name in ("a.jpg", "b.jpg", "c.jpg"))
     tally = _tally()
     tally.generated(str(a), _proposal(a, foreign_terms=["陶笛"], repaired=True))
-    tally.failed(str(b), "timeout")
+    tally.failed(str(b), "timeout", "ReadTimeout")
     tally.failed(str(c), "connection")
     tally.generation_ended(100.0, rested=5.0, rests=1)
     tally.pass_started("failed", 2, retry=True)
     tally.generated(str(b), _proposal(b, from_cache=True))
-    tally.failed(str(c), "connection")
+    tally.failed(str(c), "connection", "ConnectError")
     tally.pass_started("mixed-script", 1, retry=False)
     tally.generated(str(a), _proposal(a))
     tally.generation_ended(150.0, rested=0.0, rests=0)
@@ -202,6 +202,7 @@ def test_a_generation_run_counts_passes_repairs_and_failures(tmp_path: Path) -> 
         1,
     )
     assert info.failure_kinds == "connection:1"
+    assert info.failure_types == "ConnectError:1", "the recovered photo takes its type back"
     assert info.gui is not None
     assert (info.gui.retry_pass_recovered, info.gui.attended_seconds) == (1, 12.0)
     assert info.review is None, "nothing was saved"
