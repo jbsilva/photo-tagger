@@ -102,6 +102,7 @@ if TYPE_CHECKING:
     from tomlkit import TOMLDocument
 
     from photo_tagger.diagnostics import CheckResult
+    from photo_tagger.providers import ProviderName
     from photo_tagger.undo import UndoResult
     from photo_tagger.vocabulary import Vocabulary
 
@@ -362,6 +363,21 @@ def keywords_to_save(
     """
     base = KeywordSet() if overwrite else existing
     return merge_keywords(base, edited_keywords, verbatim=verbatim)
+
+
+@dataclass(frozen=True, slots=True)
+class Connection:
+    """
+    Where the model a job talks to lives: the backend, the model id, the server, and the key.
+
+    Read off the window's header and Connection dialog when a job starts, so the job never reads a
+    widget. A blank server or key is None: the provider's default URL, and its environment variable.
+    """
+
+    provider: ProviderName
+    model: str
+    api_base_url: str | None = None
+    api_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

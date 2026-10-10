@@ -5783,13 +5783,13 @@ def test_vocabulary_build_worker_reads_an_export_too(
 
 def test_starting_a_build_needs_a_source(window: gui.MainWindow) -> None:
     """With neither the photo list nor an export there is nothing to count."""
-    window._build_from_photos.setChecked(False)  # noqa: SLF001
-    window._build_export.setText("")  # noqa: SLF001
+    window._builder_dialog._from_photos.setChecked(False)  # noqa: SLF001
+    window._builder_dialog._export.setText("")  # noqa: SLF001
 
-    window._start_vocabulary_build()  # noqa: SLF001
+    window._builder_dialog._start()  # noqa: SLF001
 
-    assert window._build_thread is None  # noqa: SLF001
-    assert "Pick a source" in window._build_status.text()  # noqa: SLF001
+    assert window._builder_dialog._thread is None  # noqa: SLF001
+    assert "Pick a source" in window._builder_dialog._status.text()  # noqa: SLF001
 
 
 def test_starting_a_build_uses_the_dialog_settings(
@@ -5802,19 +5802,19 @@ def test_starting_a_build_uses_the_dialog_settings(
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": photo})
     monkeypatch.setattr(QThread, "start", lambda *_a, **_k: None)
-    window._build_output.setText(str(tmp_path / "v.txt"))  # noqa: SLF001
-    window._build_min_uses.setValue(5)  # noqa: SLF001
-    window._build_max_terms.setValue(0)  # noqa: SLF001 - "no cap"
-    window._build_digits.setChecked(True)  # noqa: SLF001
+    window._builder_dialog._output.setText(str(tmp_path / "v.txt"))  # noqa: SLF001
+    window._builder_dialog._min_uses.setValue(5)  # noqa: SLF001
+    window._builder_dialog._max_terms.setValue(0)  # noqa: SLF001 - "no cap"
+    window._builder_dialog._digits.setChecked(True)  # noqa: SLF001
 
-    window._start_vocabulary_build()  # noqa: SLF001
+    window._builder_dialog._start()  # noqa: SLF001
 
-    worker = window._build_worker  # noqa: SLF001
+    worker = window._builder_dialog._worker  # noqa: SLF001
     assert worker is not None
     assert worker._rules == TrimRules(min_uses=5, max_terms=None, allow_digits=True)  # noqa: SLF001
     assert worker._paths == [photo]  # noqa: SLF001
     assert worker._provider is None  # noqa: SLF001 - organizing was left off
-    assert not window._build_button.isEnabled()  # noqa: SLF001
+    assert not window._builder_dialog._button.isEnabled()  # noqa: SLF001
 
 
 def test_a_finished_build_offers_to_use_the_file(
@@ -5823,10 +5823,10 @@ def test_a_finished_build_offers_to_use_the_file(
 ) -> None:
     """Building a vocabulary and then having to go and choose it would be two steps too many."""
     listing = _keyword_file(tmp_path)
-    window._built_vocabulary = listing  # noqa: SLF001
+    window._builder_dialog._built = listing  # noqa: SLF001
 
     # The window fixture answers every question dialog with Yes.
-    window._on_build_done("Wrote 2 keyword(s) to keywords.txt, dropped 0.", 2)  # noqa: SLF001
+    window._builder_dialog._on_done("Wrote 2 keyword(s) to keywords.txt, dropped 0.", 2)  # noqa: SLF001
 
     assert window._keyword_rules_dialog.vocabulary_path == listing  # noqa: SLF001
     assert window._keyword_rules_dialog.vocabulary is not None  # noqa: SLF001
