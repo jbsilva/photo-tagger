@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-10 15:13+0200\n"
+"POT-Creation-Date: 2026-10-10 15:23+0200\n"
 "PO-Revision-Date: 2026-07-10 22:30+0200\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language: pt_BR\n"
@@ -2749,29 +2749,29 @@ msgstr ""
 "vão mostrar {tags} de forma errada. O XMP carrega o mesmo texto de "
 "qualquer jeito."
 
-#: src/photo_tagger/gui_state/files.py:66
+#: src/photo_tagger/gui_state/files.py:58
 msgid "Reveal in Finder"
 msgstr "Revelar no Finder"
 
-#: src/photo_tagger/gui_state/files.py:68
+#: src/photo_tagger/gui_state/files.py:60
 msgid "Show in Explorer"
 msgstr "Mostrar no Explorer"
 
-#: src/photo_tagger/gui_state/files.py:69
+#: src/photo_tagger/gui_state/files.py:61
 msgid "Show in File Manager"
 msgstr "Mostrar no Gerenciador de Arquivos"
 
-#: src/photo_tagger/gui_state/files.py:130
+#: src/photo_tagger/gui_state/files.py:122
 #, python-brace-format
 msgid "Your file types ({patterns})"
 msgstr "Seus tipos de arquivo ({patterns})"
 
-#: src/photo_tagger/gui_state/files.py:133
+#: src/photo_tagger/gui_state/files.py:125
 #, python-brace-format
 msgid "All known image formats ({patterns})"
 msgstr "Todos os formatos de imagem conhecidos ({patterns})"
 
-#: src/photo_tagger/gui_state/files.py:135
+#: src/photo_tagger/gui_state/files.py:127
 msgid "All files (*)"
 msgstr "Todos os arquivos (*)"
 
@@ -3015,58 +3015,58 @@ msgstr "O que desfazer faria:"
 msgid "What was undone:"
 msgstr "O que foi desfeito:"
 
-#: src/photo_tagger/gui_state/vocabulary.py:101
+#: src/photo_tagger/gui_state/vocabulary.py:89
 msgid "No vocabulary: keywords are written as the model wrote them."
 msgstr "Sem vocabulário: as palavras-chave são gravadas como o modelo as escreveu."
 
-#: src/photo_tagger/gui_state/vocabulary.py:102
+#: src/photo_tagger/gui_state/vocabulary.py:90
 #, python-brace-format
 msgid "{n} keyword"
 msgid_plural "{n} keywords"
 msgstr[0] "{n} palavra-chave"
 msgstr[1] "{n} palavras-chave"
 
-#: src/photo_tagger/gui_state/vocabulary.py:105
+#: src/photo_tagger/gui_state/vocabulary.py:93
 #, python-brace-format
 msgid "{terms} from {name}."
 msgstr "{terms} de {name}."
 
-#: src/photo_tagger/gui_state/vocabulary.py:119
+#: src/photo_tagger/gui_state/vocabulary.py:107
 #, python-brace-format
 msgid "{n} keyword rewritten"
 msgid_plural "{n} keywords rewritten"
 msgstr[0] "{n} palavra-chave reescrita"
 msgstr[1] "{n} palavras-chave reescritas"
 
-#: src/photo_tagger/gui_state/vocabulary.py:128
+#: src/photo_tagger/gui_state/vocabulary.py:116
 #, python-brace-format
 msgid "{n} keyword dropped ({terms})"
 msgid_plural "{n} keywords dropped ({terms})"
 msgstr[0] "{n} palavra-chave descartada ({terms})"
 msgstr[1] "{n} palavras-chave descartadas ({terms})"
 
-#: src/photo_tagger/gui_state/vocabulary.py:135
+#: src/photo_tagger/gui_state/vocabulary.py:123
 #, python-brace-format
 msgid "Vocabulary: {summary}."
 msgstr "Vocabulário: {summary}."
 
-#: src/photo_tagger/gui_state/vocabulary.py:190
+#: src/photo_tagger/gui_state/vocabulary.py:178
 msgid "Nothing to harmonize yet: generate some photos first."
 msgstr "Nada a harmonizar ainda: gere algumas fotos primeiro."
 
-#: src/photo_tagger/gui_state/vocabulary.py:191
+#: src/photo_tagger/gui_state/vocabulary.py:179
 #, python-brace-format
 msgid "{n} shoot"
 msgid_plural "{n} shoots"
 msgstr[0] "{n} sessão"
 msgstr[1] "{n} sessões"
 
-#: src/photo_tagger/gui_state/vocabulary.py:194
+#: src/photo_tagger/gui_state/vocabulary.py:182
 #, python-brace-format
 msgid "{shoots}: the keywords already agreed."
 msgstr "{shoots}: as palavras-chave já concordavam."
 
-#: src/photo_tagger/gui_state/vocabulary.py:196
+#: src/photo_tagger/gui_state/vocabulary.py:184
 #, python-brace-format
 msgid "{shoots}: harmonized the keywords on {n} photo."
 msgid_plural "{shoots}: harmonized the keywords on {n} photos."

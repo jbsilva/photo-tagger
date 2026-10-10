@@ -45,6 +45,7 @@ from photo_tagger.models import InferenceResult, KeywordSet
 from photo_tagger.prompt_context import build_contextual_prompt
 from photo_tagger.script_guard import find_in_result
 from photo_tagger.sessions import build_session_vocabulary
+from photo_tagger.vocabulary import record_dropped_terms
 from photo_tagger.write_plan import plan_writes
 
 
@@ -72,12 +73,6 @@ if TYPE_CHECKING:
 # server is overloaded or mid-restart; re-hitting it immediately retries into the same outage.
 # The test suite zeroes this via a conftest fixture.
 _RETRY_PASS_DELAY_SECONDS = 5.0
-
-# How many distinct keywords a strict vocabulary run reports as dropped before it stops collecting
-# new ones. Generous for the intended use (spotting gaps in a catalog) and bounded for the one that
-# is not (pointing --vocabulary at an unrelated file). Public because the GUI keeps the same tally
-# for its own runs and there is no reason for the two to disagree.
-MAX_TRACKED_DROPPED_TERMS = 200
 
 
 @dataclass(slots=True, frozen=True)
@@ -245,18 +240,12 @@ class _UsageAccumulator:
         Fold one photo's vocabulary rewrites and rejections into the running totals.
 
         The dropped-term tally is what a user acts on after a strict run (these are the concepts the
-        catalog has no name for yet), so it is kept per term rather than as a bare count. New terms
-        stop being recorded past :data:`MAX_TRACKED_DROPPED_TERMS`: a run against the wrong
-        vocabulary can reject thousands of distinct keywords, and an unbounded dict would grow with
-        them and then be dumped into the summary file.
+        catalog has no name for yet), so it is kept per term rather than as a bare count, and capped
+        (see :func:`~photo_tagger.vocabulary.record_dropped_terms`).
         """
         with self._lock:
             self.vocabulary_mapped += mapped
-            for term in dropped:
-                if term in self.vocabulary_dropped:
-                    self.vocabulary_dropped[term] += 1
-                elif len(self.vocabulary_dropped) < MAX_TRACKED_DROPPED_TERMS:
-                    self.vocabulary_dropped[term] = 1
+            record_dropped_terms(self.vocabulary_dropped, dropped)
 
 
 @dataclass(slots=True)

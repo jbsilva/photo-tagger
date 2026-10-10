@@ -203,7 +203,6 @@ from photo_tagger.gui_state.vocabulary import (
     harmonize_sessions,
     harmonize_summary,
     load_vocabulary_file,
-    record_dropped_terms,
     vocabulary_status,
     vocabulary_summary,
 )
@@ -343,7 +342,6 @@ __all__ = [
     "progress_timing_text",
     "rank_vision_models",
     "recheck_foreign_terms",
-    "record_dropped_terms",
     "reports_status",
     "resolve_extra_tags",
     "reveal_command",

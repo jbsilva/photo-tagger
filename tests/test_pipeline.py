@@ -1397,7 +1397,7 @@ def test_usage_accumulator_stops_tracking_dropped_terms_past_the_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A run against the wrong vocabulary cannot grow the report without bound."""
-    monkeypatch.setattr("photo_tagger.pipeline.MAX_TRACKED_DROPPED_TERMS", 2)
+    monkeypatch.setattr("photo_tagger.vocabulary.MAX_TRACKED_DROPPED_TERMS", 2)
     usage = _UsageAccumulator()
 
     usage.add_vocabulary(mapped=0, dropped=["A", "B", "C"])

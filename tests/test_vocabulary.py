@@ -6,6 +6,7 @@ import pytest
 from loguru import logger
 
 from photo_tagger.vocabulary import (
+    MAX_TRACKED_DROPPED_TERMS,
     Vocabulary,
     VocabularyError,
     _lightroom_csv_keywords,
@@ -15,6 +16,7 @@ from photo_tagger.vocabulary import (
     load_vocabulary,
     loose_key,
     parse_keyword_lines,
+    record_dropped_terms,
 )
 
 
@@ -500,3 +502,17 @@ def test_load_vocabulary_strips_a_byte_order_mark(tmp_path: Path) -> None:
     assert vocabulary.terms == ("Osprey", "Bird")
     # Without the strip the match still succeeded but handed back an invisible near-duplicate.
     assert vocabulary.match("ospreys") == "Osprey"
+
+
+def test_record_dropped_terms_counts_and_stops_at_the_cap() -> None:
+    """The tally names the busiest rejects; a run against the wrong file cannot grow it forever."""
+    tally: dict[str, int] = {}
+
+    record_dropped_terms(tally, ["Tractor", "Barn", "Tractor"])
+    assert tally == {"Tractor": 2, "Barn": 1}
+
+    record_dropped_terms(tally, [f"Term{index}" for index in range(MAX_TRACKED_DROPPED_TERMS)])
+    assert len(tally) == MAX_TRACKED_DROPPED_TERMS
+    # A term already counted still counts, cap or no cap.
+    record_dropped_terms(tally, ["Tractor"])
+    assert tally["Tractor"] == 3  # noqa: PLR2004 - two, then one more

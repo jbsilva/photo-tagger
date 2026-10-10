@@ -152,7 +152,6 @@ from photo_tagger.gui_state import (
     photos_to_save,
     photos_to_write,
     recheck_foreign_terms,
-    record_dropped_terms,
     reports_status,
     resolve_extra_tags,
     reveal_command,
@@ -200,6 +199,7 @@ from photo_tagger.pacing import SECONDS_PER_MINUTE, Pacer, build_pacer
 from photo_tagger.providers import get_backend
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
 from photo_tagger.undo import open_journal
+from photo_tagger.vocabulary import record_dropped_terms
 
 
 if TYPE_CHECKING:

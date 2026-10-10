@@ -523,6 +523,27 @@ class Vocabulary:
         )
 
 
+# How many distinct keywords a strict vocabulary run reports as dropped before it stops collecting
+# new ones. Generous for the intended use (spotting gaps in a catalog) and bounded for the one that
+# is not (pointing --vocabulary at an unrelated file).
+MAX_TRACKED_DROPPED_TERMS = 200
+
+
+def record_dropped_terms(tally: dict[str, int], dropped: Iterable[str]) -> None:
+    """
+    Fold one photo's rejected keywords into the run's tally, counting how often each came up.
+
+    New terms stop being recorded past :data:`MAX_TRACKED_DROPPED_TERMS`, the same bound for the
+    CLI and the window: a run against the wrong vocabulary rejects thousands of distinct keywords,
+    and the summary only ever names the busiest few of them anyway.
+    """
+    for term in dropped:
+        if term in tally:
+            tally[term] += 1
+        elif len(tally) < MAX_TRACKED_DROPPED_TERMS:
+            tally[term] = 1
+
+
 def prompt_with_vocabulary(base_prompt: str, vocabulary: Vocabulary | None) -> str:
     """
     Append the vocabulary block to *base_prompt*, or return it unchanged when there is none.
