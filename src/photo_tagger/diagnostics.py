@@ -82,7 +82,7 @@ def check_provider(
         return CheckResult(
             label,
             ok=False,
-            detail="provider requires an API key; set OPENAI_API_KEY or pass --api-key",
+            detail="provider requires an API key; set OPENAI_API_KEY or give a key (--api-key)",
             problem=PROBLEM_NO_API_KEY,
         )
     try:

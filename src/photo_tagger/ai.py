@@ -66,7 +66,8 @@ def build_chat_model(
     resolved_api_key = backend.resolve_api_key(api_key)
     if backend.requires_api_key and not resolved_api_key:
         msg = (
-            f"Provider {provider_name!r} requires an API key. Set OPENAI_API_KEY or pass --api-key."
+            f"Provider {provider_name!r} requires an API key. Set OPENAI_API_KEY, or give a key "
+            "(--api-key, or the window's API key field)."
         )
         logger.error("provider_api_key_required", provider=provider_name)
         raise ProviderError(msg)

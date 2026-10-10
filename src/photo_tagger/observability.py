@@ -140,7 +140,8 @@ def configure_tracing(*, enabled: bool, endpoint: str | None, include_content: b
     Turn on OpenTelemetry tracing for every agent this process builds.
 
     Call once, early, before any agent exists. Returns whether tracing ended up on, which is always
-    False when *enabled* is False: that is the default and the only no-op path.
+    False when *enabled* is False (the default). A second call while tracing is on changes nothing,
+    and keeps the first call's endpoint and content setting.
 
     Raises:
         ObservabilityError: no endpoint was given, or the OpenTelemetry SDK is not installed.

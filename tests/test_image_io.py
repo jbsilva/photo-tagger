@@ -9,8 +9,8 @@ from PIL import ExifTags, Image
 from pydantic_ai import BinaryContent
 
 from photo_tagger.image_io import (
-    _flatten_alpha,
     _open_image,
+    _to_rgb,
     prepare_image_for_agent,
 )
 
@@ -28,17 +28,17 @@ def _save_png(path: Path, *, mode: str = "RGB", size: tuple[int, int] = (16, 16)
     return path
 
 
-def test_flatten_alpha_returns_rgb_for_opaque_image() -> None:
+def test_to_rgb_returns_rgb_for_opaque_image() -> None:
     """An RGB image is converted (a no-op) but never grows an alpha channel."""
     img = Image.new("RGB", (4, 4), color="blue")
-    flat = _flatten_alpha(img)
+    flat = _to_rgb(img)
     assert flat.mode == "RGB"
 
 
-def test_flatten_alpha_composites_rgba_onto_white() -> None:
+def test_to_rgb_composites_rgba_onto_white() -> None:
     """An RGBA image is composited so transparent pixels become white."""
     img = Image.new("RGBA", (2, 2), (10, 20, 30, 0))
-    flat = _flatten_alpha(img)
+    flat = _to_rgb(img)
     assert flat.mode == "RGB"
     # Fully transparent pixel should now be white.
     assert flat.getpixel((0, 0)) == (255, 255, 255)
@@ -132,19 +132,19 @@ def test_open_image_falls_back_to_pil_when_rawpy_fails(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_flatten_alpha_composites_la_mode_onto_white() -> None:
+def test_to_rgb_composites_la_mode_onto_white() -> None:
     """An LA (luminance + alpha) image gets flattened to RGB with white background."""
     img = Image.new("LA", (2, 2), (0, 0))
-    flat = _flatten_alpha(img)
+    flat = _to_rgb(img)
     assert flat.mode == "RGB"
     assert flat.getpixel((0, 0)) == (255, 255, 255)
 
 
-def test_flatten_alpha_handles_palette_with_transparency() -> None:
+def test_to_rgb_handles_palette_with_transparency() -> None:
     """A P-mode image with transparency info gets composited."""
     img = Image.new("P", (2, 2))
     img.info["transparency"] = 0
-    flat = _flatten_alpha(img)
+    flat = _to_rgb(img)
     assert flat.mode == "RGB"
 
 

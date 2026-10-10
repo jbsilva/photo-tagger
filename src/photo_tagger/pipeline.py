@@ -167,7 +167,7 @@ def _no_helper() -> Generator[None]:
 
 @dataclass(slots=True)
 class _UsageAccumulator:
-    """Thread-safe running totals for token usage and failure kinds across a batch."""
+    """Thread-safe running totals of one batch: usage, failures, vocabulary, and review flags."""
 
     input_tokens: int = 0
     output_tokens: int = 0
@@ -435,8 +435,9 @@ def _resolve_inference(
     Return ``(inference, from_cache)`` for *image_path*.
 
     Hits the on-disk cache when one is provided and *content_key* matches a prior entry recorded
-    under the same namespace. On miss, prepares the JPEG bytes, calls the model, and writes the
-    result back to the cache.
+    under the same namespace; with --repair-language, a replay that mixes writing systems is
+    repaired first (see :func:`_repair_cached`). On miss, prepares the JPEG bytes, calls the model,
+    repairs a mixed answer, and writes the result back to the cache.
 
     Concurrent misses on the *same* content key (burst duplicates, one image in two folders) are
     coordinated: the first worker becomes the leader and runs the model; the others wait for it and
@@ -945,7 +946,8 @@ class BatchTotals:
     vocabulary_dropped: dict[str, int] = field(default_factory=dict)
     # Photos whose generated text mixes writing systems (see photo_tagger.script_guard). They were
     # written like any other; the list is what to go back and read. Any that --repair-language
-    # rewrote are already gone from it; language_repairs counts the extra calls that took.
+    # rewrote are already gone from it; language_repairs counts the repair calls that answered,
+    # fixed or not.
     flagged_files: list[str] = field(default_factory=list)
     language_repairs: int = 0
     # Wall-clock seconds the run spent resting on purpose (see photo_tagger.pacing), and how many
@@ -1362,7 +1364,7 @@ def _log_totals(totals: BatchTotals, *, workers: int) -> None:
     """
     Report one finished batch: the tally always, then whatever else the run has to say.
 
-    The three conditional lines exist because a summary file is optional and a console is not: a
+    The conditional lines exist because a summary file is optional and a console is not: a
     strict vocabulary that discarded half the keywords, a photo whose text needs a second look, and
     a photo that never got written are all things a user has to learn without opening a report.
     """
@@ -1511,10 +1513,11 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
     finished photos. Dry runs never fire it: nothing was written, so nothing may be recorded as
     done.
 
-    The optional *progress* callback fires exactly once per image when the pipeline is finally done
-    with it: either on first-pass success, or on retry-pass success or failure. First-pass failures
-    are silent because they're still pending retry; this guarantees the bar reaches 100% without
-    overshooting on flaky files.
+    The optional *progress* callback fires once per image when the pipeline is finally done with it:
+    on first-pass success, on a permanent first-pass failure (which skips the retry), on retry-pass
+    success or failure, or, in session mode, at the write. Other first-pass failures are silent
+    because they are still pending retry, so the bar reaches 100% without overshooting on flaky
+    files. Photos an interrupt left untouched never tick.
 
     With a *pacer*, the run rests between work windows instead of tagging flat out, so it stays
     inside the machine's power and heat budget (see :mod:`photo_tagger.pacing`). Rests happen at
@@ -1524,6 +1527,10 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
     analyzed first, the session's keywords are harmonized (see :mod:`photo_tagger.sessions`), and
     only then is anything written. Progress and the *on_success* callback still fire once per photo,
     the latter after its write rather than after its analysis.
+
+    Raises:
+        BatchError: when any photo failed, or Ctrl-C interrupted the batch. It carries the totals,
+            which *on_complete* has already received.
     """
     usage = _UsageAccumulator()
     successful_files: list[Path] = []

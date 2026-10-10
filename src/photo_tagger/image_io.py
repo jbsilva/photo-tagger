@@ -19,9 +19,9 @@ def _open_image(image_path: Path) -> Image.Image:
     """
     Open an image with PIL, using rawpy unless the suffix is a format PIL handles natively.
 
-    Returns a fully-loaded, EXIF-rotated, RGB-friendly image. The underlying file handle is closed
-    before this function returns, so the caller can operate on the result without holding the source
-    file open.
+    Returns a fully loaded, upright image, in whatever mode the file has (see :func:`_to_rgb`). The
+    underlying file handle is closed before this function returns, so the caller can operate on the
+    result without holding the source file open.
     """
     suffix = image_path.suffix.lower()
     if suffix in NON_RAW_EXTENSIONS:
@@ -42,15 +42,14 @@ def _open_image(image_path: Path) -> Image.Image:
     # with rotation/mirror EXIF applied, so the model sees the image upright.
     with Image.open(image_path) as img:
         img.load()
-        # exif_transpose returns None when no EXIF orientation tag exists.
-        # img.load() pre-loaded pixel data so img is usable after the with-block,
-        # but returning from inside the block is cleaner.
+        # Typed as returning None, which only happens with in_place=True; the guard is for the
+        # type checker.
         transposed = ImageOps.exif_transpose(img)
         return transposed if transposed is not None else img
 
 
-def _flatten_alpha(img: Image.Image) -> Image.Image:
-    """Composite transparent pixels onto white so JPEG encoding is lossless-looking."""
+def _to_rgb(img: Image.Image) -> Image.Image:
+    """Convert to RGB for the JPEG, compositing any transparency onto white rather than black."""
     has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
     if not has_alpha:
         logger.info("converting_image_to_rgb")
@@ -79,7 +78,7 @@ def prepare_image_for_agent(
         BinaryContent wrapping the in-memory JPEG bytes.
     """
     try:
-        img = _flatten_alpha(_open_image(image_path))
+        img = _to_rgb(_open_image(image_path))
         logger.info("resizing_image", max_size=max_size)
         img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
 
