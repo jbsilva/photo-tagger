@@ -20,9 +20,9 @@ Every chart pairs with a table twin, and a window + interface filter scopes ever
 
 Run it (read-only app view, dependencies resolved into an isolated venv):
 
-    uvx marimo run --sandbox telemetry/dashboard.py
+    uv run poe dashboard
 
-or open it as an editable notebook with `marimo edit` instead of `marimo run`. Requires
+or open it as an editable notebook with `uv run poe dashboard-edit`. Requires
 CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (Account Analytics: Read) in the environment; see
 telemetry/README.md.
 """
@@ -101,7 +101,7 @@ def _(mo, os):
             ```bash
             export CLOUDFLARE_ACCOUNT_ID=...
             export CLOUDFLARE_API_TOKEN=...
-            uvx marimo run --sandbox telemetry/dashboard.py
+            uv run poe dashboard
             ```
             """,
         ).callout(kind="warn"),

@@ -166,6 +166,19 @@ sequence = [
     { cmd = "python scripts/compile_translations.py" },
 ]
 
+# The dashboard is a PEP 723 script with its own sandbox venv, so it skips the project's `uv run`.
+[tool.poe.groups.telemetry]
+heading = "Telemetry"
+executor = "simple"
+
+[tool.poe.groups.telemetry.tasks.dashboard]
+help = "Open the read-only telemetry dashboard"
+cmd = "uvx marimo run --sandbox telemetry/dashboard.py"
+
+[tool.poe.groups.telemetry.tasks.dashboard-edit]
+help = "Open the telemetry dashboard as an editable notebook"
+cmd = "uvx marimo edit --sandbox telemetry/dashboard.py"
+
 [tool.ruff]
 line-length = 100
 indent-width = 4

@@ -78,7 +78,8 @@ Analytics: Read** (read-only, nothing else):
 ```bash
 export CLOUDFLARE_ACCOUNT_ID=...
 export CLOUDFLARE_API_TOKEN=...
-uvx marimo run --sandbox telemetry/dashboard.py   # read-only app; use `marimo edit` to tinker
+uv run poe dashboard         # uvx marimo run --sandbox telemetry/dashboard.py
+uv run poe dashboard-edit    # The same notebook in marimo edit, to change it
 ```
 
 If the variables are missing the dashboard opens to setup instructions instead of failing. A window
