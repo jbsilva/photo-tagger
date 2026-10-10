@@ -6,7 +6,7 @@ This file lists all notable changes to this project. The format follows the
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-10-11
+## [0.10.0](https://github.com/jbsilva/photo-tagger/compare/v0.9.0...v0.10.0) - 2026-10-11
 
 ### Added
 
@@ -79,7 +79,7 @@ This file lists all notable changes to this project. The format follows the
 - The prompt forbids a foreign word as the name of the subject.
 - pydantic-ai's first-run banner no longer prints.
 
-## [0.9.0] - 2026-09-18
+## [0.9.0](https://github.com/jbsilva/photo-tagger/compare/v0.8.0...v0.9.0) - 2026-09-18
 
 ### Added
 
@@ -122,7 +122,7 @@ This file lists all notable changes to this project. The format follows the
   so Windows cannot pick one up from the photo folder instead.
 - GUI: a generate run that dies while starting up no longer leaves the window disabled.
 
-## [0.8.0] - 2026-09-03
+## [0.8.0](https://github.com/jbsilva/photo-tagger/compare/v0.7.0...v0.8.0) - 2026-09-03
 
 ### Added
 
@@ -186,7 +186,7 @@ This file lists all notable changes to this project. The format follows the
   title cannot run as a spreadsheet formula (CWE-1236).
 - Log files are created owner-only (mode 0600) on POSIX systems.
 
-## [0.7.0] - 2026-08-08
+## [0.7.0](https://github.com/jbsilva/photo-tagger/compare/v0.6.0...v0.7.0) - 2026-08-08
 
 ### Added
 
@@ -204,7 +204,7 @@ This file lists all notable changes to this project. The format follows the
   the OS busy cursor with no sign of progress, which looked like a crash. It now reports per photo,
   and **Cancel** stops it after the file in flight.
 
-## [0.6.0] - 2026-07-11
+## [0.6.0](https://github.com/jbsilva/photo-tagger/compare/v0.5.0...v0.6.0) - 2026-07-11
 
 ### Added
 
@@ -264,7 +264,7 @@ This file lists all notable changes to this project. The format follows the
   extra. Other import errors surface as themselves.
 - A failed cache initialization no longer leaks its SQLite connection.
 
-## [0.5.0] - 2026-07-09
+## [0.5.0](https://github.com/jbsilva/photo-tagger/compare/v0.4.0...v0.5.0) - 2026-07-09
 
 ### Added
 
@@ -307,7 +307,7 @@ This file lists all notable changes to this project. The format follows the
   mangled, and model keywords are deduplicated.
 - Ctrl-C during a concurrent batch no longer miscounts photos that finished while the pool drained.
 
-## [0.4.0] - 2026-06-26
+## [0.4.0](https://github.com/jbsilva/photo-tagger/compare/v0.3.0...v0.4.0) - 2026-06-26
 
 ### Changed
 
@@ -317,7 +317,7 @@ This file lists all notable changes to this project. The format follows the
   tags on the first pass. Formats ExifTool cannot hash that way fall back to the whole-file hash.
   Existing cache files are repopulated on the next run.
 
-## [0.3.0] - 2026-06-22
+## [0.3.0](https://github.com/jbsilva/photo-tagger/compare/v0.2.2...v0.3.0) - 2026-06-22
 
 ### Added
 
@@ -352,7 +352,7 @@ This file lists all notable changes to this project. The format follows the
   prompt only, so delete a stale `--cache-file` to pick this up on already-processed photos. The GUI
   never caches.)
 
-## [0.2.2] - 2026-05-30
+## [0.2.2](https://github.com/jbsilva/photo-tagger/compare/v0.2.1...v0.2.2) - 2026-05-30
 
 ### Added
 
@@ -371,7 +371,7 @@ This file lists all notable changes to this project. The format follows the
   outside the supported set. Provider construction moved into `_build_provider`, which returns from
   each branch and ends in `assert_never`. This keeps the match exhaustive for the type checker.
 
-## [0.2.1] - 2026-05-27
+## [0.2.1](https://github.com/jbsilva/photo-tagger/compare/v0.2.0...v0.2.1) - 2026-05-27
 
 ### Fixed
 
@@ -380,7 +380,7 @@ This file lists all notable changes to this project. The format follows the
   `AttributeError: 'str' object has no attribute 'parent'`. `apply_overrides` now coerces string
   TOML values to `Path` for fields annotated as `Path` or `Path | None`.
 
-## [0.2.0] - 2026-05-26
+## [0.2.0](https://github.com/jbsilva/photo-tagger/compare/v0.1.0...v0.2.0) - 2026-05-26
 
 ### Added
 
@@ -444,7 +444,7 @@ This file lists all notable changes to this project. The format follows the
   (`OLLAMA_API_KEY`, `LM_STUDIO_API_KEY`, `OPENAI_API_KEY`).
 - Lock file permissions tightened to `0o600`.
 
-## [0.1.0] - 2026-02-16
+## [0.1.0](https://github.com/jbsilva/photo-tagger/releases/tag/v0.1.0) - 2026-02-16
 
 Initial release.
 
@@ -468,16 +468,3 @@ Initial release.
   `--jpeg-quality`. Each also has an env-var override (`MODEL_NAME`, `TEMPERATURE`, and more).
 - In-memory JPEG conversion to keep token usage low.
 - Structured log files for debugging and auditing.
-
-[0.1.0]: https://github.com/jbsilva/photo-tagger/releases/tag/v0.1.0
-[0.10.0]: https://github.com/jbsilva/photo-tagger/compare/v0.9.0...v0.10.0
-[0.2.0]: https://github.com/jbsilva/photo-tagger/compare/v0.1.0...v0.2.0
-[0.2.1]: https://github.com/jbsilva/photo-tagger/compare/v0.2.0...v0.2.1
-[0.2.2]: https://github.com/jbsilva/photo-tagger/compare/v0.2.1...v0.2.2
-[0.3.0]: https://github.com/jbsilva/photo-tagger/compare/v0.2.2...v0.3.0
-[0.4.0]: https://github.com/jbsilva/photo-tagger/compare/v0.3.0...v0.4.0
-[0.5.0]: https://github.com/jbsilva/photo-tagger/compare/v0.4.0...v0.5.0
-[0.6.0]: https://github.com/jbsilva/photo-tagger/compare/v0.5.0...v0.6.0
-[0.7.0]: https://github.com/jbsilva/photo-tagger/compare/v0.6.0...v0.7.0
-[0.8.0]: https://github.com/jbsilva/photo-tagger/compare/v0.7.0...v0.8.0
-[0.9.0]: https://github.com/jbsilva/photo-tagger/compare/v0.8.0...v0.9.0
