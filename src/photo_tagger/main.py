@@ -52,6 +52,7 @@ from photo_tagger.cli_options import (
     OutputConfig,
     PacingConfig,
     ProviderConfig,
+    RunOptions,
     TelemetryConfig,
     VocabularyBuildConfig,
     WatchConfig,
@@ -76,7 +77,6 @@ from photo_tagger.cli_reports import (
 from photo_tagger.cli_telemetry import (
     Beacons,
     PhotoStats,
-    RunGroups,
     exit_status,
     invocation_setup,
     run_from_totals,
@@ -1200,43 +1200,27 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
 
         photo-tagger -i Pictures/Mixed --skip-tagged
     """
-    beacons = Beacons.for_invocation(
-        "tag",
-        RunGroups(
-            provider=provider,
-            inference=inference,
-            output=output,
-            artifacts=artifacts,
-            display=display,
-            filter_=filter_,
-            log=log,
-            pacing=pacing,
-            telemetry_enabled=telemetry_config.enabled,
-            workers=workers,
-            extensions=image_extensions,
-            recursive=recursive,
-        ),
-        _CONFIG_SOURCE.invocation,
+    run = RunOptions(
+        provider=provider,
+        inference=inference,
+        output=output,
+        artifacts=artifacts,
+        display=display,
+        filter_=filter_,
+        log=log,
+        pacing=pacing,
+        telemetry_enabled=telemetry_config.enabled,
+        workers=workers,
+        extensions=image_extensions,
+        recursive=recursive,
+        inputs=inputs,
     )
+    beacons = Beacons.for_invocation("tag", run, _CONFIG_SOURCE.invocation)
     try:
         _start_run(log)
         with _optional_lock(artifacts.lock_file):
             try:
-                _tag_inside_lock(
-                    inputs=inputs,
-                    image_extensions=image_extensions,
-                    recursive=recursive,
-                    workers=workers,
-                    filter_=filter_,
-                    display=display,
-                    artifacts=artifacts,
-                    provider=provider,
-                    output=output,
-                    inference=inference,
-                    log=log,
-                    beacons=beacons,
-                    pacing=pacing,
-                )
+                _tag_inside_lock(run, beacons)
             except PhotoTaggerError as exc:
                 raise SystemExit(1) from exc
     except (SystemExit, KeyboardInterrupt) as exc:
@@ -1281,15 +1265,11 @@ class _RunSetup:
     :meth:`start_journal` opens one per batch. ``tag`` has a single batch and never calls it.
     """
 
+    run: RunOptions
     options: ProcessingOptions
     agent: Agent[None, GeneratedMetadata]
     user_prompt: str
     workers: int
-    provider: ProviderConfig
-    inference: InferenceConfig
-    artifacts: ArtifactConfig
-    display: DisplayConfig
-    session_gap_minutes: float
     beacons: Beacons
     # Resolved from the two --notify flags, not the group itself: --notify-sound implies --notify,
     # and the batch runner should not have to know that.
@@ -1329,18 +1309,9 @@ class _RunSetup:
         self._report_journal()
 
 
-def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one.
-    *,
-    workers: int,
-    display: DisplayConfig,
-    artifacts: ArtifactConfig,
-    provider: ProviderConfig,
-    output: OutputConfig,
-    inference: InferenceConfig,
-    pacing: PacingConfig,
-    beacons: Beacons,
-) -> _RunSetup:
+def _build_run_setup(run: RunOptions, beacons: Beacons) -> _RunSetup:
     """Build the agent, cache, report sinks, pacer, and undo journal shared by every batch."""
+    provider, inference, output, artifacts = run.provider, run.inference, run.output, run.artifacts
     # Raises VocabularyError (a PhotoTaggerError) on an unusable file, which the commands turn into
     # a clean exit 1. Loading it up front means a typo in the path fails before any model call.
     vocabulary = (
@@ -1370,7 +1341,7 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         output_language=inference.output_language,
     )
     csv_writer = open_csv_report(artifacts.csv_file)
-    ndjson_emitter = NDJSONEmitter(sys.stdout) if display.json_output else None
+    ndjson_emitter = NDJSONEmitter(sys.stdout) if run.display.json_output else None
     csv_sink = CsvImageResultSink(csv_writer) if csv_writer is not None else None
     # A dry run writes nothing, so there is nothing for undo to put back.
     journal_enabled = artifacts.undo_log and not output.dry_run
@@ -1379,7 +1350,7 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
     # got round to them. create_agent validates the model over HTTP, which is the failure that
     # actually happens here; it runs first, so a wrong model name never opens the cache at all.
     cache: InferenceCache | None = None
-    notify_enabled, notify_sound = resolve_notify(display)
+    notify_enabled, notify_sound = resolve_notify(run.display)
     try:
         agent = create_agent(
             provider.provider_name,
@@ -1391,6 +1362,7 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         )
         cache = open_cache(artifacts.cache_file, namespace=cache_namespace)
         return _RunSetup(
+            run=run,
             options=to_processing_options(
                 output,
                 inference,
@@ -1399,18 +1371,13 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
             ),
             agent=agent,
             user_prompt=user_prompt,
-            workers=max(1, workers),
-            provider=provider,
-            inference=inference,
-            artifacts=artifacts,
-            display=display,
-            session_gap_minutes=output.session_gap_minutes,
+            workers=max(1, run.workers),
             beacons=beacons,
             notify_enabled=notify_enabled,
             notify_sound=notify_sound,
             cache=cache,
             csv_writer=csv_writer,
-            pacer=build_pacer(to_pacing_plan(pacing)),
+            pacer=build_pacer(to_pacing_plan(run.pacing)),
             on_image_result=combine_image_result_callbacks(ndjson_emitter, csv_sink),
             on_success=make_skip_list_appender(artifacts.append_to_skip_file),
             journal=open_journal(datetime.now(tz=UTC), enabled=journal_enabled),
@@ -1424,51 +1391,36 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         raise
 
 
-def _log_startup(  # noqa: PLR0913 - the run itself plus the four inputs that are not part of it.
-    setup: _RunSetup,
-    *,
-    inputs: list[Path] | None,
-    image_extensions: str,
-    recursive: bool,
-    filter_: FilterConfig,
-    log: LogConfig,
-) -> None:
-    """
-    Single-shot info log so the run's full configuration is captured up-front.
-
-    Reads most of it back off *setup* rather than taking each option group again: the run has
-    already been built by the time this is called, and passing thirteen values by hand was both a
-    parameter list nobody could read and already at Sonar's cap.
-    """
-    provider = setup.provider
-    artifacts = setup.artifacts
+def _log_startup(setup: _RunSetup) -> None:
+    """Single-shot info log so the run's full configuration is captured up-front."""
+    run = setup.run
+    provider, inference, artifacts = run.provider, run.inference, run.artifacts
     options = setup.options
-    inference = setup.inference
     logger.info(
         "starting_photo_tagger",
-        inputs=[str(p) for p in (inputs or [])],
-        extensions=image_extensions,
+        inputs=[str(p) for p in (run.inputs or [])],
+        extensions=run.extensions,
         model=provider.model_name,
         provider=provider.provider_name,
         api_base_url=provider.api_base_url,
         api_key_present=bool(provider.api_key),
-        recursive=recursive,
+        recursive=run.recursive,
         workers=setup.workers,
         prompt_file=_maybe_str(artifacts.prompt_file),
         summary_file=_maybe_str(artifacts.summary_file),
         csv_file=_maybe_str(artifacts.csv_file),
         cache_file=_maybe_str(artifacts.cache_file),
         lock_file=_maybe_str(artifacts.lock_file),
-        json_output=setup.display.json_output,
-        progress_bar=setup.display.progress_bar,
+        json_output=run.display.json_output,
+        progress_bar=run.display.progress_bar,
         notify=setup.notify_enabled,
         notify_sound=setup.notify_sound,
         telemetry=setup.beacons.enabled,
         skip_from=_maybe_str(artifacts.skip_from),
         append_to_skip_file=_maybe_str(artifacts.append_to_skip_file),
-        skip_tagged=filter_.skip_tagged,
-        newer_than=filter_.newer_than,
-        older_than=filter_.older_than,
+        skip_tagged=run.filter_.skip_tagged,
+        newer_than=run.filter_.newer_than,
+        older_than=run.filter_.older_than,
         preserve_keywords=options.preserve_existing_kw,
         preserve_title=options.preserve_existing_title,
         preserve_description=options.preserve_existing_description,
@@ -1482,7 +1434,7 @@ def _log_startup(  # noqa: PLR0913 - the run itself plus the four inputs that ar
         vocabulary_terms=len(options.vocabulary.terms) if options.vocabulary else 0,
         vocabulary_strict=options.vocabulary_strict,
         extra_fields=not (options.extra_fields is None or options.extra_fields.is_empty),
-        session_gap_minutes=setup.session_gap_minutes,
+        session_gap_minutes=run.output.session_gap_minutes,
         temperature=options.temperature,
         max_tokens=options.max_tokens,
         timeout_seconds=options.timeout_seconds,
@@ -1492,7 +1444,7 @@ def _log_startup(  # noqa: PLR0913 - the run itself plus the four inputs that ar
         output_language=inference.output_language,
         hint=inference.hint,
         retries=provider.retries,
-        log_folder=str(log.log_folder),
+        log_folder=str(run.log.log_folder),
     )
 
 
@@ -1505,7 +1457,7 @@ def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
     """
     started_at = datetime.now(tz=UTC)
     stats = PhotoStats()
-    plan = plan_sessions(image_files, gap_minutes=setup.session_gap_minutes)
+    plan = plan_sessions(image_files, gap_minutes=setup.run.output.session_gap_minutes)
 
     def _on_complete(totals: BatchTotals) -> None:
         # Runs once before run_batch raises, so the summary file is written, the desktop alert
@@ -1521,11 +1473,11 @@ def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
             block=True,
         )
         write_summary_file(
-            setup.artifacts.summary_file,
+            setup.run.artifacts.summary_file,
             totals,
             started_at=started_at,
-            model_name=setup.provider.model_name,
-            provider_name=setup.provider.provider_name,
+            model_name=setup.run.provider.model_name,
+            provider_name=setup.run.provider.provider_name,
             user_prompt_chars=len(setup.user_prompt),
         )
         setup.beacons.record(
@@ -1539,7 +1491,7 @@ def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
             ),
         )
 
-    with batch_progress(len(image_files), enabled=setup.display.progress_bar) as progress:
+    with batch_progress(len(image_files), enabled=setup.run.display.progress_bar) as progress:
         run_batch(
             image_files,
             setup.agent,
@@ -1559,45 +1511,28 @@ def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
 
 def _filter_batch(
     image_files: list[Path],
+    run: RunOptions,
     *,
-    artifacts: ArtifactConfig,
-    filter_: FilterConfig,
     newer_than: datetime | None,
     older_than: datetime | None,
 ) -> list[Path]:
     """Apply the skip list, the date window, and --skip-tagged to a resolved batch."""
-    image_files = apply_skip_file(image_files, artifacts.skip_from)
+    image_files = apply_skip_file(image_files, run.artifacts.skip_from)
     image_files = apply_date_filter(image_files, newer_than=newer_than, older_than=older_than)
-    return apply_skip_tagged(image_files, skip_tagged=filter_.skip_tagged)
+    return apply_skip_tagged(image_files, skip_tagged=run.filter_.skip_tagged)
 
 
-def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one.
-    *,
-    inputs: list[Path] | None,
-    image_extensions: str,
-    recursive: bool,
-    workers: int,
-    filter_: FilterConfig,
-    display: DisplayConfig,
-    artifacts: ArtifactConfig,
-    provider: ProviderConfig,
-    output: OutputConfig,
-    inference: InferenceConfig,
-    log: LogConfig,
-    beacons: Beacons,
-    pacing: PacingConfig,
-) -> None:
+def _tag_inside_lock(run: RunOptions, beacons: Beacons) -> None:
     """Body of ``tag`` that runs once the optional file lock has been acquired."""
     show_notice_if_due(enabled=beacons.enabled)
-    newer_than = _parse_filter_date(filter_.newer_than, flag="--newer-than")
-    older_than = _parse_filter_date(filter_.older_than, flag="--older-than")
+    newer_than = _parse_filter_date(run.filter_.newer_than, flag="--newer-than")
+    older_than = _parse_filter_date(run.filter_.older_than, flag="--older-than")
     # Discovery first: building the run truncates the CSV report, opens the cache and validates the
     # model against the server. A batch that turns out to be empty should cost none of that, and
     # least of all last run's report.
     image_files = _filter_batch(
-        resolve_image_batch(inputs, image_extensions, recursive=recursive),
-        artifacts=artifacts,
-        filter_=filter_,
+        resolve_image_batch(run.inputs, run.extensions, recursive=run.recursive),
+        run,
         newer_than=newer_than,
         older_than=older_than,
     )
@@ -1605,24 +1540,8 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         logger.info("no_files_to_process_after_skipping")
         beacons.emit(replace(beacons.base_run(), outcome=telemetry.OUTCOME_EMPTY))
         return
-    setup = _build_run_setup(
-        workers=workers,
-        display=display,
-        artifacts=artifacts,
-        provider=provider,
-        output=output,
-        inference=inference,
-        pacing=pacing,
-        beacons=beacons,
-    )
-    _log_startup(
-        setup,
-        inputs=inputs,
-        image_extensions=image_extensions,
-        recursive=recursive,
-        filter_=filter_,
-        log=log,
-    )
+    setup = _build_run_setup(run, beacons)
+    _log_startup(setup)
 
     try:
         _process_batch(image_files, setup)
@@ -1688,45 +1607,29 @@ def watch(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group
 
         photo-tagger watch -i ~/Pictures/Inbox -r --interval 10 --skip-tagged
     """
-    beacons = Beacons.for_invocation(
-        "watch",
-        RunGroups(
-            provider=provider,
-            inference=inference,
-            output=output,
-            artifacts=artifacts,
-            display=display,
-            filter_=filter_,
-            log=log,
-            pacing=pacing,
-            telemetry_enabled=telemetry_config.enabled,
-            workers=watch_config.workers,
-            extensions=image_extensions,
-            recursive=recursive,
-            watch=watch_config,
-        ),
-        _CONFIG_SOURCE.invocation,
+    run = RunOptions(
+        provider=provider,
+        inference=inference,
+        output=output,
+        artifacts=artifacts,
+        display=display,
+        filter_=filter_,
+        log=log,
+        pacing=pacing,
+        telemetry_enabled=telemetry_config.enabled,
+        workers=watch_config.workers,
+        extensions=image_extensions,
+        recursive=recursive,
+        inputs=inputs,
+        watch=watch_config,
     )
+    beacons = Beacons.for_invocation("watch", run, _CONFIG_SOURCE.invocation)
     try:
         _start_run(log)
         folders = _require_inputs(inputs)
         with _optional_lock(artifacts.lock_file):
             try:
-                _watch_forever(
-                    inputs=folders,
-                    image_extensions=image_extensions,
-                    recursive=recursive,
-                    workers=watch_config.workers,
-                    watch_config=watch_config,
-                    filter_=filter_,
-                    display=display,
-                    artifacts=artifacts,
-                    provider=provider,
-                    output=output,
-                    inference=inference,
-                    beacons=beacons,
-                    pacing=pacing,
-                )
+                _watch_forever(replace(run, inputs=folders), watch_config, beacons)
             except PhotoTaggerError as exc:
                 raise SystemExit(1) from exc
     except (SystemExit, KeyboardInterrupt) as exc:
@@ -1734,41 +1637,18 @@ def watch(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group
         raise
 
 
-def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one.
-    *,
-    inputs: list[Path],
-    image_extensions: str,
-    recursive: bool,
-    workers: int,
-    watch_config: WatchConfig,
-    filter_: FilterConfig,
-    display: DisplayConfig,
-    artifacts: ArtifactConfig,
-    provider: ProviderConfig,
-    output: OutputConfig,
-    inference: InferenceConfig,
-    beacons: Beacons,
-    pacing: PacingConfig,
-) -> None:
-    """Poll for new photos and tag each settled batch until interrupted."""
+def _watch_forever(run: RunOptions, watch_config: WatchConfig, beacons: Beacons) -> None:
+    """Poll *run*'s inputs for new photos and tag each settled batch until interrupted."""
     show_notice_if_due(enabled=beacons.enabled)
-    newer_than = _parse_filter_date(filter_.newer_than, flag="--newer-than")
-    older_than = _parse_filter_date(filter_.older_than, flag="--older-than")
-    setup = _build_run_setup(
-        workers=workers,
-        display=display,
-        artifacts=artifacts,
-        provider=provider,
-        output=output,
-        inference=inference,
-        pacing=pacing,
-        beacons=beacons,
-    )
+    newer_than = _parse_filter_date(run.filter_.newer_than, flag="--newer-than")
+    older_than = _parse_filter_date(run.filter_.older_than, flag="--older-than")
+    setup = _build_run_setup(run, beacons)
+    inputs = run.inputs or []
     logger.info(
         "watching_for_new_photos",
         inputs=[str(path) for path in inputs],
-        extensions=image_extensions,
-        recursive=recursive,
+        extensions=run.extensions,
+        recursive=run.recursive,
         interval=watch_config.interval,
         settle=watch_config.settle,
     )
@@ -1777,18 +1657,12 @@ def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one
     try:
         for batch in watch_batches(
             inputs,
-            image_extensions,
-            recursive=recursive,
+            run.extensions,
+            recursive=run.recursive,
             interval_seconds=watch_config.interval,
             settle_seconds=watch_config.settle,
         ):
-            image_files = _filter_batch(
-                batch,
-                artifacts=artifacts,
-                filter_=filter_,
-                newer_than=newer_than,
-                older_than=older_than,
-            )
+            image_files = _filter_batch(batch, run, newer_than=newer_than, older_than=older_than)
             if not image_files:
                 continue
             batches += 1

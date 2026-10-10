@@ -17,15 +17,6 @@ from loguru import logger
 
 from photo_tagger import i18n, telemetry
 from photo_tagger.cli_options import (
-    ArtifactConfig,
-    DisplayConfig,
-    FilterConfig,
-    InferenceConfig,
-    LogConfig,
-    OutputConfig,
-    PacingConfig,
-    ProviderConfig,
-    WatchConfig,
     known_config_keys,
     to_telemetry_settings,
 )
@@ -41,7 +32,7 @@ from photo_tagger.telemetry_facts import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from photo_tagger.cli_options import Invocation
+    from photo_tagger.cli_options import Invocation, RunOptions
     from photo_tagger.pipeline import BatchTotals, ImageOutcome
     from photo_tagger.sessions import SessionPlan
 
@@ -73,25 +64,6 @@ def invocation_setup(invocation: Invocation) -> telemetry.Setup:
     )
 
 
-@dataclass(slots=True, frozen=True)
-class RunGroups:
-    """The option groups one tag or watch invocation parsed, for the telemetry describing it."""
-
-    provider: ProviderConfig
-    inference: InferenceConfig
-    output: OutputConfig
-    artifacts: ArtifactConfig
-    display: DisplayConfig
-    filter_: FilterConfig
-    log: LogConfig
-    pacing: PacingConfig
-    telemetry_enabled: bool
-    workers: int
-    extensions: str
-    recursive: bool
-    watch: WatchConfig | None = None
-
-
 @dataclass(slots=True)
 class Beacons:
     """
@@ -115,15 +87,15 @@ class Beacons:
     first_run_seconds: float = -1.0
 
     @classmethod
-    def for_invocation(cls, command: str, groups: RunGroups, invocation: Invocation) -> Beacons:
+    def for_invocation(cls, command: str, options: RunOptions, invocation: Invocation) -> Beacons:
         """
-        Snapshot what *groups* set up, before the run can fail.
+        Snapshot what *options* set up, before the run can fail.
 
         Telemetry must never be why a run fails, so a snapshot that raises (a bug, or an input no
         test foresaw) leaves the invocation with telemetry off instead of a traceback.
         """
         try:
-            return cls._snapshot(command, groups, invocation)
+            return cls._snapshot(command, options, invocation)
         except Exception as exc:  # noqa: BLE001 - any snapshot bug must not stop the run.
             logger.warning("telemetry_snapshot_failed", error=repr(exc))
             # Off means off: the command beacon on the way out must not stand in for this run.
@@ -139,28 +111,15 @@ class Beacons:
             )
 
     @classmethod
-    def _snapshot(cls, command: str, groups: RunGroups, invocation: Invocation) -> Beacons:
+    def _snapshot(cls, command: str, options: RunOptions, invocation: Invocation) -> Beacons:
         """Build the beacons of an invocation from its option groups."""
-        settings = to_telemetry_settings(
-            provider=groups.provider,
-            inference=groups.inference,
-            output=groups.output,
-            artifacts=groups.artifacts,
-            display=groups.display,
-            filter_=groups.filter_,
-            log=groups.log,
-            pacing=groups.pacing,
-            workers=groups.workers,
-            extensions=groups.extensions,
-            recursive=groups.recursive,
-            watch=groups.watch,
-        )
+        settings = to_telemetry_settings(options)
         return cls(
-            enabled=groups.telemetry_enabled,
+            enabled=options.telemetry_enabled,
             command=command,
-            provider=groups.provider.provider_name,
-            model=groups.provider.model_name,
-            output_language=groups.inference.output_language,
+            provider=options.provider.provider_name,
+            model=options.provider.model_name,
+            output_language=options.inference.output_language,
             settings=settings,
             setup=invocation_setup(invocation),
         )

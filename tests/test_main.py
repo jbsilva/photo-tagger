@@ -27,6 +27,8 @@ from photo_tagger import (
     telemetry,
 )
 from photo_tagger.cli_options import (
+    Defaults,
+    RunOptions,
     WatchConfig,
     known_config_keys,
     load_defaults,
@@ -2110,7 +2112,7 @@ def test_watch_workers_flag_reaches_the_run(tmp_path: Path) -> None:
     ):
         _run_app(["watch", "--input", str(inbox), "--workers", "3"])
 
-    assert forever.call_args.kwargs["workers"] == 3  # noqa: PLR2004 - the value typed above.
+    assert forever.call_args.args[0].workers == 3  # noqa: PLR2004 - the value typed above.
 
 
 def test_watch_alerts_once_per_batch(tmp_path: Path) -> None:
@@ -3157,14 +3159,9 @@ def test_config_hook_reports_an_alias_by_its_option_name(tmp_path: Path) -> None
     assert invocation.cli_flags == ("--input", "--no-backup-xmp", "--output-language")
 
 
-def test_telemetry_settings_of_the_defaults_are_the_defaults(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Built-in option groups map onto the built-in Settings, so nothing reads as changed."""
-    for name in ("LM_STUDIO_API_KEY", "OPENAI_API_KEY", "LM_STUDIO_BASE_URL"):
-        monkeypatch.delenv(name, raising=False)
-    defaults = load_defaults({})
-    settings = to_telemetry_settings(
+def _run_options(defaults: Defaults, **changes: Any) -> RunOptions:  # noqa: ANN401 - any field.
+    """Build the RunOptions a run with *defaults* would parse, with *changes* on top."""
+    options = RunOptions(
         provider=defaults.provider,
         inference=defaults.inference,
         output=defaults.output,
@@ -3173,10 +3170,22 @@ def test_telemetry_settings_of_the_defaults_are_the_defaults(
         filter_=defaults.filter,
         log=defaults.log,
         pacing=defaults.pacing,
+        telemetry_enabled=defaults.telemetry.enabled,
         workers=defaults.workers,
         extensions=defaults.extensions,
         recursive=defaults.recursive,
     )
+    return replace(options, **changes)
+
+
+def test_telemetry_settings_of_the_defaults_are_the_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Built-in option groups map onto the built-in Settings, so nothing reads as changed."""
+    for name in ("LM_STUDIO_API_KEY", "OPENAI_API_KEY", "LM_STUDIO_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    defaults = load_defaults({})
+    settings = to_telemetry_settings(_run_options(defaults))
     assert settings == telemetry.Settings()
 
 
@@ -3189,19 +3198,7 @@ def test_telemetry_settings_count_the_sidecar_overrides() -> None:
     """
     overrides = ["dng=photo", "tif=both", "DNG=sidecar"]
     defaults = load_defaults({"output": {"sidecar_overrides": overrides}})
-    settings = to_telemetry_settings(
-        provider=defaults.provider,
-        inference=defaults.inference,
-        output=defaults.output,
-        artifacts=defaults.artifacts,
-        display=defaults.display,
-        filter_=defaults.filter,
-        log=defaults.log,
-        pacing=defaults.pacing,
-        workers=defaults.workers,
-        extensions=defaults.extensions,
-        recursive=defaults.recursive,
-    )
+    settings = to_telemetry_settings(_run_options(defaults))
     assert settings.sidecar_overrides == 2  # noqa: PLR2004 - the two entries above.
 
 
@@ -3214,19 +3211,8 @@ def test_telemetry_settings_keep_no_path_or_text(tmp_path: Path) -> None:
             "copyright": {"artist": "Ada", "copyright_notice": "(c) {year} Ada", "marked": True},
         },
     )
-    settings = to_telemetry_settings(
-        provider=defaults.provider,
-        inference=defaults.inference,
-        output=defaults.output,
-        artifacts=defaults.artifacts,
-        display=defaults.display,
-        filter_=defaults.filter,
-        log=defaults.log,
-        pacing=defaults.pacing,
-        workers=1,
-        extensions="CR3,jpg,weird",
-        recursive=True,
-    )
+    options = _run_options(defaults, workers=1, extensions="CR3,jpg,weird", recursive=True)
+    settings = to_telemetry_settings(options)
     assert (settings.endpoint, settings.secure, settings.custom_url) == ("public", True, True)
     assert (settings.hint, settings.hint_chars) == (True, len("The animal is a deer"))
     assert (settings.artist, settings.copyright_notice, settings.marked) == (

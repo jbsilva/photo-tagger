@@ -1276,32 +1276,45 @@ def to_pacing_plan(config: PacingConfig) -> PacingPlan:
     )
 
 
-def to_telemetry_settings(  # noqa: PLR0913 - one parameter per option group tag() takes.
-    *,
-    provider: ProviderConfig,
-    inference: InferenceConfig,
-    output: OutputConfig,
-    artifacts: ArtifactConfig,
-    display: DisplayConfig,
-    filter_: FilterConfig,
-    log: LogConfig,
-    pacing: PacingConfig,
-    workers: int,
-    extensions: str,
-    recursive: bool,
-    vocabulary_terms: int = 0,
-    watch: WatchConfig | None = None,
-) -> telemetry.Settings:
+@dataclass(slots=True, frozen=True)
+class RunOptions:
+    """
+    Everything one ``tag`` or ``watch`` invocation parsed, as one value.
+
+    The run hands it from step to step whole, instead of a dozen groups by hand, and telemetry reads
+    its settings off the same value.
+    """
+
+    provider: ProviderConfig
+    inference: InferenceConfig
+    output: OutputConfig
+    artifacts: ArtifactConfig
+    display: DisplayConfig
+    filter_: FilterConfig
+    log: LogConfig
+    pacing: PacingConfig
+    telemetry_enabled: bool
+    workers: int
+    extensions: str
+    recursive: bool
+    inputs: list[Path] | None = None
+    watch: WatchConfig | None = None
+
+
+def to_telemetry_settings(options: RunOptions) -> telemetry.Settings:
     """
     Reduce a run's option groups to the bounded values telemetry reports.
 
     Mirrors :func:`to_processing_options`: this module owns the flags, telemetry owns what is sent.
     Nothing here keeps a path or free text: a file becomes "one is set", a hint its length.
     """
+    provider, inference, output = options.provider, options.inference, options.output
+    artifacts, display, filter_ = options.artifacts, options.display, options.filter_
+    pacing, log = options.pacing, options.log
     backend = get_backend(provider.provider_name)
     url = provider.api_base_url or backend.default_base_url
     notify, notify_sound = resolve_notify(display)
-    watching = watch or WatchConfig()
+    watching = options.watch or WatchConfig()
     return telemetry.Settings(
         endpoint=endpoint_kind(url),
         secure=url.lower().startswith("https://"),
@@ -1318,11 +1331,10 @@ def to_telemetry_settings(  # noqa: PLR0913 - one parameter per option group tag
         hint=bool(inference.hint),
         hint_chars=len(inference.hint or ""),
         custom_prompt=artifacts.prompt_file is not None,
-        workers=workers,
+        workers=options.workers,
         cache=artifacts.cache_file is not None,
         max_keywords=output.max_keywords or 0,
         vocabulary=output.vocabulary is not None,
-        vocabulary_terms=vocabulary_terms,
         vocabulary_strict=output.vocabulary_strict,
         session_gap_minutes=output.session_gap_minutes,
         sidecar_mode=resolve_sidecar_mode(output),
@@ -1351,8 +1363,8 @@ def to_telemetry_settings(  # noqa: PLR0913 - one parameter per option group tag
         max_pause_minutes=pacing.max_pause_minutes,
         notify=notify,
         notify_sound=notify_sound,
-        extensions=extension_list(extensions.split(",")),
-        recursive=recursive,
+        extensions=extension_list(options.extensions.split(",")),
+        recursive=options.recursive,
         skip_tagged=filter_.skip_tagged,
         date_filter=bool(filter_.newer_than or filter_.older_than),
         skip_list=artifacts.skip_from is not None,
