@@ -81,14 +81,13 @@ flowchart LR
     C --> D[Agent with<br/>GeneratedMetadata output]
 ```
 
-`create_agent()` looks the backend up in the registry and resolves the base URL and API key. It then
-checks that the requested model is actually present on the provider before doing anything else. The
-backend knows where to look: the OpenAI-compatible `/v1/models` listing (LM Studio, llama.cpp,
-OpenAI) or Ollama's `/api/tags`. If the model name is not found, it raises a `ProviderError` so the
-run stops before wasting time on images. When no key is configured, the `openai` backend
-additionally short-circuits with a `ProviderError`. Once these checks pass, it constructs an
-`OpenAIChatModel` over the provider and wraps it in an `Agent` whose `output_type` is
-`GeneratedMetadata`.
+`create_agent()` looks the backend up in the registry and resolves the base URL and API key. When no
+key is configured, the `openai` backend stops here with a `ProviderError`. Next, it checks that the
+requested model is actually present on the provider. The backend knows where to look: the
+OpenAI-compatible `/v1/models` listing (LM Studio, llama.cpp, OpenAI) or Ollama's `/api/tags`. If
+the model name is not found, it raises a `ProviderError` so the run stops before wasting time on
+images. Once these checks pass, it constructs an `OpenAIChatModel` over the provider and wraps it in
+an `Agent` whose `output_type` is `GeneratedMetadata`.
 
 You can run the same model check on its own with `photo-tagger doctor`, which also checks that
 ExifTool is installed. See the [CLI reference](../usage/cli-reference.md#commands).
@@ -112,10 +111,11 @@ chains) exactly as it did before. See [Metadata and keywords](metadata.md) for h
 parsed and written.
 
 If the model returns something that fails schema validation (a malformed payload, an over-long
-field), pydantic-ai retries the call. The number of attempts is controlled by `--retries` (env var
-`RETRIES`, default `5`). The per-image timeout also feeds into this loop: on a timeout the retry
-logic steps in. `analyze_image_with_ai()` runs the agent and returns an `InferenceResult` carrying
-the validated metadata plus token usage and wall-clock seconds.
+field), pydantic-ai retries the call. `--retries` (env var `RETRIES`, default `5`) sets the number
+of retries, so a photo gets up to `--retries` + 1 attempts. `--timeout-seconds` applies to each
+model request, not to the whole photo. When a request times out, the retry logic steps in.
+`analyze_image_with_ai()` runs the agent and returns an `InferenceResult` carrying the validated
+metadata plus token usage and wall-clock seconds.
 
 !!! warning "Keyword cap is silent, length caps trigger retries"
 
@@ -128,12 +128,12 @@ the validated metadata plus token usage and wall-clock seconds.
 These flags shape how the model generates each response. All have env-var equivalents and
 configuration file keys under `[inference]`.
 
-| Flag                  | Env var             | Default | Effect                                           |
-| --------------------- | ------------------- | ------- | ------------------------------------------------ |
-| `--temperature`       | `TEMPERATURE`       | `0.2`   | Sampling temperature (lower is more focused).    |
-| `--max-tokens`        | `MAX_TOKENS`        | `1200`  | Maximum tokens to generate per image.            |
-| `--frequency-penalty` | `FREQUENCY_PENALTY` | `0.5`   | Penalizes repeated tokens to avoid loops.        |
-| `--timeout-seconds`   | `TIMEOUT_SECONDS`   | `60.0`  | Per-image inference timeout (feeds the retries). |
+| Flag                  | Env var             | Default | Effect                                            |
+| --------------------- | ------------------- | ------- | ------------------------------------------------- |
+| `--temperature`       | `TEMPERATURE`       | `0.2`   | Sampling temperature (lower is more focused).     |
+| `--max-tokens`        | `MAX_TOKENS`        | `1200`  | Maximum tokens to generate per image.             |
+| `--frequency-penalty` | `FREQUENCY_PENALTY` | `0.5`   | Penalizes repeated tokens to avoid loops.         |
+| `--timeout-seconds`   | `TIMEOUT_SECONDS`   | `60.0`  | Timeout of one model request (feeds the retries). |
 
 ## Keeping token use low
 
