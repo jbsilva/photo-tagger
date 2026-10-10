@@ -1015,7 +1015,7 @@ msgstr ""
 
 #: src/photo_tagger/gui/main_window.py:1395
 #: src/photo_tagger/gui/main_window.py:1439
-msgid "Add photos before deselecting."
+msgid "Add photos before unchecking."
 msgstr ""
 
 #: src/photo_tagger/gui/main_window.py:1403
@@ -1025,8 +1025,8 @@ msgstr ""
 
 #: src/photo_tagger/gui/main_window.py:1427
 #, python-brace-format
-msgid "Deselected {n} photo with {phrase}; {selected} still selected."
-msgid_plural "Deselected {n} photos with {phrase}; {selected} still selected."
+msgid "Unchecked {n} photo with {phrase}; {selected} still checked."
+msgid_plural "Unchecked {n} photos with {phrase}; {selected} still checked."
 msgstr[0] ""
 msgstr[1] ""
 
@@ -1049,8 +1049,8 @@ msgstr ""
 
 #: src/photo_tagger/gui/main_window.py:1464
 #, python-brace-format
-msgid "Deselected {n} photo from the skip list; {selected} still selected."
-msgid_plural "Deselected {n} photos from the skip list; {selected} still selected."
+msgid "Unchecked {n} photo from the skip list; {selected} still checked."
+msgid_plural "Unchecked {n} photos from the skip list; {selected} still checked."
 msgstr[0] ""
 msgstr[1] ""
 

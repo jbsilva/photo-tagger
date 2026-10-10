@@ -1083,7 +1083,7 @@ class MainWindow(QMainWindow):
         self._folder_grid.refresh(item)
 
     def _selected_count(self) -> int:
-        """How many photos are currently checked (used in deselect feedback)."""
+        """How many photos are currently checked (used in the uncheck feedback)."""
         return sum(1 for item in self._items.values() if item.selected)
 
     def _update_status(self) -> None:
@@ -1392,7 +1392,7 @@ class MainWindow(QMainWindow):
         """
         self._count("uncheck_tagged")
         if not self._items:
-            self._status.setText(_("Add photos before deselecting."))
+            self._status.setText(_("Add photos before unchecking."))
             return
         if all(item.known_fields is not None for item in self._items.values()):
             self._apply_tagged_criterion(criterion)
@@ -1424,8 +1424,8 @@ class MainWindow(QMainWindow):
         if changed:
             self._status.setText(
                 ngettext(
-                    "Deselected {n} photo with {phrase}; {selected} still selected.",
-                    "Deselected {n} photos with {phrase}; {selected} still selected.",
+                    "Unchecked {n} photo with {phrase}; {selected} still checked.",
+                    "Unchecked {n} photos with {phrase}; {selected} still checked.",
                     changed,
                 ).format(n=changed, phrase=phrase, selected=self._selected_count()),
             )
@@ -1436,7 +1436,7 @@ class MainWindow(QMainWindow):
         """Pick a skip-list file and uncheck the photos it names."""
         self._count("skip_file")
         if not self._items:
-            self._status.setText(_("Add photos before deselecting."))
+            self._status.setText(_("Add photos before unchecking."))
             return
         chosen, _filter = QFileDialog.getOpenFileName(self, _("Choose a skip-list file"))
         if chosen:
@@ -1451,7 +1451,7 @@ class MainWindow(QMainWindow):
             return
         if not entries:
             # The file read fine but had nothing usable (empty, blank lines, or only comments).
-            # Say so, rather than the ambiguous "Deselected 0" a real no-match would also show.
+            # Say so, rather than the ambiguous "Unchecked 0" a real no-match would also show.
             self._status.setText(
                 _("That skip list had no usable entries (empty or only comments)."),
             )
@@ -1461,8 +1461,8 @@ class MainWindow(QMainWindow):
         if changed:
             self._status.setText(
                 ngettext(
-                    "Deselected {n} photo from the skip list; {selected} still selected.",
-                    "Deselected {n} photos from the skip list; {selected} still selected.",
+                    "Unchecked {n} photo from the skip list; {selected} still checked.",
+                    "Unchecked {n} photos from the skip list; {selected} still checked.",
                     changed,
                 ).format(n=changed, selected=self._selected_count()),
             )

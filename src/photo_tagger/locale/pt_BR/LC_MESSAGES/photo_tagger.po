@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-10 15:50+0200\n"
+"POT-Creation-Date: 2026-10-10 15:59+0200\n"
 "PO-Revision-Date: 2026-07-10 22:30+0200\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language: pt_BR\n"
@@ -1129,7 +1129,7 @@ msgstr "Arraste fotos ou pastas para cá para começar."
 
 #: src/photo_tagger/gui/main_window.py:1395
 #: src/photo_tagger/gui/main_window.py:1439
-msgid "Add photos before deselecting."
+msgid "Add photos before unchecking."
 msgstr "Adicione fotos antes de desmarcar."
 
 #: src/photo_tagger/gui/main_window.py:1403
@@ -1139,10 +1139,10 @@ msgstr "Lendo metadados antes de desmarcar fotos com {phrase}..."
 
 #: src/photo_tagger/gui/main_window.py:1427
 #, python-brace-format
-msgid "Deselected {n} photo with {phrase}; {selected} still selected."
-msgid_plural "Deselected {n} photos with {phrase}; {selected} still selected."
-msgstr[0] "Desmarcada {n} foto com {phrase}; {selected} ainda selecionadas."
-msgstr[1] "Desmarcadas {n} fotos com {phrase}; {selected} ainda selecionadas."
+msgid "Unchecked {n} photo with {phrase}; {selected} still checked."
+msgid_plural "Unchecked {n} photos with {phrase}; {selected} still checked."
+msgstr[0] "Desmarcada {n} foto com {phrase}; {selected} ainda marcadas."
+msgstr[1] "Desmarcadas {n} fotos com {phrase}; {selected} ainda marcadas."
 
 #: src/photo_tagger/gui/main_window.py:1433
 #, python-brace-format
@@ -1165,12 +1165,10 @@ msgstr ""
 
 #: src/photo_tagger/gui/main_window.py:1464
 #, python-brace-format
-msgid "Deselected {n} photo from the skip list; {selected} still selected."
-msgid_plural "Deselected {n} photos from the skip list; {selected} still selected."
-msgstr[0] "Desmarcada {n} foto pela lista de exclusão; {selected} ainda selecionadas."
-msgstr[1] ""
-"Desmarcadas {n} fotos pela lista de exclusão; {selected} ainda "
-"selecionadas."
+msgid "Unchecked {n} photo from the skip list; {selected} still checked."
+msgid_plural "Unchecked {n} photos from the skip list; {selected} still checked."
+msgstr[0] "Desmarcada {n} foto pela lista de exclusão; {selected} ainda marcadas."
+msgstr[1] "Desmarcadas {n} fotos pela lista de exclusão; {selected} ainda marcadas."
 
 #: src/photo_tagger/gui/main_window.py:1470
 msgid "No photos in the list matched the skip list."

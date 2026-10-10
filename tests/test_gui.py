@@ -756,7 +756,7 @@ def test_deselect_tagged_field_aware_keeps_keyword_only_photos(
     # The rendered tree checkbox, not just the model flag, must reflect the deselection.
     assert _check_state(window, a) == Qt.CheckState.Unchecked
     assert _check_state(window, b) == Qt.CheckState.Checked
-    assert "Deselected 1" in window._status.text()  # noqa: SLF001
+    assert "Unchecked 1" in window._status.text()  # noqa: SLF001
     assert "a title and a description" in window._status.text()  # noqa: SLF001
 
 
@@ -786,7 +786,7 @@ def test_deselect_tagged_reports_when_none_match(
     window: gui.MainWindow,
     tmp_path: Path,
 ) -> None:
-    """When no checked photo has the field, the action says so instead of 'Deselected 0'."""
+    """When no checked photo has the field, the action says so instead of 'Unchecked 0'."""
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
     _scan_reports(window, {})  # scanned, and no photo has any field
@@ -829,7 +829,7 @@ def test_deselect_tagged_waits_for_the_metadata_scan(
 
     assert window._items[str(a)].selected is False  # noqa: SLF001
     assert window._items[str(b)].selected is True  # noqa: SLF001
-    assert "Deselected 1" in window._status.text()  # noqa: SLF001
+    assert "Unchecked 1" in window._status.text()  # noqa: SLF001
     assert window._scan_pending is None  # noqa: SLF001
 
 
@@ -992,7 +992,7 @@ def test_removing_the_unscanned_photos_settles_a_waiting_uncheck(
 
     assert window._items[str(a)].selected is False  # noqa: SLF001
     assert window._scan_pending is None  # noqa: SLF001
-    assert "Deselected 1" in window._status.text()  # noqa: SLF001
+    assert "Unchecked 1" in window._status.text()  # noqa: SLF001
 
 
 def test_the_scan_row_only_shows_while_a_scan_runs(window: gui.MainWindow) -> None:
@@ -1419,11 +1419,11 @@ def test_apply_skip_file_unchecks_listed_photos(
     assert _check_state(window, a) == Qt.CheckState.Unchecked
     assert _check_state(window, b) == Qt.CheckState.Checked
     assert _check_state(window, c) == Qt.CheckState.Unchecked
-    assert "Deselected 2" in window._status.text()  # noqa: SLF001
+    assert "Unchecked 2" in window._status.text()  # noqa: SLF001
 
 
 def test_apply_skip_file_reports_empty_list(window: gui.MainWindow, tmp_path: Path) -> None:
-    """A comment-only (no usable entries) file says so rather than 'Deselected 0'."""
+    """A comment-only (no usable entries) file says so rather than 'Unchecked 0'."""
     a = _jpeg(tmp_path / "a.jpg")
     _add_dir(window, {"a": a})
     skip = tmp_path / "empty.txt"
