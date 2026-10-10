@@ -1201,6 +1201,122 @@ def test_cli_telemetry_notice_shown_only_on_first_run(
     assert "anonymous usage stats" not in second_run_err
 
 
+def _run_with_notify(tmp_path: Path, args: list[str], totals: BatchTotals) -> dict[str, Any]:
+    """Run the CLI over one photo with *totals*, capturing the desktop alert it raises."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    raised: dict[str, Any] = {}
+
+    def fake_run_batch(image_files: list[Path], *_args: object, **kwargs: object) -> None:
+        on_complete = kwargs.get("on_complete")
+        if on_complete is not None:
+            on_complete(totals)  # type: ignore[operator]
+        assert image_files
+
+    def fake_notify(title: str, message: str, **kwargs: object) -> None:
+        raised["title"] = title
+        raised["message"] = message
+        raised.update(kwargs)
+
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(main_module, "run_batch", side_effect=fake_run_batch),
+        patch.object(main_module, "notify", side_effect=fake_notify),
+    ):
+        _run_app(["--input", str(image), *args])
+    return raised
+
+
+def test_cli_raises_no_alert_by_default(tmp_path: Path) -> None:
+    """A run nobody asked to be told about passes enabled=False, so nothing is spawned."""
+    raised = _run_with_notify(tmp_path, [], BatchTotals(total_files=1, success=1))
+
+    assert raised["enabled"] is False
+
+
+def test_cli_notify_flag_announces_the_finished_batch(tmp_path: Path) -> None:
+    """--notify alerts with the run's tally, waiting for it because the CLI exits right after."""
+    raised = _run_with_notify(
+        tmp_path,
+        ["--notify"],
+        BatchTotals(total_files=4, success=4),
+    )
+
+    assert raised["enabled"] is True
+    assert raised["sound"] is False
+    assert raised["block"] is True
+    assert raised["title"] == "Photo Tagger"
+    assert raised["message"] == "4 of 4 photos tagged."
+
+
+def test_cli_notify_sound_implies_the_notification(tmp_path: Path) -> None:
+    """--notify-sound on its own asks for the notification that carries the sound."""
+    raised = _run_with_notify(
+        tmp_path,
+        ["--notify-sound"],
+        BatchTotals(total_files=1, success=1),
+    )
+
+    assert raised["enabled"] is True
+    assert raised["sound"] is True
+
+
+def test_cli_notify_reports_a_partly_failed_batch(tmp_path: Path) -> None:
+    """The alert fires for a run that half failed, which is the one worth being called back for."""
+    raised = _run_with_notify(
+        tmp_path,
+        ["--notify"],
+        BatchTotals(total_files=4, success=3, failed_files=["bad.cr3"]),
+    )
+
+    assert raised["message"] == "3 of 4 photos tagged, 1 failed."
+
+
+def test_cli_notify_can_be_switched_on_from_the_config_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[display] notify = true spares the user from typing the flag on every run."""
+    _point_config_at(tmp_path, monkeypatch, "[display]\nnotify = true\nnotify_sound = true\n")
+
+    raised = _run_with_notify(tmp_path, [], BatchTotals(total_files=1, success=1))
+
+    assert raised["enabled"] is True
+    assert raised["sound"] is True
+
+
+def test_cli_no_notify_flag_overrides_the_config_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A flag still beats the config, so one quiet run does not mean editing the file."""
+    _point_config_at(tmp_path, monkeypatch, "[display]\nnotify = true\n")
+
+    raised = _run_with_notify(tmp_path, ["--no-notify"], BatchTotals(total_files=1, success=1))
+
+    assert raised["enabled"] is False
+
+
+@pytest.mark.parametrize(
+    ("totals", "expected"),
+    [
+        (BatchTotals(total_files=1, success=1), "1 of 1 photo tagged."),
+        (BatchTotals(total_files=9, success=9), "9 of 9 photos tagged."),
+        (
+            BatchTotals(total_files=2, success=0, failed_files=["a.cr3", "b.cr3"]),
+            "0 of 2 photos tagged, 2 failed.",
+        ),
+        (
+            BatchTotals(total_files=3, success=3, dry_run=True),
+            "Dry run: 3 of 3 photos checked.",
+        ),
+    ],
+)
+def test_alert_message_wording(totals: BatchTotals, expected: str) -> None:
+    """The alert says what happened in one glanceable line, singular included."""
+    assert main_module._alert_message(totals) == expected  # noqa: SLF001 - module-private helper.
+
+
 def _point_config_at(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str) -> None:
     """Write *text* to a TOML file and point PHOTO_TAGGER_CONFIG at it for this test."""
     cfg = tmp_path / "config.toml"
@@ -1379,6 +1495,30 @@ def test_resolve_sidecar_mode_precedence(
     output = OutputConfig(sidecar_mode=sidecar_mode, use_sidecar=use_sidecar)  # type: ignore[arg-type]
 
     assert resolve_sidecar_mode(output) == expected
+
+
+@pytest.mark.parametrize(
+    ("notify_flag", "sound_flag", "expected"),
+    [
+        (False, False, (False, False)),
+        (True, False, (True, False)),
+        (True, True, (True, True)),
+        # --notify-sound alone: the sound is how the notification announces itself.
+        (False, True, (True, True)),
+    ],
+)
+def test_resolve_notify_precedence(
+    expected: tuple[bool, bool],
+    *,
+    notify_flag: bool,
+    sound_flag: bool,
+) -> None:
+    """The two alert flags fold into (raise an alert, make it audible)."""
+    from photo_tagger.cli_options import DisplayConfig, resolve_notify  # noqa: PLC0415
+
+    display = DisplayConfig(notify=notify_flag, notify_sound=sound_flag)
+
+    assert resolve_notify(display) == expected
 
 
 def test_sidecar_mode_reaches_the_pipeline_options() -> None:
@@ -2015,6 +2155,37 @@ def test_watch_applies_the_batch_filters(tmp_path: Path) -> None:
         _run_app(["watch", "--input", str(inbox), "--skip-tagged"])
 
     assert calls == []
+
+
+def test_watch_alerts_once_per_batch(tmp_path: Path) -> None:
+    """A watch is the unattended case, so every batch it finishes gets its own notification."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    _settled_photo(inbox / "a.cr3")
+    raised: list[tuple[str, bool]] = []
+
+    def run_one_batch(image_files: list[Path], *_args: object, **kwargs: object) -> None:
+        # A second photo lands while the first batch runs, so the watch has another to pick up.
+        if not raised:
+            _settled_photo(inbox / "b.cr3")
+        on_complete = kwargs.get("on_complete")
+        if on_complete is not None:
+            on_complete(BatchTotals(total_files=len(image_files), success=len(image_files)))  # type: ignore[operator]
+
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(main_module, "run_batch", side_effect=run_one_batch),
+        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+        patch.object(
+            main_module,
+            "notify",
+            side_effect=lambda _t, message, **kwargs: raised.append((message, kwargs["enabled"])),
+        ),
+    ):
+        _run_app(["watch", "--input", str(inbox), "--notify"])
+
+    assert raised == [("1 of 1 photo tagged.", True), ("1 of 1 photo tagged.", True)]
 
 
 def test_watch_stops_cleanly_on_ctrl_c(tmp_path: Path) -> None:

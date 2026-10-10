@@ -112,6 +112,8 @@ log_folder = "logs"          # Folder for timestamped log files.
 [display]
 progress_bar = true   # Live progress bar; auto-disabled when stderr is not a TTY.
 json_output = false   # Emit one NDJSON line per processed photo to stdout.
+notify = false        # Desktop notification when the batch ends.
+notify_sound = false  # Play a sound with it (implies notify).
 
 [filter]
 skip_tagged = false   # Skip files that already have keywords, a title, or a description.

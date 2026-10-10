@@ -373,6 +373,19 @@ the window; turn it on for an unattended import, where it behaves like the CLI c
 lands mid-run waits for the run in flight rather than starting a second one. The menu entry becomes
 **Stop Watching** while a watch is running, and closing the window stops it.
 
+### Be told when a run ends
+
+A batch of a few hundred photos is something to start and leave, so **Settings > Notify When a Run
+Ends** raises a desktop notification the moment a generation or a save finishes. It carries the same
+line the status bar shows, so the two never disagree, and **Play a Sound With Notifications** adds
+an audible alert. Both are off by default; **Save Settings as Defaults...** writes them to the
+config file, where they are the same
+[`notify` / `notify_sound`](cli-reference.md#end-of-batch-notification) keys the CLI reads.
+
+A run you cancelled yourself raises no alert: you are already at the keyboard. The notification uses
+whatever your system already provides, so nothing appears (and nothing breaks) on a machine without
+one, and it pairs naturally with an unattended **Watch Folder** import.
+
 ### Undo what a save wrote
 
 Every save records what it wrote to a small journal (**Settings > Record Saves for Undo**, on by

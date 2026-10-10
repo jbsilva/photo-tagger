@@ -214,6 +214,11 @@ Key options:
 - `--json` – emit one NDJSON line per processed photo to stdout (file, status, title, description,
   keywords, token usage, cache flag); logs and progress stay on stderr so you can pipe straight into
   `jq` or your own tools
+- `--notify` – raise a desktop notification when the batch ends, so a long run can be started and
+  walked away from. It carries the tally (`38 of 42 photos tagged, 4 failed.`) and fires whether the
+  run fully succeeded or only partly did; under `watch`, every batch gets one. Add `--notify-sound`
+  for an audible alert. Uses whatever notifier your OS already ships (`osascript`, `notify-send`, a
+  PowerShell toast), so there is nothing to install and nothing breaks where there is none
 - `--newer-than DATE` / `--older-than DATE` – filter the input batch by file mtime. Accepts ISO 8601
   like `2024-01-01` or `2024-01-01T14:30`; naive timestamps use local time
 - `--no-undo-log` – do not record this run's writes (recording is on by default, and is what

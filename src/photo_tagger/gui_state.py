@@ -1749,6 +1749,8 @@ class GuiConfigValues:
     undo_log: bool = True
     preserve_title: bool = False
     preserve_description: bool = False
+    notify: bool = False
+    notify_sound: bool = False
 
 
 def config_toml_text(values: GuiConfigValues) -> str:
@@ -1787,6 +1789,10 @@ def config_toml_text(values: GuiConfigValues) -> str:
     lines += [
         f"vocabulary_strict = {_toml_bool(values.vocabulary_strict)}",
         f"session_gap_minutes = {values.session_gap_minutes}",
+        "",
+        "[display]",
+        f"notify = {_toml_bool(values.notify)}",
+        f"notify_sound = {_toml_bool(values.notify_sound)}",
         "",
         "[artifacts]",
         f"undo_log = {_toml_bool(values.undo_log)}",
@@ -1875,6 +1881,10 @@ def merged_config_text(existing_text: str, values: GuiConfigValues) -> str:
         # No vocabulary chosen: drop the key rather than write an empty path the CLI would then
         # fail to open on its next run.
         output.pop("vocabulary", None)
+
+    display = _config_table(document, "display")
+    display["notify"] = values.notify
+    display["notify_sound"] = values.notify_sound
 
     artifacts = _config_table(document, "artifacts")
     artifacts["undo_log"] = values.undo_log

@@ -50,6 +50,7 @@ from photo_tagger.cli_options import (
     TelemetryConfig,
     VocabularyBuildConfig,
     WatchConfig,
+    resolve_notify,
     to_processing_options,
     to_trim_rules,
 )
@@ -68,6 +69,7 @@ from photo_tagger.errors import BatchError, DiscoveryError, PhotoTaggerError
 from photo_tagger.locking import FileLock, LockHeldError
 from photo_tagger.logging_setup import setup_logging
 from photo_tagger.metadata import prompt_with_hint, select_camera_fields, select_location
+from photo_tagger.notify import APP_NAME, notify
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
 from photo_tagger.progress import batch_progress
 
@@ -713,6 +715,21 @@ def _write_summary_file(  # noqa: PLR0913 - distinct optional fields are clearer
     logger.info("summary_file_written", file=str(summary_file))
 
 
+def _alert_message(totals: BatchTotals) -> str:
+    """
+    Word the one line the desktop alert carries: what the batch got through, and what it did not.
+
+    Deliberately short, because a notification is read at a glance from across the room. The log,
+    the summary file, and the CSV report are all still there for anyone who wants the detail.
+    """
+    photos = "photo" if totals.total_files == 1 else "photos"
+    verb = "checked" if totals.dry_run else "tagged"
+    line = f"{totals.success} of {totals.total_files} {photos} {verb}"
+    if failed := len(totals.failed_files):
+        line = f"{line}, {failed} failed"
+    return f"Dry run: {line}." if totals.dry_run else f"{line}."
+
+
 def _maybe_str(value: Path | None) -> str | None:
     """Return ``str(value)`` or ``None`` so loguru extras keep a clean type."""
     return str(value) if value is not None else None
@@ -731,72 +748,6 @@ def _maybe_show_telemetry_notice(*, enabled: bool) -> None:
     notice = telemetry.first_run_notice()
     if notice is not None:
         sys.stderr.write(notice + "\n")
-
-
-def _log_startup(  # noqa: PLR0913 - the log line names every config explicitly.
-    *,
-    inputs: list[Path] | None,
-    image_extensions: str,
-    recursive: bool,
-    workers: int,
-    filter_: FilterConfig,
-    display: DisplayConfig,
-    artifacts: ArtifactConfig,
-    provider: ProviderConfig,
-    options: ProcessingOptions,
-    inference: InferenceConfig,
-    log: LogConfig,
-    telemetry_enabled: bool,
-    session_gap_minutes: float,
-) -> None:
-    """Single-shot info log so the run's full configuration is captured up-front."""
-    logger.info(
-        "starting_photo_tagger",
-        inputs=[str(p) for p in (inputs or [])],
-        extensions=image_extensions,
-        model=provider.model_name,
-        provider=provider.provider_name,
-        api_base_url=provider.api_base_url,
-        api_key_present=bool(provider.api_key),
-        recursive=recursive,
-        workers=workers,
-        prompt_file=_maybe_str(artifacts.prompt_file),
-        summary_file=_maybe_str(artifacts.summary_file),
-        csv_file=_maybe_str(artifacts.csv_file),
-        cache_file=_maybe_str(artifacts.cache_file),
-        lock_file=_maybe_str(artifacts.lock_file),
-        json_output=display.json_output,
-        progress_bar=display.progress_bar,
-        telemetry=telemetry_enabled,
-        skip_from=_maybe_str(artifacts.skip_from),
-        append_to_skip_file=_maybe_str(artifacts.append_to_skip_file),
-        skip_tagged=filter_.skip_tagged,
-        newer_than=filter_.newer_than,
-        older_than=filter_.older_than,
-        preserve_keywords=options.preserve_existing_kw,
-        preserve_title=options.preserve_existing_title,
-        preserve_description=options.preserve_existing_description,
-        write_description=options.write_description,
-        write_title=options.write_title,
-        write_keywords=options.write_keywords,
-        backup_xmp=options.backup_xmp,
-        sidecar_mode=options.sidecar_mode,
-        dry_run=options.dry_run,
-        max_keywords=options.max_new_keywords,
-        vocabulary_terms=len(options.vocabulary.terms) if options.vocabulary else 0,
-        vocabulary_strict=options.vocabulary_strict,
-        session_gap_minutes=session_gap_minutes,
-        temperature=options.temperature,
-        max_tokens=options.max_tokens,
-        timeout_seconds=options.timeout_seconds,
-        frequency_penalty=options.frequency_penalty,
-        jpeg_dimensions=options.jpeg_dimensions,
-        jpeg_quality=options.jpeg_quality,
-        output_language=inference.output_language,
-        hint=inference.hint,
-        retries=provider.retries,
-        log_folder=str(log.log_folder),
-    )
 
 
 @app.default
@@ -982,6 +933,10 @@ class _RunSetup:
     display: DisplayConfig
     session_gap_minutes: float
     telemetry_enabled: bool
+    # Resolved from the two --notify flags, not the group itself: --notify-sound implies --notify,
+    # and the batch runner should not have to know that.
+    notify_enabled: bool
+    notify_sound: bool
     cache: InferenceCache | None = None
     csv_writer: CsvReportWriter | None = None
     on_image_result: Callable[[ImageOutcome], None] | None = None
@@ -1061,6 +1016,7 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
     # got round to them. create_agent validates the model over HTTP, which is the failure that
     # actually happens here; it runs first, so a wrong model name never opens the cache at all.
     cache: InferenceCache | None = None
+    notify_enabled, notify_sound = resolve_notify(display)
     try:
         agent = create_agent(
             provider.provider_name,
@@ -1082,6 +1038,8 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
             display=display,
             session_gap_minutes=output.session_gap_minutes,
             telemetry_enabled=telemetry_enabled,
+            notify_enabled=notify_enabled,
+            notify_sound=notify_sound,
             cache=cache,
             csv_writer=csv_writer,
             on_image_result=_combine_image_result_callbacks(ndjson_emitter, csv_sink),
@@ -1097,6 +1055,77 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         raise
 
 
+def _log_startup(  # noqa: PLR0913 - the run itself plus the four inputs that are not part of it.
+    setup: _RunSetup,
+    *,
+    inputs: list[Path] | None,
+    image_extensions: str,
+    recursive: bool,
+    filter_: FilterConfig,
+    log: LogConfig,
+) -> None:
+    """
+    Single-shot info log so the run's full configuration is captured up-front.
+
+    Reads most of it back off *setup* rather than taking each option group again: the run has
+    already been built by the time this is called, and passing thirteen values by hand was both a
+    parameter list nobody could read and already at Sonar's cap.
+    """
+    provider = setup.provider
+    artifacts = setup.artifacts
+    options = setup.options
+    inference = setup.inference
+    logger.info(
+        "starting_photo_tagger",
+        inputs=[str(p) for p in (inputs or [])],
+        extensions=image_extensions,
+        model=provider.model_name,
+        provider=provider.provider_name,
+        api_base_url=provider.api_base_url,
+        api_key_present=bool(provider.api_key),
+        recursive=recursive,
+        workers=setup.workers,
+        prompt_file=_maybe_str(artifacts.prompt_file),
+        summary_file=_maybe_str(artifacts.summary_file),
+        csv_file=_maybe_str(artifacts.csv_file),
+        cache_file=_maybe_str(artifacts.cache_file),
+        lock_file=_maybe_str(artifacts.lock_file),
+        json_output=setup.display.json_output,
+        progress_bar=setup.display.progress_bar,
+        notify=setup.notify_enabled,
+        notify_sound=setup.notify_sound,
+        telemetry=setup.telemetry_enabled,
+        skip_from=_maybe_str(artifacts.skip_from),
+        append_to_skip_file=_maybe_str(artifacts.append_to_skip_file),
+        skip_tagged=filter_.skip_tagged,
+        newer_than=filter_.newer_than,
+        older_than=filter_.older_than,
+        preserve_keywords=options.preserve_existing_kw,
+        preserve_title=options.preserve_existing_title,
+        preserve_description=options.preserve_existing_description,
+        write_description=options.write_description,
+        write_title=options.write_title,
+        write_keywords=options.write_keywords,
+        backup_xmp=options.backup_xmp,
+        sidecar_mode=options.sidecar_mode,
+        dry_run=options.dry_run,
+        max_keywords=options.max_new_keywords,
+        vocabulary_terms=len(options.vocabulary.terms) if options.vocabulary else 0,
+        vocabulary_strict=options.vocabulary_strict,
+        session_gap_minutes=setup.session_gap_minutes,
+        temperature=options.temperature,
+        max_tokens=options.max_tokens,
+        timeout_seconds=options.timeout_seconds,
+        frequency_penalty=options.frequency_penalty,
+        jpeg_dimensions=options.jpeg_dimensions,
+        jpeg_quality=options.jpeg_quality,
+        output_language=inference.output_language,
+        hint=inference.hint,
+        retries=provider.retries,
+        log_folder=str(log.log_folder),
+    )
+
+
 def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
     """
     Tag one resolved batch, writing the summary file and firing the telemetry beacon.
@@ -1107,8 +1136,18 @@ def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
     started_at = datetime.now(tz=UTC)
 
     def _on_complete(totals: BatchTotals) -> None:
-        # Runs once before run_batch raises, so the summary file is written and the telemetry
-        # beacon fired whether the batch succeeded fully or only partially.
+        # Runs once before run_batch raises, so the summary file is written, the desktop alert
+        # raised, and the telemetry beacon fired whether the batch succeeded fully or only
+        # partially. A run that half failed is exactly the one worth being called back for.
+        notify(
+            APP_NAME,
+            _alert_message(totals),
+            enabled=setup.notify_enabled,
+            sound=setup.notify_sound,
+            # `tag` exits right after this, and `watch` goes back to sleep; either way nothing
+            # else is waiting on the few seconds the notifier takes.
+            block=True,
+        )
         _write_summary_file(
             setup.artifacts.summary_file,
             totals,
@@ -1214,19 +1253,12 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         telemetry_enabled=telemetry_config.enabled,
     )
     _log_startup(
+        setup,
         inputs=inputs,
         image_extensions=image_extensions,
         recursive=recursive,
-        workers=workers,
         filter_=filter_,
-        display=display,
-        artifacts=artifacts,
-        provider=provider,
-        options=setup.options,
-        inference=inference,
         log=log,
-        telemetry_enabled=telemetry_config.enabled,
-        session_gap_minutes=output.session_gap_minutes,
     )
 
     try:

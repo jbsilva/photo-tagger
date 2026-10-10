@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `--notify` raises a desktop notification when a batch ends, carrying its tally
+  (`38 of 42 photos tagged, 4 failed.`); `--notify-sound` adds an audible alert. `watch` alerts per
+  batch. In the GUI: **Settings > Notify When a Run Ends**. Uses the notifier the OS already ships
+  (`osascript`, `notify-send`, a PowerShell toast), so no new dependency and no failure where there
+  is none.
+
 ## [0.9.0] - 2026-09-18
 
 ### Added

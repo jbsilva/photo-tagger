@@ -117,7 +117,12 @@ from photo_tagger.cache import (
     safe_cache_get,
     safe_cache_put,
 )
-from photo_tagger.cli_options import OutputConfig, load_defaults, resolve_sidecar_mode
+from photo_tagger.cli_options import (
+    OutputConfig,
+    load_defaults,
+    resolve_notify,
+    resolve_sidecar_mode,
+)
 from photo_tagger.config import (
     DEFAULT_FREQUENCY_PENALTY,
     DEFAULT_JPEG_QUALITY,
@@ -262,6 +267,7 @@ from photo_tagger.metadata import (
     read_metadata_sources,
     write_metadata_everywhere,
 )
+from photo_tagger.notify import APP_NAME, notify
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
 from photo_tagger.undo import (
     UndoError,
@@ -1596,6 +1602,9 @@ class MainWindow(QMainWindow):
         # Telemetry on/off: a persisted Settings-menu choice wins over the config-file default.
         _pref = telemetry.read_gui_pref()
         self._telemetry_enabled = self._defaults.telemetry.enabled if _pref is None else _pref
+        # End-of-run desktop alert, resolved the same way the CLI resolves its two flags: a config
+        # that asks only for the sound is asking for the notification that carries it.
+        self._notify_enabled, self._notify_sound = resolve_notify(self._defaults.display)
         self._init_keyword_rules()
 
         self.setWindowTitle(f"Photo Tagger {__version__}")
@@ -1851,6 +1860,7 @@ class MainWindow(QMainWindow):
             ),
         )
         settings_menu.addAction(self._undo_log_action)
+        self._build_notify_actions(settings_menu)
         settings_menu.addSeparator()
         keyword_rules = settings_menu.addAction(
             _("Keyword Rules..."),
@@ -1883,6 +1893,49 @@ class MainWindow(QMainWindow):
                 "Open the config file in your default editor for the settings the GUI does not "
                 "surface (prompt file, sampling, workers, filters, ...). Created if missing.",
             ),
+        )
+
+    def _build_notify_actions(self, settings_menu: QMenu) -> None:
+        """Add the two end-of-run alert toggles, the sound one tied to the notification one."""
+        self._notify_action = QAction(_("Notify When a Run Ends"), self)
+        self._notify_action.setCheckable(True)
+        self._notify_action.setChecked(self._notify_enabled)
+        self._notify_action.setToolTip(
+            tooltip(
+                "Raise a desktop notification when a generation or save run finishes, so a long "
+                "batch can be started and left alone. Uses the notifier your system already has; "
+                "nothing is shown if it has none.",
+            ),
+        )
+        self._notify_action.toggled.connect(self._on_notify_toggled)
+        settings_menu.addAction(self._notify_action)
+        self._notify_sound_action = QAction(_("Play a Sound With Notifications"), self)
+        self._notify_sound_action.setCheckable(True)
+        self._notify_sound_action.setChecked(self._notify_sound)
+        self._notify_sound_action.setEnabled(self._notify_enabled)
+        self._notify_sound_action.setToolTip(
+            tooltip("Play the system alert sound with the notification."),
+        )
+        settings_menu.addAction(self._notify_sound_action)
+
+    def _on_notify_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
+        """Follow the notification toggle with its sound sub-toggle: no notification, no sound."""
+        self._notify_enabled = enabled
+        self._notify_sound_action.setEnabled(enabled)
+
+    def _alert_run_finished(self, message: str) -> None:
+        """
+        Raise the desktop alert for a run that just ended, when the user asked for one.
+
+        *message* is the status line the run wrote, so the notification and the window agree on what
+        happened. Never blocking: the alert spawns a helper process, and the window has to stay
+        responsive while it does.
+        """
+        notify(
+            APP_NAME,
+            message,
+            enabled=self._notify_action.isChecked(),
+            sound=self._notify_sound_action.isChecked(),
         )
 
     def _build_tools_menu(self, menubar: QMenu) -> None:
@@ -2093,6 +2146,8 @@ class MainWindow(QMainWindow):
             vocabulary_strict=self._vocabulary_strict,
             session_gap_minutes=self._session_gap,
             undo_log=self._undo_log_action.isChecked(),
+            notify=self._notify_action.isChecked(),
+            notify_sound=self._notify_sound_action.isChecked(),
         )
 
     def _config_target(self) -> Path:
@@ -4563,6 +4618,8 @@ class MainWindow(QMainWindow):
             # user stopped it from writing. The watch itself keeps running: whatever lands next
             # still queues normally.
             return
+        # Same as a finished generation: the alert is for the run nobody was watching.
+        self._alert_run_finished(self._status.text())
         self._continue_watch()
 
     def _teardown_save_thread(self) -> None:
@@ -4703,6 +4760,8 @@ class MainWindow(QMainWindow):
             )
         else:
             self._status.setText(self._generation_summary())
+            # Only an unattended run is worth an alert: whoever pressed Cancel is already here.
+            self._alert_run_finished(self._status.text())
         cancelled = self._cancelling
         self._cancelling = False
         self._resort()

@@ -1,4 +1,5 @@
 addopts
+afplay
 Alles
 annotationlib
 APFS
@@ -12,6 +13,7 @@ bakllava
 betterem
 BogoMIPS
 borderless
+canberra
 capsys
 casefold
 Casefolded
@@ -56,6 +58,7 @@ filelock
 filterwarnings
 fontawesome
 frameless
+freedesktop
 fromarray
 frontends
 frontmatter
@@ -67,6 +70,7 @@ GenuineIntel
 Gerar
 getpid
 getpixel
+glanceable
 gpgconf
 headerless
 Headwear
@@ -92,6 +96,7 @@ Landschaft
 Landschaften
 libegl
 libimage
+libnotify
 libopengl
 libraw
 libxkbcommon
@@ -139,9 +144,11 @@ nvidia
 OLLAMA
 Ollama
 ollama
+osascript
 Ospray
 pacman
 palavras
+paplay
 parentless
 PhotoPrism
 pinentry
@@ -232,6 +239,7 @@ usefixtures
 venv
 viewmode
 viewports
+WinRT
 workpath
 xdist
 xkbcommon

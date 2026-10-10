@@ -2940,6 +2940,83 @@ def test_telemetry_toggle_defaults_on_and_persists(window: gui.MainWindow) -> No
     assert telemetry.read_gui_pref() is False  # the choice is persisted for next launch
 
 
+def test_notify_toggles_default_off_and_gate_each_other(window: gui.MainWindow) -> None:
+    """Alerts start off, and the sound sub-toggle is only reachable once alerts are on."""
+    alert = window._notify_action  # noqa: SLF001
+    sound = window._notify_sound_action  # noqa: SLF001
+    assert alert.isChecked() is False
+    assert sound.isEnabled() is False
+
+    alert.setChecked(True)
+    assert sound.isEnabled() is True
+
+    alert.setChecked(False)
+    assert sound.isEnabled() is False
+
+
+def test_finished_generation_alerts_with_the_status_line(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The notification repeats what the window says, so the two never disagree."""
+    raised: list[tuple[str, str, bool, bool]] = []
+    monkeypatch.setattr(
+        gui,
+        "notify",
+        lambda title, message, **kwargs: raised.append(
+            (title, message, kwargs["enabled"], kwargs["sound"]),
+        ),
+    )
+    window._notify_action.setChecked(True)  # noqa: SLF001
+    window._notify_sound_action.setChecked(True)  # noqa: SLF001
+
+    window._on_generate_finished()  # noqa: SLF001
+
+    assert raised == [("Photo Tagger", "Generation finished.", True, True)]
+
+
+def test_cancelled_generation_raises_no_alert(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whoever pressed Cancel is already at the keyboard and needs no calling back."""
+    raised: list[str] = []
+    monkeypatch.setattr(gui, "notify", lambda _t, message, **_k: raised.append(message))
+    window._notify_action.setChecked(True)  # noqa: SLF001
+    window._cancelling = True  # noqa: SLF001
+
+    window._on_generate_finished()  # noqa: SLF001
+
+    assert raised == []
+
+
+def test_finished_save_alerts_with_its_tally(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finished write run announces how many photos it wrote."""
+    raised: list[str] = []
+    monkeypatch.setattr(gui, "notify", lambda _t, message, **_k: raised.append(message))
+    window._notify_action.setChecked(True)  # noqa: SLF001
+
+    window._on_save_finished()  # noqa: SLF001
+
+    assert raised == ["Saved 0 of 0 checked photos."]
+
+
+def test_alert_is_skipped_while_the_toggle_is_off(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default window still calls notify, but with enabled=False, which spawns nothing."""
+    calls: list[bool] = []
+    monkeypatch.setattr(gui, "notify", lambda _t, _m, **kwargs: calls.append(kwargs["enabled"]))
+
+    window._on_generate_finished()  # noqa: SLF001
+
+    assert calls == [False]
+
+
 def test_language_menu_lists_system_default_and_catalogs(window: gui.MainWindow) -> None:
     """The Settings > Language menu offers System Default plus every shipped language."""
     labels = [action.text() for action in window._language_menu.actions()]  # noqa: SLF001
@@ -4091,6 +4168,7 @@ def test_save_config_writes_the_gui_choices(
     assert data["output"]["sidecar_mode"] == "raw"
     assert data["output"]["backup_xmp"] is False
     assert data["telemetry"]["enabled"] is True
+    assert data["display"]["notify"] is False
 
 
 def test_save_config_merges_into_the_config_in_effect(

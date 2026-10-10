@@ -221,12 +221,34 @@ photo-tagger writes a timestamped log file and mirrors messages to stderr, so st
 
 ## Display
 
-The display group controls the progress bar and machine-readable output.
+The display group controls how a run makes itself visible: the progress bar, machine-readable
+output, and the desktop alert when the batch ends.
 
-| Flag                           | Default           | Env var | Description                                                                                                                                                                                                                                  |
-| ------------------------------ | ----------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--progress` / `--no-progress` | progress (`true`) | `-`     | Live rich progress bar; auto-disabled when stderr is not a TTY.                                                                                                                                                                              |
-| `--json`                       | `false`           | `-`     | Emit one NDJSON line per processed photo to stdout (`file`, `status`, `from_cache`, `retry`, `title`, `description`, `keywords`, input/output/total tokens, `seconds`). Logs and progress stay on stderr, so stdout pipes cleanly into `jq`. |
+| Flag                                   | Default           | Env var | Description                                                                                                                                                                                                                                  |
+| -------------------------------------- | ----------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--progress` / `--no-progress`         | progress (`true`) | `-`     | Live rich progress bar; auto-disabled when stderr is not a TTY.                                                                                                                                                                              |
+| `--json`                               | `false`           | `-`     | Emit one NDJSON line per processed photo to stdout (`file`, `status`, `from_cache`, `retry`, `title`, `description`, `keywords`, input/output/total tokens, `seconds`). Logs and progress stay on stderr, so stdout pipes cleanly into `jq`. |
+| `--notify` / `--no-notify`             | `false`           | `-`     | Raise a desktop notification when the batch ends, carrying the run's tally (`38 of 42 photos tagged, 4 failed.`).                                                                                                                            |
+| `--notify-sound` / `--no-notify-sound` | `false`           | `-`     | Play a sound with the notification. Implies `--notify`.                                                                                                                                                                                      |
+
+### End-of-batch notification
+
+A long run is meant to be walked away from, so `--notify` calls you back when it is over. The alert
+fires whether the batch fully succeeded or only partly did: a run that half failed is exactly the
+one worth being told about. Under `watch`, every batch gets its own alert.
+
+It uses whatever notifier the operating system already ships, so there is nothing to install:
+
+| Platform      | Notification              | Sound (`--notify-sound`)           |
+| ------------- | ------------------------- | ---------------------------------- |
+| macOS         | `osascript`               | the notification's own alert sound |
+| Linux and BSD | `notify-send` (libnotify) | `canberra-gtk-play`, else `paplay` |
+| Windows       | a PowerShell toast        | the system alert sound             |
+
+Everything about it is best-effort. On a machine with no notifier on `PATH`, in a headless session,
+or where notification permission was denied, nothing appears and the run is unaffected; the failure
+is recorded in the debug log only. When a sound was asked for and the platform has nothing to play
+it with, the terminal bell is rung instead (skipped when stderr is redirected).
 
 ## Telemetry
 

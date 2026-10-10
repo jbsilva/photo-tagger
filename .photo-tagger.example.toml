@@ -73,6 +73,8 @@
 [display]
 # progress_bar = true         # auto-disabled when stderr is not a tty
 # json_output = false         # NDJSON line per photo on stdout
+# notify = false              # desktop notification when the batch ends
+# notify_sound = false        # play a sound with it (implies notify)
 
 # --- logging ------------------------------------------------------------------
 

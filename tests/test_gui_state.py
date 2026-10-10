@@ -859,6 +859,19 @@ def test_config_toml_text_round_trips_through_load_defaults() -> None:
     assert defaults.telemetry.enabled is False
 
 
+def test_config_writers_persist_the_end_of_run_alert_choices() -> None:
+    """A fresh file and a merged one both carry the notification and its sound."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    from photo_tagger.cli_options import load_defaults  # noqa: PLC0415
+
+    values = _config_values(notify=True, notify_sound=True)
+    for text in (config_toml_text(values), merged_config_text("[display]\n", values)):
+        display = load_defaults(tomllib.loads(text)).display
+        assert display.notify is True
+        assert display.notify_sound is True
+
+
 def test_config_writers_persist_the_per_field_overwrite_choices() -> None:
     """A fresh file and a merged one both carry all three keep-or-replace answers."""
     import tomllib  # noqa: PLC0415 - test-local parser.

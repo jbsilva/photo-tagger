@@ -376,7 +376,13 @@ class FilterConfig:
 
 @dataclass
 class DisplayConfig:
-    """Stdout/stderr presentation toggles (progress bar, per-image NDJSON)."""
+    """
+    How a run makes itself visible: the progress bar, per-image NDJSON, the alert when it ends.
+
+    The desktop notification lives here rather than in a group of its own because it answers the
+    same question the other two do, and because one more option group would put ``tag`` and
+    ``watch`` over Sonar's parameter cap for no gain in clarity.
+    """
 
     progress_bar: Annotated[
         bool,
@@ -397,6 +403,30 @@ class DisplayConfig:
                 "Emit one NDJSON line per processed photo to stdout (file, status, title, "
                 "description, keywords, token usage, seconds, cache flag). Useful for "
                 "piping into other tools. Logs and progress stay on stderr"
+            ),
+        ),
+    ] = False
+    notify: Annotated[
+        bool,
+        Parameter(
+            name=("--notify",),
+            negative="--no-notify",
+            help=(
+                "Raise a desktop notification when the batch finishes, so a long run can be "
+                "started and walked away from. Uses whatever notifier the OS already ships "
+                "(osascript, notify-send, a PowerShell toast); best-effort, and skipped in "
+                "silence on a machine that has none"
+            ),
+        ),
+    ] = False
+    notify_sound: Annotated[
+        bool,
+        Parameter(
+            name=("--notify-sound",),
+            negative="--no-notify-sound",
+            help=(
+                "Play a sound with the notification, falling back to the terminal bell where "
+                "the platform offers nothing better. Implies --notify"
             ),
         ),
     ] = False
@@ -787,6 +817,16 @@ def resolve_sidecar_mode(output: OutputConfig) -> SidecarMode:
     if output.use_sidecar is None:
         return DEFAULT_SIDECAR_MODE
     return "all" if output.use_sidecar else "none"
+
+
+def resolve_notify(display: DisplayConfig) -> tuple[bool, bool]:
+    """
+    Fold the two notification flags into (raise an alert, make it audible).
+
+    ``--notify-sound`` on its own is read as asking for both: the sound is how the notification
+    announces itself, so nobody means it to play without one.
+    """
+    return (display.notify or display.notify_sound, display.notify_sound)
 
 
 def to_processing_options(
