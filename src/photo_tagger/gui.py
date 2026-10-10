@@ -160,6 +160,7 @@ from photo_tagger.errors import (
 )
 from photo_tagger.gui_state import (
     ADDED,
+    BADGE_COPYRIGHT,
     BADGE_FAILED,
     BADGE_METADATA,
     BADGE_MIXED_SCRIPT,
@@ -259,6 +260,7 @@ from photo_tagger.gui_state import (
     photo_matches_filter,
     photos_for_pass,
     photos_to_write,
+    planned_copyright,
     progress_timing_text,
     rank_vision_models,
     record_dropped_terms,
@@ -1155,6 +1157,7 @@ class GenerateWorker(QObject):
             camera_info=dict(context.camera_info),
             location_tags=dict(context.location_tags),
             gps_position=context.gps_position,
+            existing_copyright=context.existing_copyright,
             from_cache=cached is not None,
             input_tokens=inference.input_tokens,
             output_tokens=inference.output_tokens,
@@ -3790,7 +3793,29 @@ class MainWindow(QMainWindow):
         grid.addWidget(QLabel(_("Keywords")), 5, 0, top)
         grid.addWidget(self._existing_keywords, 5, 1)
         grid.addWidget(self._keywords, 5, 2)
+        self._add_copyright_row(grid, 6)
         return grid
+
+    def _add_copyright_row(self, grid: QGridLayout, row: int) -> None:
+        """
+        Add the Copyright row: the notice on the file, and the one a save writes.
+
+        Read-only on both sides: the notice is one setting for every photo, not a per-photo edit,
+        so the New side only says what that setting puts on this one.
+        """
+        self._existing_copyright = QLineEdit()
+        self._existing_copyright.setReadOnly(True)
+        self._planned_copyright = QLineEdit()
+        self._planned_copyright.setReadOnly(True)
+        self._planned_copyright.setToolTip(
+            tooltip(
+                "The notice a save writes on this photo, dated by the year it was taken. Change "
+                "it in Settings > Copyright.",
+            ),
+        )
+        grid.addWidget(QLabel(_("Copyright")), row, 0)
+        grid.addWidget(self._existing_copyright, row, 1)
+        grid.addWidget(self._planned_copyright, row, 2)
 
     def _source_note(self) -> QLabel:
         """Build the dimmed line under an Existing field that says where its value came from."""
@@ -3925,6 +3950,7 @@ class MainWindow(QMainWindow):
         ):
             action.toggled.connect(self._refresh_save_tooltips)
             action.toggled.connect(lambda _on: self._count("save_options"))
+        self._write_copyright.toggled.connect(lambda _on: self._refresh_planned_copyright())
         return menu
 
     def _build_overwrite_menu(self, output: OutputConfig) -> QMenu:
@@ -4979,6 +5005,8 @@ class MainWindow(QMainWindow):
         self._fill_source_notes(item)
         existing_kw = format_existing_keywords(item.existing_keywords)
         self._existing_keywords.setPlainText(existing_kw or _(_NONE))
+        self._existing_copyright.setText(item.existing_copyright or _(_NONE))
+        self._refresh_planned_copyright()
         self._title.setText(item.title)
         self._description.setPlainText(item.description)
         self._keywords.setPlainText(keywords_to_text(item.keywords))
@@ -5025,6 +5053,12 @@ class MainWindow(QMainWindow):
         item.existing_title = title
         item.existing_description = description
         item.existing_keywords = context.existing_keywords
+        item.existing_copyright = context.existing_copyright
+        # The same year a save dates the notice by, mtime fallback included.
+        item.capture_year = capture_year(
+            item.path,
+            context.camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL),
+        )
         item.loaded = True
         if not item.has_proposal:
             # Seed the editable copy from the existing values so a file can be edited and saved
@@ -6347,6 +6381,7 @@ class MainWindow(QMainWindow):
             "" if error else ascii_warning(self._copyright_fields, year),
         )
         self._refresh_save_tooltips()
+        self._refresh_planned_copyright()
 
     def _sync_copyright_enabled(self) -> None:
         """
@@ -6371,15 +6406,24 @@ class MainWindow(QMainWindow):
         """
         Return the year the preview stands for: the open photo's, else this one.
 
-        A photo's capture date is already in hand once it has been generated, and showing the year
-        of the photo on screen is what makes a wrong template obvious.
+        A photo's capture date is already in hand once it has been generated or opened, and showing
+        the year of the photo on screen is what makes a wrong template obvious.
         """
-        captured = (self._current.camera_info if self._current else {}).get(
-            TAG_EXIF_DATE_TIME_ORIGINAL,
-        )
-        if self._current is not None and captured:
-            return capture_year(self._current.path, captured)
-        return datetime.now(tz=UTC).astimezone().year
+        item = self._current
+        if item is None:
+            return datetime.now(tz=UTC).astimezone().year
+        captured = item.camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL)
+        if captured:
+            return capture_year(item.path, captured)
+        return item.capture_year or datetime.now(tz=UTC).astimezone().year
+
+    def _refresh_planned_copyright(self) -> None:
+        """Say in the Copyright row what a save writes on the open photo, if anything."""
+        if self._current is None:
+            return
+        fields = self._copyright_fields if self._write_copyright.isChecked() else None
+        planned = planned_copyright(fields, self._preview_year())
+        self._planned_copyright.setText(planned or _("(not written)"))
 
     def _show_copyright(self) -> None:
         """Open the Copyright dialog, its preview refreshed for the photo on screen."""
@@ -7670,6 +7714,7 @@ _BADGE_STYLE = {
     BADGE_SAVED: ("#3fb950", "✓"),  # green check
     BADGE_UNSAVED: ("#6366f1", "•"),  # indigo dot: generated, not saved yet
     BADGE_METADATA: ("#8a8a8a", "M"),  # file already carries metadata
+    BADGE_COPYRIGHT: ("#8957e5", "C"),  # purple: the file carries a copyright notice
     BADGE_SIDECAR: ("#0e7490", "S"),  # an XMP sidecar exists
     BADGE_MIXED_SCRIPT: ("#d29922", "!"),  # amber: the text mixes writing systems
 }
@@ -7678,6 +7723,7 @@ _BADGE_TEXT = {
     BADGE_SAVED: gettext_noop("saved"),
     BADGE_UNSAVED: gettext_noop("generated, not saved yet"),
     BADGE_METADATA: gettext_noop("already has metadata"),
+    BADGE_COPYRIGHT: gettext_noop("has a copyright notice"),
     BADGE_SIDECAR: gettext_noop("has an XMP sidecar"),
     BADGE_MIXED_SCRIPT: gettext_noop("mixes writing systems"),
 }

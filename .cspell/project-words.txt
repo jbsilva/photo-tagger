@@ -9,6 +9,7 @@ arithmatex
 arquivo
 arquivos
 Ausstellung
+autorais
 autouse
 bakllava
 betterem
@@ -47,6 +48,7 @@ dedups
 delenv
 Descrição
 digiKam
+direitos
 distpath
 docformatter
 docstrings

@@ -1274,6 +1274,22 @@ def test_read_image_context_reads_the_existing_caption(tmp_path: Path) -> None:
         context = read_image_context(img)
     assert context.existing_title == "A title"
     assert context.existing_description == "A caption."
+    assert context.existing_copyright is None
+
+
+def test_read_image_context_prefers_the_xmp_notice(tmp_path: Path) -> None:
+    """XMP carries the UTF-8 wording (a real ©), so it wins over the EXIF one when both exist."""
+    img = tmp_path / "a.jpg"
+    img.write_text("x")
+    helper = _fake_helper(
+        [{"SourceFile": str(img), "EXIF:Copyright": "(c) 2019 Ada", "XMP:Rights": "© 2019 Ada"}],
+    )
+    with (
+        patch("photo_tagger.metadata.metadata_targets", return_value=[str(img)]),
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper),
+    ):
+        context = read_image_context(img)
+    assert context.existing_copyright == "© 2019 Ada"
 
 
 def test_read_caption_returns_none_when_absent(tmp_path: Path) -> None:

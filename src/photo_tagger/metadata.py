@@ -776,6 +776,8 @@ class ImageContext:
     # The pipeline needs them to honor --preserve-title / --preserve-description.
     existing_title: str | None = None
     existing_description: str | None = None
+    # The copyright notice already on the photo. The GUI shows it next to the one a save writes.
+    existing_copyright: str | None = None
     location_tags: dict[str, str] = field(default_factory=dict)
     gps_position: str | None = None
     camera_info: dict[str, str] = field(default_factory=dict)
@@ -854,6 +856,7 @@ def read_image_context(
                 *keyword_tags,
                 *_TITLE_TAGS,
                 *_DESCRIPTION_TAGS,
+                *COPYRIGHT_READ_TAGS,
                 *LOCATION_TAGS,
                 *CAMERA_TAGS,
                 _GPS_TAG,
@@ -892,6 +895,7 @@ def read_image_context(
         existing_keywords=existing_keywords,
         existing_title=_first_tag_value(blocks, _TITLE_TAGS),
         existing_description=_first_tag_value(blocks, _DESCRIPTION_TAGS),
+        existing_copyright=_first_tag_value(blocks, COPYRIGHT_READ_TAGS),
         location_tags=location_tags,
         gps_position=gps_position,
         camera_info=camera_info,

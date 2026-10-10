@@ -2619,6 +2619,22 @@ def test_grid_filter_no_copyright_refreshes_after_metadata_scan(
     assert _grid_order(window) == ["a.jpg"]
 
 
+def test_a_thumbnail_with_a_notice_gets_the_copyright_badge(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The C badge draws next to M, and hovering the thumbnail names it."""
+    a = _jpeg(tmp_path / "a.jpg")
+    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    _add_dir(window, {"a": a})
+    window._on_scan_done({str(a): {FIELD_TITLE, FIELD_COPYRIGHT}})  # noqa: SLF001
+    _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
+
+    tip = window._grid.item(0).toolTip()  # noqa: SLF001
+    assert tip == "a.jpg\nalready has metadata\nhas a copyright notice"
+
+
 def test_grid_combos_are_sized_to_their_widest_label(window: gui.MainWindow) -> None:
     """Both grid combos reserve room for their longest entry so no label is clipped."""
     for combo in (window._grid_filter_combo, window._grid_sort_combo):  # noqa: SLF001
@@ -6142,6 +6158,46 @@ def test_save_writes_the_copyright_dated_by_the_photo(
     extra = captured["extra"]
     assert extra["EXIF:Copyright"] == "Copyright (c) 2011 Ada Lovelace"  # type: ignore[index]
     assert extra["XMP-dc:Creator"] == "Ada Lovelace"  # type: ignore[index]
+
+
+def test_the_copyright_row_compares_the_file_with_what_a_save_writes(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing shows the notice on the file; New follows the settings, dated by the photo."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    context = ImageContext(
+        existing_copyright="(c) 2019 Someone Else",
+        camera_info={"EXIF:DateTimeOriginal": "2011:05:01 10:00:00"},
+    )
+    monkeypatch.setattr(gui, "read_image_context", lambda _p, **_k: context)
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+
+    assert window._existing_copyright.text() == "(c) 2019 Someone Else"  # noqa: SLF001
+    assert window._planned_copyright.text() == "(not written)"  # noqa: SLF001
+
+    _fill_copyright(window)
+    assert window._planned_copyright.text() == "Copyright (c) 2011 Ada Lovelace"  # noqa: SLF001
+
+    window._write_copyright.setChecked(False)  # noqa: SLF001
+    assert window._planned_copyright.text() == "(not written)"  # noqa: SLF001
+
+
+def test_the_copyright_row_says_none_for_a_photo_without_one(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare photo reads '(none)' on the Existing side, like the other empty fields."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    _select(window, window._leaf_for(img))  # noqa: SLF001
+
+    assert window._existing_copyright.text() == "(none)"  # noqa: SLF001
 
 
 def test_a_saved_notice_takes_the_photo_out_of_no_copyright(

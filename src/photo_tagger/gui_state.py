@@ -37,7 +37,13 @@ from photo_tagger.config import (
 from photo_tagger.csv_report import ReportRow
 from photo_tagger.discovery import parse_extensions, resolve_image_files
 from photo_tagger.errors import ConfigFileError, FieldError
-from photo_tagger.fields import ExtraFields, build_extra_fields, non_ascii_tags
+from photo_tagger.fields import (
+    TAG_EXIF_COPYRIGHT,
+    TAG_XMP_RIGHTS,
+    ExtraFields,
+    build_extra_fields,
+    non_ascii_tags,
+)
 from photo_tagger.i18n import AUTO, _, gettext_noop, ngettext, pgettext
 from photo_tagger.keywords import dedupe_keywords, merge_keywords
 from photo_tagger.metadata import (
@@ -193,6 +199,10 @@ class PhotoItem:
     existing_title: str | None = None
     existing_description: str | None = None
     existing_keywords: KeywordSet = field(default_factory=KeywordSet)
+    existing_copyright: str | None = None
+    # The year the photo was taken, read with the existing metadata. It dates the notice the
+    # detail pane says a save writes, before the photo is ever generated.
+    capture_year: int | None = None
     existing_sources: list[str] = field(default_factory=list)
     # Every title and description found, per field, the one in use first. What it adds over the two
     # fields above is the value a sidecar shadows, which the detail pane names rather than hide.
@@ -246,6 +256,7 @@ class Proposal:
     camera_info: dict[str, str] = field(default_factory=dict)
     location_tags: dict[str, str] = field(default_factory=dict)
     gps_position: str | None = None
+    existing_copyright: str | None = None
     from_cache: bool = False
     input_tokens: int = 0
     output_tokens: int = 0
@@ -540,6 +551,19 @@ def copyright_summary(fields: ExtraFields | None, year: int) -> str:
     return "\n".join(lines)
 
 
+def planned_copyright(fields: ExtraFields | None, year: int) -> str | None:
+    """
+    Return the notice a save puts on a photo taken in *year*, or None when it writes none.
+
+    The XMP wording comes first, the same order the Existing side reads the file in, so the two
+    columns compare like with like.
+    """
+    if fields is None or fields.is_empty:
+        return None
+    payload = fields.resolve(year)
+    return payload.get(TAG_XMP_RIGHTS) or payload.get(TAG_EXIF_COPYRIGHT) or None
+
+
 def ascii_warning(fields: ExtraFields | None, year: int) -> str:
     """
     Warn that a value is riding in a field the EXIF spec types as ASCII, or return "".
@@ -578,6 +602,7 @@ def apply_proposal(
     item.existing_title = proposal.existing_title
     item.existing_description = proposal.existing_description
     item.existing_keywords = proposal.existing_keywords
+    item.existing_copyright = proposal.existing_copyright
     item.loaded = True
     item.title = proposal.title
     item.description = proposal.description
@@ -1855,6 +1880,7 @@ _FIELD_LETTERS = (
     (FIELD_TITLE, "T", gettext_noop("title")),
     (FIELD_DESCRIPTION, "D", gettext_noop("description")),
     (FIELD_KEYWORDS, "K", gettext_noop("keywords")),
+    (FIELD_COPYRIGHT, "C", gettext_noop("copyright")),
 )
 
 
@@ -1873,7 +1899,9 @@ def _tagged_letter(letter: str) -> str:
             return pgettext("Tagged column letter", "D")
         case "K":
             return pgettext("Tagged column letter", "K")
-        case _:  # pragma: no cover - _FIELD_LETTERS only ever supplies T, D, K
+        case "C":
+            return pgettext("Tagged column letter", "C")
+        case _:  # pragma: no cover - _FIELD_LETTERS only ever supplies T, D, K, C
             message = f"no Tagged column letter translation for {letter!r}"
             raise ValueError(message)
 
@@ -1882,8 +1910,9 @@ def tagged_summary(fields: set[str]) -> str:
     """
     Compress a file's present metadata fields into the Tagged column label.
 
-    "TDK" means title, description, and keywords all exist; "-" means the scan ran and found none.
-    tagged_legend (the header tooltip) and tagged_tooltip (the cell tooltip) spell the letters out.
+    "TK" means a title and keywords exist, and a "C" adds a copyright notice; "-" means the scan ran
+    and found none. tagged_legend (the header tooltip) and tagged_tooltip (the cell tooltip) spell
+    the letters out.
     """
     letters = "".join(
         _tagged_letter(letter)
@@ -1894,7 +1923,7 @@ def tagged_summary(fields: set[str]) -> str:
 
 
 def tagged_legend() -> str:
-    """Spell out every Tagged letter ("T = title, D = description, K = keywords"), localized."""
+    """Spell out every Tagged letter ("T = title, D = description, ..."), localized."""
     return ", ".join(
         f"{_tagged_letter(letter)} = {_(label)}" for _field_name, letter, label in _FIELD_LETTERS
     )
@@ -2027,6 +2056,7 @@ BADGE_FAILED = "failed"
 BADGE_SAVED = "saved"
 BADGE_UNSAVED = "unsaved"
 BADGE_METADATA = "metadata"
+BADGE_COPYRIGHT = "copyright"
 BADGE_SIDECAR = "sidecar"
 BADGE_MIXED_SCRIPT = "mixed_script"
 
@@ -2036,7 +2066,8 @@ def thumb_badges(item: PhotoItem, *, has_sidecar: bool) -> list[str]:
     Decide which overlay badges a photo's grid thumbnail shows.
 
     At most one lifecycle badge (failed beats saved beats unsaved-proposal), plus the already-has-
-    metadata, sidecar, and mixed-script markers. The GUI maps each name to a color and glyph.
+    metadata, copyright, sidecar, and mixed-script markers. The GUI maps each name to a color and
+    glyph.
 
     Mixed script is informational, not a lifecycle state: the proposal is perfectly usable, it just
     wants reading first, so it marks a thumbnail that already says "generated" rather than replacing
@@ -2049,8 +2080,11 @@ def thumb_badges(item: PhotoItem, *, has_sidecar: bool) -> list[str]:
         badges.append(BADGE_SAVED)
     elif item.has_proposal:
         badges.append(BADGE_UNSAVED)
-    if (item.known_fields or set()) & TAGGED_FIELDS:
+    found = item.known_fields or set()
+    if found & TAGGED_FIELDS:
         badges.append(BADGE_METADATA)
+    if FIELD_COPYRIGHT in found:
+        badges.append(BADGE_COPYRIGHT)
     if has_sidecar:
         badges.append(BADGE_SIDECAR)
     if item.foreign_terms:

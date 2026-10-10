@@ -17,6 +17,7 @@ from photo_tagger.fields import ExtraFields
 from photo_tagger.gui_state import (
     _MAX_LISTED_DROPPED,
     ADDED,
+    BADGE_COPYRIGHT,
     BADGE_FAILED,
     BADGE_METADATA,
     BADGE_MIXED_SCRIPT,
@@ -130,6 +131,7 @@ from photo_tagger.gui_state import (
     photo_sort_key,
     photos_for_pass,
     photos_to_write,
+    planned_copyright,
     progress_timing_text,
     rank_vision_models,
     record_dropped_terms,
@@ -765,14 +767,15 @@ def test_file_dialog_name_filters_without_configured_types_still_offers_known_fo
 
 
 def test_tagged_summary_letters_and_empty_marker() -> None:
-    """Present fields compress to their letters in T/D/K order; none becomes a dash."""
+    """Present fields compress to their letters in T/D/K/C order; none becomes a dash."""
     assert tagged_summary({FIELD_KEYWORDS, FIELD_TITLE}) == "TK"
+    assert tagged_summary({FIELD_COPYRIGHT, FIELD_DESCRIPTION}) == "DC"
     assert tagged_summary(set()) == "-"
 
 
 def test_tagged_legend_maps_every_letter() -> None:
     """The header legend pairs each letter with its field name, in display order."""
-    assert tagged_legend() == "T = title, D = description, K = keywords"
+    assert tagged_legend() == "T = title, D = description, K = keywords, C = copyright"
 
 
 def test_tagged_tooltip_spells_out_the_present_letters() -> None:
@@ -790,6 +793,7 @@ def test_tagged_tooltip_is_fully_translated() -> None:
         assert tagged_tooltip({FIELD_KEYWORDS, FIELD_TITLE}) == (
             "Já no arquivo: T = título, K = palavras-chave"
         )
+        assert tagged_tooltip({FIELD_COPYRIGHT}) == "Já no arquivo: C = direitos autorais"
     finally:
         activate("en")
 
@@ -1051,6 +1055,23 @@ def test_apply_proposal_carries_the_cache_flag() -> None:
     assert item.from_cache is True
 
 
+def test_apply_proposal_carries_the_existing_copyright() -> None:
+    """A generated photo is never read again, so its notice must come in with the proposal."""
+    item = PhotoItem(path=Path("/a.jpg"))
+    proposal = Proposal(
+        path=Path("/a.jpg"),
+        existing_title=None,
+        existing_description=None,
+        existing_keywords=KeywordSet(),
+        title="T",
+        description="D",
+        keywords=[],
+        existing_copyright="© 2019 Ada",
+    )
+    apply_proposal(item, proposal)
+    assert item.existing_copyright == "© 2019 Ada"
+
+
 def test_thumb_badges_lifecycle_and_info_markers() -> None:
     """One lifecycle badge at most, plus metadata and sidecar markers when they apply."""
     failed = PhotoItem(path=Path("/a.jpg"), status=FAILED, known_fields={"title"})
@@ -1065,9 +1086,12 @@ def test_thumb_badges_lifecycle_and_info_markers() -> None:
     pending = PhotoItem(path=Path("/a.jpg"), known_fields=set())
     assert thumb_badges(pending, has_sidecar=False) == []
 
-    # A notice alone is not the metadata the badge means, the same as for the Untagged filter.
+    # A notice alone is not the metadata M means, the same as for the Untagged filter. It has
+    # a badge of its own.
     stamped = PhotoItem(path=Path("/a.jpg"), known_fields={FIELD_COPYRIGHT})
-    assert thumb_badges(stamped, has_sidecar=False) == []
+    assert thumb_badges(stamped, has_sidecar=False) == [BADGE_COPYRIGHT]
+    both = PhotoItem(path=Path("/a.jpg"), known_fields={FIELD_TITLE, FIELD_COPYRIGHT})
+    assert thumb_badges(both, has_sidecar=True) == [BADGE_METADATA, BADGE_COPYRIGHT, BADGE_SIDECAR]
 
     # Mixed script is informational: it marks the generated thumbnail, it does not replace
     # the lifecycle badge that says the proposal is there.
@@ -2316,6 +2340,20 @@ def test_copyright_summary_lists_every_tag_for_a_real_year() -> None:
     assert "2019" in summary
     assert "EXIF:Copyright = Copyright (c) 2019 Ada Lovelace" in summary
     assert "XMP-xmpRights:Marked = True" in summary
+
+
+def test_planned_copyright_shows_the_xmp_wording_for_the_year() -> None:
+    """The detail pane compares this with the file's notice, which is read XMP first."""
+    fields = ExtraFields(notice="(c) {year} Ada", rights="© {year} Ada")
+    assert planned_copyright(fields, 2019) == "© 2019 Ada"
+    assert planned_copyright(ExtraFields(notice="(c) {year} Ada"), 2019) == "(c) 2019 Ada"
+
+
+def test_planned_copyright_is_none_without_a_notice() -> None:
+    """No settings, or a name alone, put no notice on the photo."""
+    assert planned_copyright(None, 2019) is None
+    assert planned_copyright(ExtraFields(), 2019) is None
+    assert planned_copyright(ExtraFields(artist="Ada Lovelace"), 2019) is None
 
 
 def test_copyright_summary_says_when_nothing_is_written() -> None:

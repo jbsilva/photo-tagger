@@ -97,10 +97,11 @@ their sibling files. The columns are:
     groups all the failures, or all the ready photos, together.
 - **Tagged**: the metadata that the file already carries. After you add photos, a background scan
     reads a few dozen photos at a time and fills in this column as it goes. The letters are `T` for
-    title, `D` for description, `K` for keywords, and `-` for none (hover over a cell for the full
-    list). Some scans take more than a moment, for example a scan of a few thousand photos or of a
-    network share. Such a scan shows a progress bar and a **Stop** button under the list. If you
-    stop the scan, the column keeps the values that the scan read and leaves the rest blank.
+    title, `D` for description, `K` for keywords, `C` for a copyright notice, and `-` for none
+    (hover over a cell for the full list). Some scans take more than a moment, for example a scan of
+    a few thousand photos or of a network share. Such a scan shows a progress bar and a **Stop**
+    button under the list. If you stop the scan, the column keeps the values that the scan read and
+    leaves the rest blank.
 
 A search box is above the list. When you type into it, the list shows only the photos whose name
 matches. Plain text matches anywhere in the name (`IMG` finds `IMG_0001.dng`). The characters `*`,
@@ -181,9 +182,9 @@ of RAW files. In the grid, you can do these actions:
 
 Each thumbnail carries small badges. Hover over a badge to see what it means. The badge at the top
 right shows the lifecycle stage: a red ✗ for failed, a green ✓ for saved, and an indigo dot for
-generated but not saved. The badges at the top left mark a photo that already has metadata (`M`) or
-an XMP sidecar (`S`). An amber `!` at the top left marks text that mixes writing systems. The
-**Show** box above the grid filters the grid by any of the same states.
+generated but not saved. The badges at the top left mark a photo that already has metadata (`M`), a
+copyright notice (`C`), or an XMP sidecar (`S`). An amber `!` at the top left marks text that mixes
+writing systems. The **Show** box above the grid filters the grid by any of the same states.
 
 #### Getting back to where you were
 
@@ -311,6 +312,10 @@ Click a photo to open it on the right. The detail pane shows two columns side by
     cameras write that placeholder into every photo. That raw value is what the command
     `exiftool photo.dng` prints on its own. Only a save with **Write To > The Photo Itself**
     replaces it.
+- a **Copyright** row under Keywords. The **Existing** side shows the notice on the file. The
+    **New** side shows the notice that a save writes on this photo, with the year that the photo was
+    taken, or `(not written)`. Both sides are read-only. To change the notice, use **Settings >
+    Copyright**.
 - a collapsible **Keyword changes** section. Its header always summarizes what a save will do, for
     example `+3 / -1` or `no change`. Expand it to see a colored diff: green for added, red and
     struck-through for removed, grey for unchanged. The section also shows the resulting keyword
