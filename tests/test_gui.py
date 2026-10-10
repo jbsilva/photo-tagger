@@ -240,7 +240,7 @@ def _check_state(window: gui.MainWindow, path: Path) -> Qt.CheckState:
 def test_window_builds_with_capitalized_providers(window: gui.MainWindow) -> None:
     """The combo shows capitalized labels but carries the internal names as data."""
     assert "Photo Tagger" in window.windowTitle()
-    combo = window._provider  # noqa: SLF001
+    combo = window._connection_bar._provider  # noqa: SLF001
     names = [combo.itemData(i) for i in range(combo.count())]
     labels = [combo.itemText(i) for i in range(combo.count())]
     assert names == list(PROVIDER_NAMES)
@@ -250,8 +250,8 @@ def test_window_builds_with_capitalized_providers(window: gui.MainWindow) -> Non
 
 def test_provider_name_returns_internal_value(window: gui.MainWindow) -> None:
     """Selecting a label resolves back to the internal provider name."""
-    window._provider.setCurrentIndex(list(PROVIDER_NAMES).index("openai"))  # noqa: SLF001
-    assert window._provider_name() == "openai"  # noqa: SLF001
+    window._connection_bar._provider.setCurrentIndex(list(PROVIDER_NAMES).index("openai"))  # noqa: SLF001
+    assert window._connection_bar.connection().provider == "openai"  # noqa: SLF001
 
 
 def test_refresh_models_populates_combo_vision_first(
@@ -265,8 +265,9 @@ def test_refresh_models_populates_combo_vision_first(
         list_models=lambda _base, _key: ["llama3", "qwen3-vl-30b"],
     )
     _patch_gui(monkeypatch, "get_backend", lambda _name: fake)
-    window._refresh_models()  # noqa: SLF001
-    items = [window._model.itemText(i) for i in range(window._model.count())]  # noqa: SLF001
+    window._connection_bar.refresh_models()  # noqa: SLF001
+    combo = window._connection_bar._model  # noqa: SLF001
+    items = [combo.itemText(i) for i in range(combo.count())]
     assert items[0] == "qwen3-vl-30b"
     assert "llama3" in items
 
@@ -278,17 +279,17 @@ def test_refresh_models_populates_combo_vision_first(
 
 def test_api_key_value_strips_and_blank_is_none(window: gui.MainWindow) -> None:
     """A typed key is trimmed; a blank field means "use the env var" (None)."""
-    window._api_key.setText("  sk-typed  ")  # noqa: SLF001
-    assert window._api_key_value() == "sk-typed"  # noqa: SLF001
-    window._api_key.setText("   ")  # noqa: SLF001
-    assert window._api_key_value() is None  # noqa: SLF001
+    window._connection_bar._api_key.setText("  sk-typed  ")  # noqa: SLF001
+    assert window._connection_bar.connection().api_key == "sk-typed"  # noqa: SLF001
+    window._connection_bar._api_key.setText("   ")  # noqa: SLF001
+    assert window._connection_bar.connection().api_key is None  # noqa: SLF001
 
 
 def test_api_key_field_is_masked(window: gui.MainWindow) -> None:
     """The key field hides its contents so a shoulder-surfer cannot read it."""
     from PySide6.QtWidgets import QLineEdit  # noqa: PLC0415
 
-    assert window._api_key.echoMode() == QLineEdit.EchoMode.Password  # noqa: SLF001
+    assert window._connection_bar._api_key.echoMode() == QLineEdit.EchoMode.Password  # noqa: SLF001
 
 
 def test_refresh_models_passes_typed_api_key(
@@ -296,7 +297,7 @@ def test_refresh_models_passes_typed_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A key typed into the field is handed to the backend's key resolution."""
-    window._api_key.setText("sk-refresh")  # noqa: SLF001
+    window._connection_bar._api_key.setText("sk-refresh")  # noqa: SLF001
     seen: dict[str, str | None] = {}
     fake = SimpleNamespace(
         default_base_url="http://localhost/v1",
@@ -304,7 +305,7 @@ def test_refresh_models_passes_typed_api_key(
         list_models=lambda _base, _key: ["m"],
     )
     _patch_gui(monkeypatch, "get_backend", lambda _name: fake)
-    window._refresh_models()  # noqa: SLF001
+    window._connection_bar.refresh_models()  # noqa: SLF001
     assert seen["key"] == "sk-refresh"
 
 
@@ -361,7 +362,7 @@ def test_run_generation_builds_worker_with_typed_api_key(
     img = _jpeg(tmp_path / "a.jpg")
     _stub_generation(monkeypatch)  # so the background worker does no real I/O
     _add_dir(window, {"a": img})
-    window._api_key.setText("sk-run")  # noqa: SLF001
+    window._connection_bar._api_key.setText("sk-run")  # noqa: SLF001
 
     window._run_generation([window._items[str(img)]])  # noqa: SLF001
 
@@ -4590,8 +4591,8 @@ def test_save_config_writes_the_gui_choices(
     # No config in effect, so the save creates the user config from the template.
     _patch_gui(monkeypatch, "find_config_file", lambda: None)
     _patch_gui(monkeypatch, "user_config_path", lambda: target)
-    window._model.setCurrentText("qwen/qwen3-vl-30b")  # noqa: SLF001
-    window._api_key.setText("sk-secret")  # noqa: SLF001 - must NOT be written
+    window._connection_bar._model.setCurrentText("qwen/qwen3-vl-30b")  # noqa: SLF001
+    window._connection_bar._api_key.setText("sk-secret")  # noqa: SLF001 - must NOT be written
     window._extensions.setText("jpg,cr3")  # noqa: SLF001
     window._save_options_menu.sidecar_actions["raw"].setChecked(True)  # noqa: SLF001
     window._save_options_menu.backup.setChecked(False)  # noqa: SLF001

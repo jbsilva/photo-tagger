@@ -12,7 +12,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from PySide6 import __version__ as pyside_version
@@ -41,7 +41,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDialog,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -86,11 +85,9 @@ from photo_tagger.config_file import (
     user_config_path,
 )
 from photo_tagger.csv_report import write_report
-from photo_tagger.diagnostics import run_checks
 from photo_tagger.discovery import load_skip_list, skip_list_matches
-from photo_tagger.errors import ConfigFileError, DiscoveryError, ProviderError
+from photo_tagger.errors import ConfigFileError, DiscoveryError
 from photo_tagger.gui.common import (
-    CLOSE_LABEL,
     COL_NAME,
     COL_STATUS,
     COL_TAGGED,
@@ -106,6 +103,7 @@ from photo_tagger.gui.common import (
     PICK_A_FIELD,
     STATUS_RANK_ROLE,
 )
+from photo_tagger.gui.connection import ConnectionBar
 from photo_tagger.gui.copyright import CopyrightDialog
 from photo_tagger.gui.keyword_rules import KeywordRulesDialog
 from photo_tagger.gui.pacing import PacingDialog
@@ -170,7 +168,6 @@ from photo_tagger.gui_state import (
     SORT_TAGGED,
     SORT_TYPE,
     WORKING,
-    Connection,
     FolderNode,
     GenerateOptions,
     GuiConfigValues,
@@ -191,7 +188,6 @@ from photo_tagger.gui_state import (
     build_tree,
     caption_source_note,
     capture_year,
-    check_results_html,
     config_text_with_language,
     config_text_with_output_language,
     config_toml_text,
@@ -232,7 +228,6 @@ from photo_tagger.gui_state import (
     photos_to_write,
     planned_copyright,
     progress_timing_text,
-    rank_vision_models,
     record_dropped_terms,
     reports_status,
     resolve_extra_tags,
@@ -290,7 +285,7 @@ from photo_tagger.metadata import (
 from photo_tagger.notify import APP_NAME, notify
 from photo_tagger.pacing import SECONDS_PER_MINUTE
 from photo_tagger.pipeline import FAILURE_OTHER
-from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
+from photo_tagger.providers import get_backend
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
 from photo_tagger.undo import open_journal
 
@@ -543,10 +538,20 @@ class MainWindow(QMainWindow):
         # Same here, for the one action both Generate buttons offer in their arrow menus.
         self._autosave_action = self._build_autosave_action()
 
+        self._build_central()
+        self._build_dialogs()
+        self._build_menus()
+        self._refresh_save_tooltips()
+        self._show_empty()
+        self._watch_activity()
+
+    def _build_central(self) -> None:
+        """Lay the window out: the connection row, the list beside the review pane, the run bar."""
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.addLayout(self._build_header())
+        self._connection_bar = ConnectionBar(self, self._defaults.provider)
+        layout.addWidget(self._connection_bar)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_tree_panel())
         splitter.addWidget(self._build_right_pane())
@@ -556,11 +561,9 @@ class MainWindow(QMainWindow):
         splitter.setSizes([500, 680])
         layout.addWidget(splitter, stretch=1)
         layout.addLayout(self._build_bottom_bar())
-        self._build_dialogs()
-        self._build_menus()
-        self._refresh_save_tooltips()
-        self._show_empty()
-        self._watch_activity()
+        # Connected once the bottom bar exists, since the status line lives there.
+        self._connection_bar.status.connect(self._status.setText)
+        self._connection_bar.used.connect(self._count)
 
     def _build_dialogs(self) -> None:
         """
@@ -583,7 +586,7 @@ class MainWindow(QMainWindow):
         self._builder_dialog = VocabularyBuilderDialog(
             self,
             photo_paths=self._item_paths,
-            connection=self._connection,
+            connection=self._connection_bar.connection,
             output_language=lambda: self._output_language,
         )
         self._builder_dialog.status.connect(self._status.setText)
@@ -776,7 +779,7 @@ class MainWindow(QMainWindow):
             lambda: (self._count("docs"), QDesktopServices.openUrl(QUrl(DOCS_URL))),
         )
         help_menu.addSeparator()
-        help_menu.addAction(_("Test Connection"), self._test_connection)
+        help_menu.addAction(_("Test Connection"), self._connection_bar.test_connection)
         help_menu.addAction(_("Open Logs"), self._open_logs)
         help_menu.addSeparator()
         about_action = help_menu.addAction(_("About Photo Tagger"), self._show_about)
@@ -1162,11 +1165,12 @@ class MainWindow(QMainWindow):
 
     def _current_config_values(self) -> GuiConfigValues:
         """Collect the GUI's current choices that persist to the config file (never the API key)."""
+        connection = self._connection_bar.connection()
         pacing = self._pacing_dialog.plan
         return GuiConfigValues(
-            provider_name=self._provider_name(),
-            model_name=self._model.currentText().strip(),
-            api_base_url=self._url.text().strip() or None,
+            provider_name=connection.provider,
+            model_name=connection.model,
+            api_base_url=connection.api_base_url,
             extensions=self._extensions.text().strip(),
             recursive=self._recursive.isChecked(),
             **self._save_options_menu.config_values(),
@@ -1237,99 +1241,6 @@ class MainWindow(QMainWindow):
             + "<br><br>"
             '<a href="https://github.com/jbsilva/photo-tagger">github.com/jbsilva/photo-tagger</a>',
         )
-
-    def _build_header(self) -> QHBoxLayout:
-        """One compact row: the model choice the user changes often, the rest behind Connection."""
-        provider = self._defaults.provider
-
-        self._provider = QComboBox()
-        for name in PROVIDER_NAMES:
-            self._provider.addItem(PROVIDER_LABELS.get(name, name), name)
-        self._provider.setCurrentIndex(max(0, list(PROVIDER_NAMES).index(provider.provider_name)))
-        # Size to the widest label so "LM Studio" is not clipped.
-        self._provider.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        self._provider.setMinimumContentsLength(10)
-        self._provider.setToolTip(tooltip("Backend that serves the vision-language model."))
-
-        self._model = QComboBox()
-        self._model.setEditable(True)
-        self._model.setMinimumWidth(260)
-        self._model.setCurrentText(provider.model_name)
-        self._model.setToolTip(
-            tooltip(
-                "Model identifier. Type it, or press Refresh to list what the provider serves.",
-            ),
-        )
-        refresh = QPushButton(_("Refresh"))
-        refresh.setToolTip(tooltip("Query the provider for the models it currently serves."))
-        refresh.clicked.connect(self._refresh_models)
-
-        self._connection_dialog = self._build_connection_dialog()
-        connection = QPushButton(_("Connection..."))
-        connection.setToolTip(tooltip("Server URL, API key, and a connection test."))
-        connection.clicked.connect(
-            lambda: (self._count("connection"), self._connection_dialog.exec()),
-        )
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel(_("Provider")))
-        row.addWidget(self._provider)
-        row.addWidget(QLabel(_("Model")))
-        row.addWidget(self._model, stretch=1)
-        row.addWidget(refresh)
-        row.addWidget(connection)
-        return row
-
-    def _build_connection_dialog(self) -> QDialog:
-        """URL, API key, and the connection test: set-once settings, out of the main window."""
-        provider = self._defaults.provider
-        dialog = QDialog(self)
-        dialog.setWindowTitle(_("Connection settings"))
-        dialog.setMinimumWidth(520)
-        form = QFormLayout(dialog)
-        # macOS style defaults to fixed-size fields; let them fill the dialog width instead.
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-
-        self._url = QLineEdit(provider.api_base_url or "")
-        self._url.setMinimumWidth(380)
-        self._url.setPlaceholderText(_("(provider default URL)"))
-        self._url.setToolTip(
-            tooltip("Provider API base URL. Leave blank to use the provider's default."),
-        )
-        form.addRow(_("Base URL"), self._url)
-
-        # Pre-filled from a config-file key if one is set, never from an environment variable: an
-        # env key stays in the environment and is resolved at call time, so it never lands in the
-        # widget. A typed key is masked, used only for this session, and never written to disk.
-        self._api_key = QLineEdit(provider.api_key or "")
-        self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._api_key.setClearButtonEnabled(True)
-        self._api_key.setMinimumWidth(380)
-        self._api_key.setPlaceholderText(_("(uses provider env var)"))
-        self._api_key.setToolTip(
-            tooltip(
-                "API key for the provider. Leave blank to use the provider's environment variable "
-                "(OPENAI_API_KEY, LM_STUDIO_API_KEY, LLAMA_CPP_API_KEY, or OLLAMA_API_KEY). "
-                "Required for OpenAI. A typed key is used for this session only and is never "
-                "written to disk.",
-            ),
-        )
-        form.addRow(_("API key"), self._api_key)
-
-        self._test_button = QPushButton(_("Test Connection"))
-        self._test_button.setToolTip(
-            tooltip("Check ExifTool and that the provider serves the model."),
-        )
-        self._test_button.clicked.connect(self._test_connection)
-        close = QPushButton(_(CLOSE_LABEL))
-        close.setDefault(True)
-        close.clicked.connect(dialog.accept)
-        buttons = QHBoxLayout()
-        buttons.addWidget(self._test_button)
-        buttons.addStretch(1)
-        buttons.addWidget(close)
-        form.addRow(buttons)
-        return dialog
 
     def _build_tree_panel(self) -> QWidget:
         panel = QWidget()
@@ -3963,13 +3874,14 @@ class MainWindow(QMainWindow):
         ).format(n=len(items))
         self._status.setText(self._run_status_text)
 
+        connection = self._connection_bar.connection()
         self._thread = QThread(self)
         self._worker = GenerateWorker(
-            self._provider_name(),
-            self._model.currentText().strip(),
-            self._url.text().strip() or None,
+            connection.provider,
+            connection.model,
+            connection.api_base_url,
             [item.path for item in items],
-            api_key=self._api_key_value(),
+            api_key=connection.api_key,
             cache_file=self._active_cache_file() if use_cache else None,
             options=GenerateOptions(
                 output_language=self._output_language,
@@ -4137,9 +4049,9 @@ class MainWindow(QMainWindow):
             self._save_button,
             self._save_selected_button,
             self._retry_button,
-            self._test_button,
         ):
             button.setEnabled(False)
+        self._connection_bar.set_testable(enabled=False)
         self._harmonize_action.setEnabled(False)
         self._cancel_button.setEnabled(True)
 
@@ -4286,7 +4198,7 @@ class MainWindow(QMainWindow):
         self._save_button.setEnabled(not running)
         self._save_selected_button.setEnabled(not running)
         self._retry_button.setEnabled(not running and self._has_failures())
-        self._test_button.setEnabled(not running)
+        self._connection_bar.set_testable(enabled=not running)
         self._cancel_button.setEnabled(running)
         # Harmonizing rewrites the proposals a run is still producing, so it waits its turn.
         self._harmonize_action.setEnabled(not running)
@@ -4656,51 +4568,6 @@ class MainWindow(QMainWindow):
 
     # --- providers and diagnostics ---------------------------------------------------------
 
-    def _refresh_models(self) -> None:
-        self._count("refresh_models")
-        backend = get_backend(self._provider_name())
-        base_url = self._url.text().strip() or backend.default_base_url
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            models = backend.list_models(base_url, backend.resolve_api_key(self._api_key_value()))
-        except ProviderError as exc:
-            QApplication.restoreOverrideCursor()
-            QMessageBox.warning(self, _("Could not list models"), str(exc))
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
-        current = self._model.currentText()
-        self._model.clear()
-        self._model.addItems(rank_vision_models(models))
-        self._model.setCurrentText(current)
-        self._status.setText(
-            ngettext(
-                "Found {n} model on {provider}.",
-                "Found {n} models on {provider}.",
-                len(models),
-            ).format(n=len(models), provider=PROVIDER_LABELS.get(self._provider_name(), "")),
-        )
-
-    def _test_connection(self) -> None:
-        self._count("test_connection")
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            results = run_checks(
-                self._provider_name(),
-                self._model.currentText().strip(),
-                api_base_url=self._url.text().strip() or None,
-                api_key=self._api_key_value(),
-            )
-        finally:
-            QApplication.restoreOverrideCursor()
-        box = QMessageBox(self)
-        box.setWindowTitle(_("Connection check"))
-        box.setTextFormat(Qt.TextFormat.RichText)
-        box.setText(check_results_html(results))
-        all_ok = all(r.ok for r in results)
-        box.setIcon(QMessageBox.Icon.Information if all_ok else QMessageBox.Icon.Warning)
-        box.exec()
-
     def _open_logs(self) -> None:
         """Reveal the log folder in the OS file browser so the user can read the run logs."""
         self._count("open_logs")
@@ -4708,23 +4575,6 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_FOLDER)))
 
     # --- helpers ---------------------------------------------------------------------------
-
-    def _provider_name(self) -> ProviderName:
-        """Return the selected provider; the combo carries the internal name as item data."""
-        return cast("ProviderName", self._provider.currentData())
-
-    def _api_key_value(self) -> str | None:
-        """Return the typed API key, or None to fall back to the provider's env var/default."""
-        return self._api_key.text().strip() or None
-
-    def _connection(self) -> Connection:
-        """Read the provider, model, server, and key off the header and the Connection dialog."""
-        return Connection(
-            provider=self._provider_name(),
-            model=self._model.currentText().strip(),
-            api_base_url=self._url.text().strip() or None,
-            api_key=self._api_key_value(),
-        )
 
     def _refresh_status_cell(self, item: PhotoItem) -> None:
         leaf = self._leaf_for(item.path)
@@ -4905,16 +4755,16 @@ class MainWindow(QMainWindow):
 
     def _telemetry_settings(self) -> telemetry.Settings:
         """Snapshot the window's settings as the bounded values telemetry reports."""
-        backend = get_backend(self._provider_name())
-        typed = self._url.text().strip()
+        connection = self._connection_bar.connection()
+        backend = get_backend(connection.provider)
         watching = self._watch_settings or WatchSettings()
         vocabulary = self._keyword_rules_dialog.vocabulary
         return window_settings(
             self._current_config_values(),
             WindowFacts(
-                url=typed or backend.default_base_url,
-                custom_url=bool(typed),
-                api_key=bool(backend.resolve_api_key(self._api_key_value())),
+                url=connection.api_base_url or backend.default_base_url,
+                custom_url=connection.api_base_url is not None,
+                api_key=bool(backend.resolve_api_key(connection.api_key)),
                 cache=self._cache_action.isChecked(),
                 jpeg_dimensions=self._model_image_size,
                 vocabulary_terms=len(vocabulary.terms) if vocabulary else 0,
@@ -4948,9 +4798,10 @@ class MainWindow(QMainWindow):
         """Build the run context from the window's current settings."""
         settings = self._telemetry_settings()
         keys, unknown = config_key_names(self._raw_config, known_config_keys())
+        connection = self._connection_bar.connection()
         return RunContext(
-            provider=self._provider_name(),
-            model=self._model.currentText().strip(),
+            provider=connection.provider,
+            model=connection.model,
             output_language=self._output_language,
             ui_language=i18n.current_language(),
             settings=settings,
