@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from photo_tagger import telemetry
 from photo_tagger.gui_state import DEFAULT_GUI_EXTENSIONS, FAILED
-from photo_tagger.telemetry_facts import endpoint_kind, extension_list, mean, quantile
+from photo_tagger.telemetry_facts import endpoint_kind, extension_list, marked_label, mean, quantile
 
 
 if TYPE_CHECKING:
@@ -588,13 +588,6 @@ class GuiUsage:
         )
 
 
-def _marked_label(*, marked: bool | None) -> str:
-    """Name the XMP Marked choice the way telemetry reports it."""
-    if marked is None:
-        return "unset"
-    return "copyrighted" if marked else "public-domain"
-
-
 @dataclass(slots=True, frozen=True)
 class WindowFacts:
     """The settings the window holds outside what it saves to the config file."""
@@ -641,7 +634,7 @@ def window_settings(values: GuiConfigValues, facts: WindowFacts) -> telemetry.Se
         artist=bool(copyright_fields and copyright_fields.artist),
         copyright_notice=bool(copyright_fields and copyright_fields.notice),
         rights=bool(copyright_fields and copyright_fields.rights),
-        marked=_marked_label(marked=copyright_fields.marked if copyright_fields else None),
+        marked=marked_label(copyright_fields.marked if copyright_fields else None),
         overwrite_copyright=bool(copyright_fields and not copyright_fields.preserve),
         set_tags=len(copyright_fields.tags) if copyright_fields else 0,
         paced=values.duty < telemetry.Settings().duty or values.battery_floor > 0,

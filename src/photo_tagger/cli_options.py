@@ -59,7 +59,7 @@ from photo_tagger.pipeline import ProcessingOptions
 # Runtime import (not type-only): cyclopts evaluates the Annotated[ProviderName, ...] field
 # below to validate the --provider choices, so the name must exist at class-definition time.
 from photo_tagger.providers import ProviderName, get_backend
-from photo_tagger.telemetry_facts import endpoint_kind, extension_list
+from photo_tagger.telemetry_facts import endpoint_kind, extension_list, marked_label
 from photo_tagger.vocabulary import folds_plurals
 from photo_tagger.vocabulary_build import TrimRules
 from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
@@ -1275,13 +1275,6 @@ def to_pacing_plan(config: PacingConfig) -> PacingPlan:
     )
 
 
-def _marked_label(*, marked: bool | None) -> str:
-    """Name the XMP Marked choice the way telemetry reports it."""
-    if marked is None:
-        return "unset"
-    return "copyrighted" if marked else "public-domain"
-
-
 def to_telemetry_settings(  # noqa: PLR0913 - one parameter per option group tag() takes.
     *,
     provider: ProviderConfig,
@@ -1346,7 +1339,7 @@ def to_telemetry_settings(  # noqa: PLR0913 - one parameter per option group tag
         artist=bool(output.artist),
         copyright_notice=bool(output.copyright_notice),
         rights=bool(output.rights),
-        marked=_marked_label(marked=output.marked),
+        marked=marked_label(output.marked),
         overwrite_copyright=not output.preserve_copyright,
         set_tags=len(output.set_tags or []),
         paced=to_pacing_plan(pacing).rests,

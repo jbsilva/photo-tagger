@@ -629,3 +629,10 @@ def library_versions(names: Iterable[str] = CRASH_LIBRARIES) -> str:
         except importlib.metadata.PackageNotFoundError:
             continue
     return ",".join(found)
+
+
+def marked_label(marked: bool | None) -> str:  # noqa: FBT001 - the value being named, not a switch.
+    """Name the XMP Marked choice the way telemetry reports it."""
+    if marked is None:
+        return "unset"
+    return "copyrighted" if marked else "public-domain"

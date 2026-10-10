@@ -407,3 +407,12 @@ def test_library_versions_name_installed_ones_only() -> None:
     versions = facts.library_versions(["pydantic", "not-a-real-package-xyz"])
     assert versions.startswith("pydantic=")
     assert "not-a-real-package-xyz" not in versions
+
+
+@pytest.mark.parametrize(
+    ("marked", "label"),
+    [(None, "unset"), (True, "copyrighted"), (False, "public-domain")],
+)
+def test_marked_label_names_the_three_choices(*, marked: bool | None, label: str) -> None:
+    """The CLI and the GUI report the XMP Marked choice with the same three words."""
+    assert facts.marked_label(marked) == label
