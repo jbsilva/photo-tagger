@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
+from photo_tagger import telemetry
 from photo_tagger.errors import ConfigFileError
 from photo_tagger.fields import ExtraFields
 from photo_tagger.gui_state import (
@@ -144,6 +145,7 @@ from photo_tagger.gui_state import (
     tagged_legend,
     tagged_summary,
     tagged_tooltip,
+    telemetry_toggle_note,
     thumb_badges,
     tooltip,
     undo_action_label,
@@ -2429,3 +2431,40 @@ def test_pacing_summary_flags_a_floor_near_full() -> None:
 def test_pacing_summary_leaves_an_ordinary_floor_unflagged() -> None:
     """A floor anyone would use carries no warning at all."""
     assert MIXED_SCRIPT_MARK not in pacing_summary(PacingPlan(battery_floor=30))
+
+
+# --- telemetry toggle ----------------------------------------------------------------------------
+
+
+def test_telemetry_toggle_note_explains_what_the_environment_decided() -> None:
+    """The toggle only carries a note when an environment variable, not the box, decides."""
+    assert "DO_NOT_TRACK" in telemetry_toggle_note(
+        telemetry.CONSENT_DO_NOT_TRACK,
+        do_not_track=True,
+    )
+    assert "PHOTO_TAGGER_NO_TELEMETRY" in telemetry_toggle_note(
+        telemetry.CONSENT_ENV_OPT_OUT,
+        do_not_track=False,
+    )
+    assert "turned this on here" in telemetry_toggle_note(
+        telemetry.CONSENT_GUI_OPT_IN,
+        do_not_track=True,
+    )
+    assert "PHOTO_TAGGER_TELEMETRY=1" in telemetry_toggle_note(
+        telemetry.CONSENT_ENV_OPT_IN,
+        do_not_track=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        telemetry.CONSENT_DEFAULT,
+        telemetry.CONSENT_SETTING_OFF,
+        telemetry.CONSENT_GUI_OPT_IN,
+        telemetry.CONSENT_ENV_OPT_IN,
+    ],
+)
+def test_telemetry_toggle_note_stays_quiet_without_do_not_track(reason: str) -> None:
+    """With DO_NOT_TRACK unset, an opt-in overrules nothing, so there is nothing to explain."""
+    assert telemetry_toggle_note(reason, do_not_track=False) == ""

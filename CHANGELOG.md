@@ -68,6 +68,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- `PHOTO_TAGGER_TELEMETRY` replaces `PHOTO_TAGGER_NO_TELEMETRY`. `0` turns telemetry off, and `1`
+  sends it even with `DO_NOT_TRACK=1` set. A GUI toggle checked by hand also overrules
+  `DO_NOT_TRACK`, and the toggle now shows what is actually sent.
+
 - `--jpeg-dimensions` now defaults to 640 px instead of 1280. Prefill scales with the pixel count,
   so this is about a second less per photo on a local 30B model, and 640 px carries everything but
   small text in the frame. Raise it to 896 or 1024 for photos of signs, documents, or labels. A run

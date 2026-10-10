@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
 
+from photo_tagger import telemetry
 from photo_tagger.config import (
     DEFAULT_BATTERY_FLOOR,
     DEFAULT_BATTERY_RESUME,
@@ -2077,6 +2078,29 @@ def _toml_str(value: str) -> str:
 def _toml_bool(value: bool) -> str:  # noqa: FBT001  # the bool is the value being rendered
     """Render a TOML boolean."""
     return "true" if value else "false"
+
+
+def telemetry_toggle_note(reason: str, *, do_not_track: bool) -> str:
+    """Explain the telemetry toggle when an environment variable decides it, else return ""."""
+    if reason == telemetry.CONSENT_ENV_OPT_OUT:
+        return _(
+            "Turned off by PHOTO_TAGGER_TELEMETRY or PHOTO_TAGGER_NO_TELEMETRY in your "
+            "environment. Remove it to choose here.",
+        )
+    if reason == telemetry.CONSENT_DO_NOT_TRACK:
+        return _(
+            "DO_NOT_TRACK is set in your environment, so nothing is sent. Check this to send "
+            "anyway, for Photo Tagger only.",
+        )
+    if not do_not_track:
+        return ""
+    if reason == telemetry.CONSENT_GUI_OPT_IN:
+        return _("Sending even though DO_NOT_TRACK is set, because you turned this on here.")
+    if reason == telemetry.CONSENT_ENV_OPT_IN:
+        return _(
+            "Sending even though DO_NOT_TRACK is set, because PHOTO_TAGGER_TELEMETRY=1 is set.",
+        )
+    return ""
 
 
 @dataclass(frozen=True, slots=True)

@@ -264,6 +264,7 @@ from photo_tagger.gui_state import (
     tagged_legend,
     tagged_summary,
     tagged_tooltip,
+    telemetry_toggle_note,
     thumb_badges,
     tooltip,
     undo_action_label,
@@ -1883,9 +1884,11 @@ class MainWindow(QMainWindow):
         # Keys of photos generated this session, for the telemetry batch size. Tracked cumulatively
         # (not counted off the list at close) so clearing or loading another folder never loses it.
         self._session_tagged: set[str] = set()
-        # Telemetry on/off: a persisted Settings-menu choice wins over the config-file default.
-        _pref = telemetry.read_gui_pref()
-        self._telemetry_enabled = self._defaults.telemetry.enabled if _pref is None else _pref
+        # Telemetry on/off: a persisted Settings-menu choice wins over the config-file default, and
+        # a toggle turned on by hand is an opt-in that overrules DO_NOT_TRACK.
+        self._telemetry_enabled, self._telemetry_opted_in = telemetry.gui_choice(
+            config_enabled=self._defaults.telemetry.enabled,
+        )
         # End-of-run desktop alert, resolved the same way the CLI resolves its two flags: a config
         # that asks only for the sound is asking for the notification that carries it.
         self._notify_enabled, self._notify_sound = resolve_notify(self._defaults.display)
@@ -2188,14 +2191,7 @@ class MainWindow(QMainWindow):
         settings_menu.addAction(self._cache_action)
         self._telemetry_action = QAction(_("Send Anonymous Telemetry"), self)
         self._telemetry_action.setCheckable(True)
-        self._telemetry_action.setChecked(self._telemetry_enabled)
-        self._telemetry_action.setToolTip(
-            tooltip(
-                "Anonymous usage stats (model, batch size, OS, CPU/GPU model, RAM, timing) and "
-                "crash reports (error type and code location only). No photos, error messages, "
-                "or personal data.",
-            ),
-        )
+        self._refresh_telemetry_action()
         self._telemetry_action.toggled.connect(self._on_telemetry_toggled)
         settings_menu.addAction(self._telemetry_action)
         self._undo_log_action = QAction(_("Record Saves for Undo"), self)
@@ -2495,10 +2491,34 @@ class MainWindow(QMainWindow):
             ),
         )
 
+    def _telemetry_consent(self) -> telemetry.Consent:
+        """Resolve whether this window may send, from its toggle and the environment."""
+        return telemetry.resolve_consent(
+            enabled=self._telemetry_enabled,
+            opted_in=self._telemetry_opted_in,
+        )
+
+    def _refresh_telemetry_action(self) -> None:
+        """Check the toggle only when beacons go out; gray it out under an environment opt-out."""
+        consent = self._telemetry_consent()
+        with QSignalBlocker(self._telemetry_action):
+            self._telemetry_action.setChecked(consent.send)
+        self._telemetry_action.setEnabled(consent.reason != telemetry.CONSENT_ENV_OPT_OUT)
+        text = tooltip(
+            "Anonymous usage stats (model, batch size, OS, CPU/GPU model, RAM, timing) and "
+            "crash reports (error type and code location only). No photos, error messages, "
+            "or personal data.",
+        )
+        if note := telemetry_toggle_note(consent.reason, do_not_track=telemetry.do_not_track()):
+            text = f"{text}\n\n{wrap_tooltip(note)}"
+        self._telemetry_action.setToolTip(text)
+
     def _on_telemetry_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
-        """Persist the telemetry choice and apply it to this session right away."""
+        """Persist the choice; checking the box is an opt-in that overrules DO_NOT_TRACK."""
         self._telemetry_enabled = enabled
+        self._telemetry_opted_in = enabled
         telemetry.write_gui_pref(enabled=enabled)
+        self._refresh_telemetry_action()
         self._status.setText(
             _("Anonymous telemetry on.") if enabled else _("Anonymous telemetry off."),
         )
@@ -7235,7 +7255,7 @@ class MainWindow(QMainWindow):
         ``__init__``, so the headless test suite (which builds the window directly) never blocks on
         a modal dialog.
         """
-        if not telemetry.should_send(config_enabled=self._telemetry_enabled):
+        if not self._telemetry_consent().send:
             return
         if telemetry.first_run_notice() is None:  # already shown on an earlier run
             return
@@ -7280,6 +7300,7 @@ class MainWindow(QMainWindow):
                 success_count=len(self._session_tagged),
             ),
             enabled=self._telemetry_enabled,
+            opted_in=self._telemetry_opted_in,
             block=True,
         )
 
@@ -7444,11 +7465,11 @@ def launch(argv: list[str] | None = None) -> int:
         if qt_translator.load(QLocale(language), "qtbase", "_", translations_dir):
             app.installTranslator(qt_translator)
 
-    def _gui_telemetry_enabled() -> bool:
-        # The window's live toggle is authoritative once it exists; before that, fall back to the
-        # persisted GUI preference or the config default (emit_crash enforces the env opt-outs).
-        pref = telemetry.read_gui_pref()
-        return load_defaults().telemetry.enabled if pref is None else pref
+    def _report_crash(exc: BaseException, *, block: bool) -> None:
+        # The persisted toggle (or the config default) decides, as it does for the window itself;
+        # emit_crash enforces the environment switches on top.
+        enabled, opted_in = telemetry.gui_choice(config_enabled=load_defaults().telemetry.enabled)
+        telemetry.emit_crash(exc, interface="gui", enabled=enabled, opted_in=opted_in, block=block)
 
     # Qt swallows exceptions raised inside slots (they reach sys.excepthook and the loop keeps
     # running), so an unhandled slot crash never propagates out of app.exec(). Chain a hook that
@@ -7456,7 +7477,7 @@ def launch(argv: list[str] | None = None) -> int:
     previous_hook = sys.excepthook
 
     def _crash_hook(exc_type: type[BaseException], exc: BaseException, tb: object) -> None:
-        telemetry.emit_crash(exc, interface="gui", enabled=_gui_telemetry_enabled(), block=False)
+        _report_crash(exc, block=False)
         previous_hook(exc_type, exc, tb)  # type: ignore[arg-type]
 
     sys.excepthook = _crash_hook
@@ -7468,5 +7489,5 @@ def launch(argv: list[str] | None = None) -> int:
         return app.exec()
     except Exception as exc:
         # A crash outside the event loop (startup, teardown) kills the process; flush the beacon.
-        telemetry.emit_crash(exc, interface="gui", enabled=_gui_telemetry_enabled(), block=True)
+        _report_crash(exc, block=True)
         raise

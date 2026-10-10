@@ -33,7 +33,7 @@ def _isolate_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     payload tests from shelling out to real probes.
     """
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.delenv("PHOTO_TAGGER_NO_TELEMETRY", raising=False)
+    monkeypatch.delenv("PHOTO_TAGGER_TELEMETRY", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
     monkeypatch.setattr(telemetry, "hardware_info", lambda _path: _FAKE_HARDWARE)
     monkeypatch.setattr(telemetry, "_crash_beacons_sent", 0)
@@ -56,36 +56,100 @@ def _sample_run() -> RunInfo:
 # --- opt-out precedence ------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("value", ["1", "true", "YES", "On"])
-def test_env_opt_out_accepts_truthy_spellings(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    """Any accepted truthy spelling of our env var opts out."""
-    monkeypatch.setenv("PHOTO_TAGGER_NO_TELEMETRY", value)
-    assert telemetry.env_opt_out() is True
+@pytest.mark.parametrize("value", ["0", "false", "NO", "Off"])
+def test_env_switch_off_opts_out(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """Any accepted "no" spelling of the switch turns telemetry off, even over a GUI opt-in."""
+    monkeypatch.setenv("PHOTO_TAGGER_TELEMETRY", value)
+    assert telemetry.resolve_consent(enabled=True, opted_in=True) == telemetry.Consent(
+        send=False,
+        reason=telemetry.CONSENT_ENV_OPT_OUT,
+    )
 
 
-@pytest.mark.parametrize("value", ["0", "", "false", "no"])
-def test_env_opt_out_ignores_non_truthy(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    """A falsy or empty value is treated as 'not set' and does not opt out."""
-    monkeypatch.setenv("PHOTO_TAGGER_NO_TELEMETRY", value)
-    assert telemetry.env_opt_out() is False
+@pytest.mark.parametrize("value", ["", "   "])
+def test_env_switch_empty_counts_as_not_set(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """An empty value changes nothing, so a stray ``PHOTO_TAGGER_TELEMETRY=`` is harmless."""
+    monkeypatch.setenv("PHOTO_TAGGER_TELEMETRY", value)
+    assert telemetry.resolve_consent(enabled=True).reason == telemetry.CONSENT_DEFAULT
 
 
-def test_env_opt_out_honors_do_not_track(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The cross-tool DO_NOT_TRACK standard also opts out."""
+@pytest.mark.parametrize("value", ["maybe", "2", "disabled", "none"])
+def test_env_switch_unknown_spelling_opts_out(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """Someone who set the switch to a word it does not know meant no: an opt-out fails closed."""
+    monkeypatch.setenv("PHOTO_TAGGER_TELEMETRY", value)
+    assert telemetry.resolve_consent(enabled=True, opted_in=True) == telemetry.Consent(
+        send=False,
+        reason=telemetry.CONSENT_ENV_OPT_OUT,
+    )
+
+
+def test_legacy_env_opt_out_still_opts_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0.9's ``PHOTO_TAGGER_NO_TELEMETRY=1`` keeps working, so no opt-out is lost in an upgrade."""
+    monkeypatch.setenv("PHOTO_TAGGER_NO_TELEMETRY", "1")
+    assert telemetry.resolve_consent(enabled=True, opted_in=True) == telemetry.Consent(
+        send=False,
+        reason=telemetry.CONSENT_ENV_OPT_OUT,
+    )
+
+
+def test_do_not_track_opts_out_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cross-tool DO_NOT_TRACK standard turns telemetry off when nothing overrules it."""
     monkeypatch.setenv("DO_NOT_TRACK", "1")
-    assert telemetry.env_opt_out() is True
+    assert telemetry.do_not_track() is True
+    assert telemetry.resolve_consent(enabled=True) == telemetry.Consent(
+        send=False,
+        reason=telemetry.CONSENT_DO_NOT_TRACK,
+    )
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "ON"])
+def test_tool_switch_overrules_do_not_track(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """PHOTO_TAGGER_TELEMETRY=1 is a choice for this tool alone, so it beats DO_NOT_TRACK."""
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+    monkeypatch.setenv("PHOTO_TAGGER_TELEMETRY", value)
+    assert telemetry.resolve_consent(enabled=True) == telemetry.Consent(
+        send=True,
+        reason=telemetry.CONSENT_ENV_OPT_IN,
+    )
+
+
+def test_gui_opt_in_overrules_do_not_track(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A GUI toggle turned on by hand is an opt-in for this tool, so it beats DO_NOT_TRACK too."""
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+    assert telemetry.resolve_consent(enabled=True, opted_in=True) == telemetry.Consent(
+        send=True,
+        reason=telemetry.CONSENT_GUI_OPT_IN,
+    )
+
+
+def test_any_opt_out_beats_any_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An explicit off anywhere wins: no opt-in may overrule a user who turned telemetry off."""
+    monkeypatch.setenv("PHOTO_TAGGER_TELEMETRY", "1")
+    assert telemetry.resolve_consent(enabled=False).reason == telemetry.CONSENT_SETTING_OFF
 
 
 def test_should_send_true_only_when_enabled_and_no_env_optout() -> None:
     """With nothing opting out, the merged flag/config bool decides."""
     assert telemetry.should_send(config_enabled=True) is True
     assert telemetry.should_send(config_enabled=False) is False
+    assert telemetry.resolve_consent(enabled=True).reason == telemetry.CONSENT_DEFAULT
 
 
 def test_env_optout_overrides_enabled_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """The environment wins even when flag/config asked to keep telemetry on."""
-    monkeypatch.setenv("PHOTO_TAGGER_NO_TELEMETRY", "1")
+    monkeypatch.setenv("PHOTO_TAGGER_TELEMETRY", "0")
     assert telemetry.should_send(config_enabled=True) is False
+
+
+def test_emit_sends_under_do_not_track_only_when_opted_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Emit honors DO_NOT_TRACK, and an explicit opt-in is what lets a beacon through anyway."""
+    posted: list[object] = []
+    monkeypatch.setattr(httpx2, "post", lambda *_a, **k: posted.append(k))
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+    assert telemetry.emit(_sample_run(), enabled=True, block=True) is None
+    assert posted == []
+    assert telemetry.emit(_sample_run(), enabled=True, opted_in=True, block=True) is not None
+    assert len(posted) == 1
 
 
 # --- install id --------------------------------------------------------------------------------
@@ -175,6 +239,41 @@ def test_gui_pref_unrecognized_reads_as_none(tmp_path: Path) -> None:
     pref.parent.mkdir(parents=True)
     pref.write_text("maybe")
     assert telemetry.read_gui_pref() is None
+
+
+def test_gui_choice_follows_the_config_and_marks_a_hand_check_as_opt_in() -> None:
+    """No saved toggle defers to the config; a hand-check is an opt-in, a cleared toggle off."""
+    assert telemetry.gui_choice(config_enabled=True) == (True, False)
+    assert telemetry.gui_choice(config_enabled=False) == (False, False)
+    telemetry.write_gui_pref(enabled=True)
+    assert telemetry.gui_choice(config_enabled=True) == (True, True)
+    telemetry.write_gui_pref(enabled=False)
+    assert telemetry.gui_choice(config_enabled=True) == (False, False)
+
+
+def test_gui_choice_lets_a_hand_check_beat_the_config_opt_out() -> None:
+    """
+    A toggle checked by hand beats ``enabled = false`` in the config file.
+
+    The window writes that key on every settings save, so a later click is the newer choice. Without
+    a hand check, the config's opt-out still wins.
+    """
+    assert telemetry.gui_choice(config_enabled=False) == (False, False)
+    telemetry.write_gui_pref(enabled=True)
+    assert telemetry.gui_choice(config_enabled=False) == (True, True)
+
+
+def test_gui_choice_reads_a_legacy_on_as_no_opt_in(tmp_path: Path) -> None:
+    """
+    0.9 wrote "1" for any check, even one made while DO_NOT_TRACK kept the beacons off.
+
+    Reading it as an opt-in would start sending for an upgraded DO_NOT_TRACK user.
+    """
+    pref = tmp_path / "state" / "photo-tagger" / "gui-telemetry"
+    pref.parent.mkdir(parents=True)
+    pref.write_text("1")
+    assert telemetry.read_gui_pref() is True
+    assert telemetry.gui_choice(config_enabled=True) == (True, False)
 
 
 def test_gui_pref_write_degrades_when_unwritable(

@@ -836,7 +836,8 @@ class TelemetryConfig:
                 "timing, success/cache counts) and anonymous crash reports (error type and in-app "
                 "code location only) to help guide development. No photos, file paths, filenames, "
                 "tags, error messages, or personal data are ever sent. Disable with "
-                "--no-telemetry, PHOTO_TAGGER_NO_TELEMETRY=1, or the cross-tool DO_NOT_TRACK=1"
+                "--no-telemetry, PHOTO_TAGGER_TELEMETRY=0, or the cross-tool DO_NOT_TRACK=1. "
+                "PHOTO_TAGGER_TELEMETRY=1 sends anyway when DO_NOT_TRACK is set"
             ),
         ),
     ] = True

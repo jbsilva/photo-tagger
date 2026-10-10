@@ -515,13 +515,21 @@ wrapped so it can never crash or slow down a run.
 **How to disable it** (any one of these):
 
 - pass `--no-telemetry` on the command line
-- set `PHOTO_TAGGER_NO_TELEMETRY=1` (or the cross-tool `DO_NOT_TRACK=1`) in your environment
+- set `PHOTO_TAGGER_TELEMETRY=0` (or the cross-tool `DO_NOT_TRACK=1`) in your environment
 - put `enabled = false` under `[telemetry]` in your config file
 - in the desktop app, uncheck **Settings > Send Anonymous Telemetry** (the first-run dialog also
   offers a one-click "Turn It Off"); the choice is remembered for next launch
 
-The environment variables win over everything, so exporting `PHOTO_TAGGER_NO_TELEMETRY=1` once
-disables telemetry everywhere, including the GUI.
+An opt-out in the environment or on the command line wins over every opt-in, so exporting
+`PHOTO_TAGGER_TELEMETRY=0` once disables telemetry everywhere, including the GUI. In the desktop
+app, a toggle checked by hand wins over `enabled = false` in the configuration file, because the app
+writes that key itself when it saves your settings. The `PHOTO_TAGGER_NO_TELEMETRY=1` of version 0.9
+still works too.
+
+`DO_NOT_TRACK=1` is the one exception, because it speaks for every tool at once. If you set it but
+still want to send photo-tagger's stats, set `PHOTO_TAGGER_TELEMETRY=1`. It works for the CLI and
+the GUI. In the desktop app you can also check **Settings > Send Anonymous Telemetry** by hand. The
+toggle shows unchecked while `DO_NOT_TRACK` stops the beacons, so what you see is what is sent.
 
 ## Logging
 

@@ -64,10 +64,36 @@ it. After that, it stays quiet.
 Any one of these turns telemetry off:
 
 - Pass `--no-telemetry` on the command line.
-- Set `PHOTO_TAGGER_NO_TELEMETRY=1` (or the cross-tool `DO_NOT_TRACK=1`) in your environment.
+- Set `PHOTO_TAGGER_TELEMETRY=0` (or the cross-tool `DO_NOT_TRACK=1`) in your environment.
 - Put `enabled = false` under `[telemetry]` in your [config file](getting-started/configuration.md).
 - In the desktop GUI, uncheck **Settings > Send Anonymous Telemetry**; the choice is remembered for
     the next launch.
 
-The environment variables win over everything, so exporting `PHOTO_TAGGER_NO_TELEMETRY=1` once
-disables telemetry everywhere, including the GUI.
+An opt-out anywhere wins over an opt-in, so exporting `PHOTO_TAGGER_TELEMETRY=0` once disables
+telemetry everywhere, including the GUI. Any value other than `1`, `true`, `yes`, or `on` also turns
+it off, so `PHOTO_TAGGER_TELEMETRY=disabled` does what it says. The `PHOTO_TAGGER_NO_TELEMETRY=1` of
+version 0.9 and earlier still turns telemetry off too.
+
+## Sending anyway when DO_NOT_TRACK is set
+
+`DO_NOT_TRACK=1` asks every tool on the machine not to send telemetry, and photo-tagger honors it.
+Because it speaks for every tool at once, a choice made for photo-tagger alone overrules it:
+
+- Set `PHOTO_TAGGER_TELEMETRY=1` in your environment. This works for the CLI and the GUI.
+- In the desktop GUI, check **Settings > Send Anonymous Telemetry** by hand. The choice is
+    remembered for the next launch.
+
+While `DO_NOT_TRACK` stops the beacons, the GUI toggle shows unchecked, and its tooltip says why.
+The config file's `enabled = true` does not overrule `DO_NOT_TRACK`. It is the default value, and
+the GUI writes it every time you save your settings, so it is not a deliberate choice.
+
+The full order, first match wins:
+
+1. `PHOTO_TAGGER_TELEMETRY` set to anything but a "yes", or `PHOTO_TAGGER_NO_TELEMETRY=1`: off.
+2. `--no-telemetry`, `enabled = false` in the config file, or the GUI toggle unchecked: off. In the
+    GUI, a toggle checked by hand overrules `enabled = false`, because the GUI writes that key
+    itself when it saves your settings.
+3. `PHOTO_TAGGER_TELEMETRY=1`: on.
+4. The GUI toggle checked by hand: on.
+5. `DO_NOT_TRACK=1`: off.
+6. Otherwise: on.

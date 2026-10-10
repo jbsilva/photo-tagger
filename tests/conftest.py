@@ -47,7 +47,7 @@ def _isolate_telemetry_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert on the send itself re-patch ``httpx2.post`` locally, overriding this stub.
     """
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "pt-state"))
-    monkeypatch.delenv("PHOTO_TAGGER_NO_TELEMETRY", raising=False)
+    monkeypatch.delenv("PHOTO_TAGGER_TELEMETRY", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
     # Also clear the exiftool override so a developer's exported path can't sway metadata tests.
     monkeypatch.delenv("PHOTO_TAGGER_EXIFTOOL", raising=False)

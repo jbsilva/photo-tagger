@@ -3089,6 +3089,49 @@ def test_telemetry_toggle_defaults_on_and_persists(window: gui.MainWindow) -> No
     assert telemetry.read_gui_pref() is False  # the choice is persisted for next launch
 
 
+def test_telemetry_toggle_shows_do_not_track_and_checking_it_opts_in(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Under DO_NOT_TRACK the box starts unchecked, since nothing is sent, and checking it opts in.
+
+    A box left checked would claim a send that DO_NOT_TRACK quietly stops.
+    """
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+    win = gui.MainWindow()
+    try:
+        action = win._telemetry_action  # noqa: SLF001
+        assert action.isChecked() is False
+        assert action.isEnabled() is True
+        assert "DO_NOT_TRACK" in action.toolTip()
+
+        action.setChecked(True)  # the user opts Photo Tagger in anyway
+        assert telemetry.read_gui_pref() is True
+        consent = win._telemetry_consent()  # noqa: SLF001
+        assert consent.send is True
+        assert consent.reason == telemetry.CONSENT_GUI_OPT_IN
+        assert "turned this on here" in " ".join(action.toolTip().split())
+    finally:
+        win.close()
+
+
+def test_telemetry_toggle_is_grayed_out_under_an_environment_opt_out(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PHOTO_TAGGER_TELEMETRY=0 cannot be undone from the menu, so the toggle cannot pretend to."""
+    monkeypatch.setenv("PHOTO_TAGGER_TELEMETRY", "0")
+    win = gui.MainWindow()
+    try:
+        action = win._telemetry_action  # noqa: SLF001
+        assert action.isChecked() is False
+        assert action.isEnabled() is False
+        assert "PHOTO_TAGGER_TELEMETRY" in action.toolTip()
+    finally:
+        win.close()
+
+
 def test_notify_toggles_default_off_and_gate_each_other(window: gui.MainWindow) -> None:
     """Alerts start off, and the sound sub-toggle is only reachable once alerts are on."""
     alert = window._notify_action  # noqa: SLF001
@@ -3304,9 +3347,10 @@ def test_close_flushes_telemetry_beacon(
         run: telemetry.RunInfo,
         *,
         enabled: bool,
+        opted_in: bool = False,
         block: bool = False,
     ) -> None:
-        calls.append({"run": run, "enabled": enabled, "block": block})
+        calls.append({"run": run, "enabled": enabled, "opted_in": opted_in, "block": block})
 
     monkeypatch.setattr(gui.telemetry, "emit", fake_emit)
     window.close()
