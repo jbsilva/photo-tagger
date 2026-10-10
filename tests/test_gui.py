@@ -7190,3 +7190,92 @@ def test_harmonized_keywords_do_not_count_as_edits(
     item = window._items[str(a)]  # noqa: SLF001
     assert item.keywords == ["Osprey"]
     assert item.proposed_keywords == ["Osprey"]
+
+
+def test_a_photo_the_scan_could_not_read_is_not_scanned_again_and_again(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreadable photo stays unknown, but it does not restart the scan in an endless loop."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    window._stop_scan()  # noqa: SLF001
+    window._items[str(img)].known_fields = None  # noqa: SLF001
+    window._scan_tried = {str(img)}  # noqa: SLF001 - an earlier scan tried it and read nothing
+    monkeypatch.setattr(gui, "MetadataScanWorker", lambda _paths: pytest.fail("scanned again"))
+
+    # The real method: the fixture stubs it out for every other test.
+    gui.MainWindow._start_metadata_scan(window)  # noqa: SLF001
+
+    assert window._scan_thread is None  # noqa: SLF001
+
+
+def test_clear_forgets_which_photos_the_scan_tried(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Photos added again after Clear are read again, not skipped as already tried."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    window._scan_tried = {str(img)}  # noqa: SLF001
+
+    window._clear()  # noqa: SLF001
+
+    assert window._scan_tried == set()  # noqa: SLF001
+
+
+def test_a_stopped_scan_marks_nothing_as_tried(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stop means the photos it had not reached were never tried, so a later scan reads them."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    window._items[str(img)].known_fields = None  # noqa: SLF001
+    window._scan_batch = {str(img)}  # noqa: SLF001
+    window._scan_cancelled = True  # noqa: SLF001
+
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert str(img) not in window._scan_tried  # noqa: SLF001
+
+
+def test_a_finished_scan_marks_what_it_could_not_read(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scan that ran to its end and still read nothing for a photo leaves it out of the next."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    window._items[str(img)].known_fields = None  # noqa: SLF001
+    window._scan_batch = {str(img)}  # noqa: SLF001
+
+    window._on_scan_finished()  # noqa: SLF001
+
+    assert str(img) in window._scan_tried  # noqa: SLF001
+
+
+def test_uncheck_already_tagged_settles_when_only_unreadable_photos_are_left(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A photo no scan can read must not keep the pick waiting: it settles on what is known."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _add_dir(window, {"a": img})
+    window._items[str(img)].known_fields = None  # noqa: SLF001
+    window._scan_tried = {str(img)}  # noqa: SLF001
+
+    window._deselect_tagged(gui._TAGGED_PRESETS[0][1])  # noqa: SLF001
+
+    assert window._scan_pending is None  # noqa: SLF001
+    assert "Reading metadata" not in window._status.text()  # noqa: SLF001

@@ -2058,6 +2058,10 @@ class MainWindow(QMainWindow):
         # the user stopped that scan. Both None/False while no one is waiting on a scan.
         self._scan_pending: TaggedCriterion | None = None
         self._scan_cancelled = False
+        # The photos the running scan was handed, and the ones a finished scan could not read (see
+        # _on_scan_finished): those are not handed out again until they leave the list.
+        self._scan_batch: set[str] = set()
+        self._scan_tried: set[str] = set()
         self._harmonize_thread: QThread | None = None
         self._harmonize_worker: HarmonizeWorker | None = None
         self._build_thread: QThread | None = None
@@ -3424,9 +3428,16 @@ class MainWindow(QMainWindow):
         """Scan photos with an unknown Tagged state in the background, one batch at a time."""
         if self._scan_thread is not None:
             return  # a scan is running; _on_scan_finished re-checks for stragglers
-        pending = [item.path for item in self._items.values() if item.known_fields is None]
+        # A photo a scan already tried and could not read stays unknown; asking again straight away
+        # would only fail again, and restart the scan forever.
+        pending = [
+            item.path
+            for key, item in self._items.items()
+            if item.known_fields is None and key not in self._scan_tried
+        ]
         if not pending:
             return
+        self._scan_batch = {str(path) for path in pending}
         self._scan_thread = QThread(self)
         self._scan_worker = MetadataScanWorker(pending)
         self._scan_worker.moveToThread(self._scan_thread)
@@ -3484,6 +3495,13 @@ class MainWindow(QMainWindow):
         stopped = self._scan_cancelled
         self._stop_scan()
         if not stopped:
+            # A scan that ran to its end read every photo it could; those still unknown are
+            # unreadable, so the restart below leaves them out. A stopped scan tried nothing more.
+            self._scan_tried |= {
+                key
+                for key in self._scan_batch
+                if (item := self._items.get(key)) is not None and item.known_fields is None
+            }
             self._start_metadata_scan()
         if self._scan_thread is None:
             # Nothing left unknown (or the user stopped it): the scan is over for now.
@@ -4397,6 +4415,7 @@ class MainWindow(QMainWindow):
         """Drop each key from the list, from every cache holding its pixels, and from the view."""
         for key in keys:
             self._items.pop(key, None)
+            self._scan_tried.discard(key)  # added again later, it deserves a fresh read
             self._preview_cache.pop(key, None)
             self._thumb_cache.pop(key, None)
             if self._viewer_cache is not None and self._viewer_cache[0] == key:
@@ -4431,6 +4450,7 @@ class MainWindow(QMainWindow):
         self._stop_scan()
         self._end_scan(stopped=True)  # the list is gone, so nothing is left to uncheck in it
         self._items.clear()
+        self._scan_tried.clear()
         self._preview_cache.clear()
         self._thumb_cache.clear()
         self._viewer_cache = None
@@ -4472,6 +4492,11 @@ class MainWindow(QMainWindow):
                 phrase=_(criterion.phrase),
             ),
         )
+        unknown = [key for key, item in self._items.items() if item.known_fields is None]
+        if all(key in self._scan_tried for key in unknown):
+            # Nothing left that a scan can read: settle on what is known, unknown photos kept.
+            self._end_scan(stopped=False)
+            return
         self._start_metadata_scan()
         self._show_scan_row()  # the user is waiting on this scan, so do not hold the bar back
 
@@ -7074,6 +7099,7 @@ class MainWindow(QMainWindow):
             # proposal is still worth keeping, the file's own metadata is not.
             item.status = READY if item.has_proposal else PENDING
             item.known_fields = None
+            self._scan_tried.discard(str(item.path))  # the file changed, so read it again
             item.loaded = False
             item.sources_read = False
             self._refresh_status_cell(item)
