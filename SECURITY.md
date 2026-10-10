@@ -17,12 +17,12 @@ manageable, I ship security fixes only for the latest released line. Older relea
 backports (fixes copied to an older line). When a fix is ready, I ship it as a new release on that
 line. To get the fix, upgrade.
 
-| Version        | Supported          |
-| -------------- | ------------------ |
-| 0.9.0 (latest) | :white_check_mark: |
-| < 0.9.0        | :x:                |
+| Version         | Supported          |
+| --------------- | ------------------ |
+| 0.10.0 (latest) | :white_check_mark: |
+| < 0.10.0        | :x:                |
 
-The current release is 0.9.0. Upgrade with:
+The current release is 0.10.0. Upgrade with:
 
 ```bash
 uv tool upgrade photo-tagger
