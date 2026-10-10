@@ -489,7 +489,7 @@ class MainWindow(QMainWindow):
         action.triggered.connect(handler)
         return action
 
-    # --- construction ----------------------------------------------------------------------
+    # --- menus: File, Go, Tools, and Help, and the Settings menu's requests -----------------------
 
     def _build_menus(self) -> None:
         """Build the menu bar: File actions, the Tools jobs, the Settings toggles, and Help."""
@@ -549,26 +549,6 @@ class MainWindow(QMainWindow):
         )
         menu.addAction(self._up_action)
 
-    def _wire_settings_menu(self) -> None:
-        """Answer the Settings menu's requests: its dialogs, the config file, a new language."""
-        menu = self._settings_menu
-        menu.used.connect(self._count)
-        menu.status.connect(self._status.setText)
-        menu.output_language_changed.connect(self._on_output_language_changed)
-        menu.keyword_rules_requested.connect(self._show_keyword_rules)
-        menu.copyright_requested.connect(self._show_copyright)
-        menu.pacing_requested.connect(self._show_pacing)
-        menu.save_defaults_requested.connect(self._save_config)
-        menu.edit_config_requested.connect(self._edit_config)
-
-    def _on_output_language_changed(self, _language: str) -> None:
-        """Rebuild the vocabulary for a new metadata language."""
-        rules = self._keyword_rules_dialog
-        if rules.vocabulary_path is not None:
-            # The language decides whether plurals fold onto their singular, and that shapes the
-            # vocabulary's lookup index, so it has to be built again for the new one.
-            rules.load_vocabulary(rules.vocabulary_path, announce=False)
-
     def _build_tools_menu(self, menubar: QMenu) -> None:
         """Build the Tools menu: the jobs that act on a whole library rather than one photo."""
         menu = self._tools_menu = menubar.addMenu(_("Tools"))
@@ -605,6 +585,26 @@ class MainWindow(QMainWindow):
                 "overwrote are restored from the ExifTool backup. Covers CLI runs too.",
             ),
         )
+
+    def _wire_settings_menu(self) -> None:
+        """Answer the Settings menu's requests: its dialogs, the config file, a new language."""
+        menu = self._settings_menu
+        menu.used.connect(self._count)
+        menu.status.connect(self._status.setText)
+        menu.output_language_changed.connect(self._on_output_language_changed)
+        menu.keyword_rules_requested.connect(self._show_keyword_rules)
+        menu.copyright_requested.connect(self._show_copyright)
+        menu.pacing_requested.connect(self._show_pacing)
+        menu.save_defaults_requested.connect(self._save_config)
+        menu.edit_config_requested.connect(self._edit_config)
+
+    def _on_output_language_changed(self, _language: str) -> None:
+        """Rebuild the vocabulary for a new metadata language."""
+        rules = self._keyword_rules_dialog
+        if rules.vocabulary_path is not None:
+            # The language decides whether plurals fold onto their singular, and that shapes the
+            # vocabulary's lookup index, so it has to be built again for the new one.
+            rules.load_vocabulary(rules.vocabulary_path, announce=False)
 
     def _current_config_values(self) -> GuiConfigValues:
         """Collect the GUI's current choices that persist to the config file (never the API key)."""
@@ -677,6 +677,14 @@ class MainWindow(QMainWindow):
             '<a href="https://github.com/jbsilva/photo-tagger">github.com/jbsilva/photo-tagger</a>',
         )
 
+    def _open_logs(self) -> None:
+        """Reveal the log folder in the OS file browser so the user can read the run logs."""
+        self._count("open_logs")
+        LOG_FOLDER.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_FOLDER)))
+
+    # --- the photo list: its panel, the search, the view, and bulk selection ----------------------
+
     def _build_tree_panel(self) -> QWidget:
         """Build the left panel: the add, select, and remove row, the search, the list, the scan."""
         panel = QWidget()
@@ -700,39 +708,6 @@ class MainWindow(QMainWindow):
         hint.setWordWrap(True)
         box.addWidget(hint)
         return panel
-
-    def _build_scan_row(self) -> QWidget:
-        """
-        Build the row under the list that reports the metadata scan behind the Tagged column.
-
-        Hidden while nothing is scanning. It carries its own Stop button rather than borrowing the
-        bottom bar's Cancel, because a scan and a generate/save run can be in flight at once (a
-        watch adds photos mid-run) and the two must stay separately stoppable.
-        """
-        self._scan_progress = QProgressBar()
-        self._scan_stop_button = QToolButton()
-        self._scan_stop_button.setText(_("Stop"))
-        self._scan_stop_button.setToolTip(
-            tooltip(
-                "Stop reading metadata. The photos already read keep their Tagged column; the "
-                "rest stay unknown until the next scan. Nothing is written either way.",
-            ),
-        )
-        self._scan_stop_button.clicked.connect(self._cancel_scan)
-        # Only show the row for a scan that actually runs long enough to be worth reporting, so a
-        # handful of local photos does not make a progress bar flash on and off.
-        self._scan_show_timer = QTimer(self)
-        self._scan_show_timer.setSingleShot(True)
-        self._scan_show_timer.setInterval(_SCAN_PROGRESS_DELAY_MS)
-        self._scan_show_timer.timeout.connect(self._show_scan_row)
-
-        self._scan_row = QWidget()
-        row = QHBoxLayout(self._scan_row)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(self._scan_progress, stretch=1)
-        row.addWidget(self._scan_stop_button)
-        self._scan_row.setVisible(False)
-        return self._scan_row
 
     def _build_tree_controls(self) -> QHBoxLayout:
         controls = QHBoxLayout()
@@ -777,6 +752,31 @@ class MainWindow(QMainWindow):
         remove.setMenu(self._build_remove_menu())
         controls.addWidget(remove)
         return controls
+
+    def _build_add_menu(self) -> QMenu:
+        """Build the Add button's arrow menu: the folder dialog plus the folder-scan settings."""
+        menu = QMenu(self)
+        menu.addAction(_("Add Folder..."), self._choose_folder)
+        menu.addSeparator()
+        panel = QWidget()
+        form = QFormLayout(panel)
+        self._extensions = QLineEdit(self._raw_config.get("extensions", DEFAULT_GUI_EXTENSIONS))
+        self._extensions.setMinimumWidth(280)
+        self._extensions.setToolTip(
+            tooltip(
+                "Extensions to scan for in folders (comma-separated).\n"
+                "Case-insensitive: jpg matches .JPG. Note jpeg is separate from jpg.",
+            ),
+        )
+        form.addRow(_("File types"), self._extensions)
+        self._recursive = QCheckBox(_("Include subfolders"))
+        self._recursive.setChecked(bool(self._raw_config.get("recursive", True)))
+        self._recursive.setToolTip(tooltip("Descend into subfolders when adding a folder."))
+        form.addRow("", self._recursive)
+        host = QWidgetAction(menu)
+        host.setDefaultWidget(panel)
+        menu.addAction(host)
+        return menu
 
     def _build_remove_menu(self) -> QMenu:
         """Build the Remove button's arrow menu: drop photos by their checkbox, not by selection."""
@@ -902,31 +902,6 @@ class MainWindow(QMainWindow):
             tooltip("How the photo list is laid out. Now: {mode}.", mode=_(active)),
         )
 
-    def _build_add_menu(self) -> QMenu:
-        """Build the Add button's arrow menu: the folder dialog plus the folder-scan settings."""
-        menu = QMenu(self)
-        menu.addAction(_("Add Folder..."), self._choose_folder)
-        menu.addSeparator()
-        panel = QWidget()
-        form = QFormLayout(panel)
-        self._extensions = QLineEdit(self._raw_config.get("extensions", DEFAULT_GUI_EXTENSIONS))
-        self._extensions.setMinimumWidth(280)
-        self._extensions.setToolTip(
-            tooltip(
-                "Extensions to scan for in folders (comma-separated).\n"
-                "Case-insensitive: jpg matches .JPG. Note jpeg is separate from jpg.",
-            ),
-        )
-        form.addRow(_("File types"), self._extensions)
-        self._recursive = QCheckBox(_("Include subfolders"))
-        self._recursive.setChecked(bool(self._raw_config.get("recursive", True)))
-        self._recursive.setToolTip(tooltip("Descend into subfolders when adding a folder."))
-        form.addRow("", self._recursive)
-        host = QWidgetAction(menu)
-        host.setDefaultWidget(panel)
-        menu.addAction(host)
-        return menu
-
     def _build_select_menu(self) -> SelectMenu:
         """Build the Select button's menu and carry out what its entries ask for."""
         menu = self._select_menu = SelectMenu(self, photos=self._items.values)
@@ -1026,7 +1001,80 @@ class MainWindow(QMainWindow):
         self._rebuild_tree()
         self._update_status()
 
-    # --- tree context menu -------------------------------------------------------------------
+    def _check_only_items(self, items: list[PhotoItem]) -> None:
+        """Check exactly *items*: everything else in the list is unchecked."""
+        keys = {str(item.path) for item in items}
+        others = [item for item in self._items.values() if str(item.path) not in keys]
+        self._set_items_checked(others, checked=False)
+        self._set_items_checked(items, checked=True)
+
+    def _set_items_checked(self, items: list[PhotoItem], *, checked: bool) -> None:
+        """Check or uncheck *items* in place, keeping tree, folders, and grid in step."""
+        self._syncing = True
+        leaves = []
+        for item in items:
+            item.selected = checked
+            leaf = self._tree.set_checked(item.path, checked=checked)
+            if leaf is not None:
+                leaves.append(leaf)
+        # Folder tristates re-derive after every leaf is set, walking each chain upward.
+        for leaf in leaves:
+            self._tree.sync_ancestors(leaf)
+        self._folder_grid.sync_checks()
+        self._syncing = False
+        self._update_status()
+
+    def _rebuild_tree(self) -> None:
+        self._syncing = True
+        # Build with sorting off so items do not shuffle on every insert; re-enabling at the
+        # end re-applies whatever column/direction the header is currently set to.
+        self._tree.rebuild(self._visible_paths(), flat=self._flat_list())
+        self._folder_grid.sync_checks()
+        # Photos that just left the list have to leave the history with them, or Back would try to
+        # open a row that no longer exists. Folders go too when their last photo did.
+        self._history.prune(self._location_exists)
+        self._refresh_nav()
+        # Emptying the tree dropped the selection (_on_current_changed ignores it while _syncing,
+        # so the right-hand pane kept whatever was open). Restore the highlight so bulk actions
+        # (dragging photos in, Check All, Uncheck Already Tagged) do not kick the user out of
+        # the photo or folder they are reviewing.
+        if self._current is not None:
+            self._tree.select_row(str(self._current.path), is_dir=False)
+        elif self._folder_grid.folder is not None and self._right.currentIndex() == _PAGE_GRID:
+            self._tree.select_row(str(self._folder_grid.folder), is_dir=True)
+        self._syncing = False
+
+    def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        if self._syncing or column != 0:
+            return
+        self._syncing = True
+        self._tree.apply_check(item)
+        self._folder_grid.sync_checks()
+        self._syncing = False
+        self._update_status()
+
+    def _refresh_status_cell(self, item: PhotoItem) -> None:
+        """Repaint *item*'s state wherever it shows: its tree row, and its grid thumbnail."""
+        self._tree.refresh(item)
+        # Keep the folder grid's badge overlay in step with the tree.
+        self._folder_grid.refresh(item)
+
+    def _selected_count(self) -> int:
+        """How many photos are currently checked (used in deselect feedback)."""
+        return sum(1 for item in self._items.values() if item.selected)
+
+    def _update_status(self) -> None:
+        if self._items:
+            summary = status_summary(self._items.values())
+            if self._search.text().strip():
+                shown = search_summary(self._tree.shown_count(), len(self._items))
+                summary = f"{shown} · {summary}"
+            self._status.setText(summary)
+        # Retry only makes sense when something actually failed (and no run is in flight).
+        if self._thread is None and self._save_thread is None:
+            self._run_bar.retry_button.setEnabled(self._has_failures())
+
+    # --- right-click menus, in the list and in the grid -------------------------------------------
 
     def _on_tree_context_menu(self, pos: object) -> None:
         """Show the per-row context menu for the tree item under the cursor."""
@@ -1127,41 +1175,6 @@ class MainWindow(QMainWindow):
         )
         return menu
 
-    def _check_only_items(self, items: list[PhotoItem]) -> None:
-        """Check exactly *items*: everything else in the list is unchecked."""
-        keys = {str(item.path) for item in items}
-        others = [item for item in self._items.values() if str(item.path) not in keys]
-        self._set_items_checked(others, checked=False)
-        self._set_items_checked(items, checked=True)
-
-    def _set_items_checked(self, items: list[PhotoItem], *, checked: bool) -> None:
-        """Check or uncheck *items* in place, keeping tree, folders, and grid in step."""
-        self._syncing = True
-        leaves = []
-        for item in items:
-            item.selected = checked
-            leaf = self._tree.set_checked(item.path, checked=checked)
-            if leaf is not None:
-                leaves.append(leaf)
-        # Folder tristates re-derive after every leaf is set, walking each chain upward.
-        for leaf in leaves:
-            self._tree.sync_ancestors(leaf)
-        self._folder_grid.sync_checks()
-        self._syncing = False
-        self._update_status()
-
-    def _on_grid_check_toggled(self, key: str) -> None:
-        """Mirror a thumbnail checkbox the user changed onto the photo's tree row."""
-        item = self._items.get(key)
-        if item is None:
-            return
-        self._syncing = True
-        leaf = self._tree.set_checked(Path(key), checked=item.selected)
-        if leaf is not None:
-            self._tree.sync_ancestors(leaf)
-        self._syncing = False
-        self._update_status()
-
     def _on_grid_context_menu(self, where: QPoint, key: str, selected: list[str]) -> None:
         """Offer a thumbnail the same right-click actions as its row in the tree."""
         if len(selected) > 1 and key in selected:
@@ -1189,327 +1202,7 @@ class MainWindow(QMainWindow):
         folder = path if path.is_dir() else path.parent
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
-    # --- background metadata scan (the Tagged column) ----------------------------------------
-
-    def _start_metadata_scan(self) -> None:
-        """Scan photos with an unknown Tagged state in the background, one batch at a time."""
-        if self._scan_thread is not None:
-            return  # a scan is running; _on_scan_finished re-checks for stragglers
-        # A photo a scan already tried and could not read stays unknown; asking again straight away
-        # would only fail again, and restart the scan forever.
-        pending = [
-            item.path
-            for key, item in self._items.items()
-            if item.known_fields is None and key not in self._scan_tried
-        ]
-        if not pending:
-            return
-        self._scan_batch = {str(path) for path in pending}
-        self._scan_worker = MetadataScanWorker(pending)
-        self._scan_worker.done.connect(self._on_scan_done)
-        self._scan_worker.progress.connect(self._on_scan_progress)
-        self._scan_worker.finished.connect(self._on_scan_finished)
-        self._scan_progress.setFormat(_("Reading metadata... %v / %m"))
-        self._scan_stop_button.setEnabled(True)
-        self._scan_thread = start_in_thread(self, self._scan_worker)
-        self._scan_show_timer.start()
-
-    def _on_scan_progress(self, scanned: int, total: int) -> None:
-        """Move the scan's progress bar as each batch of photos is read."""
-        self._scan_progress.setRange(0, total)
-        self._scan_progress.setValue(scanned)
-
-    def _show_scan_row(self) -> None:
-        """Reveal the scan row, unless the scan it would report has already finished."""
-        self._scan_row.setVisible(self._scan_thread is not None)
-
-    def _hide_scan_row(self) -> None:
-        """Put the scan row away, and cancel a pending reveal so it cannot pop up after."""
-        self._scan_show_timer.stop()
-        self._scan_row.setVisible(False)
-
-    def _cancel_scan(self) -> None:
-        """Stop the metadata scan after the batch it is on (the Stop button under the list)."""
-        if self._scan_worker is None:
-            return
-        self._scan_cancelled = True
-        self._scan_worker.stop()
-        self._scan_stop_button.setEnabled(False)
-        self._scan_progress.setFormat(_("Stopping..."))
-
-    def _on_scan_done(self, presence: dict[str, set[str]]) -> None:
-        """Record the scanned field sets and repaint the Tagged column."""
-        for key, fields in presence.items():
-            item = self._items.get(key)
-            if item is not None:
-                # Merge rather than replace: a save may have added fields while the scan ran.
-                item.known_fields = set(fields) | (item.known_fields or set())
-                self._refresh_status_cell(item)
-        # The Untagged and No copyright filters depend on this scan, so a grid showing one must
-        # re-evaluate once the results land; the rest read state the scan does not change.
-        if self._folder_grid.filter in SCAN_FILTERS:
-            self._resort_grid()
-
-    def _on_scan_finished(self) -> None:
-        """Tear down the scan thread and pick up photos added while it ran."""
-        if self._closing:
-            # A scan detached by _stop_scan's timeout can finish after closeEvent already moved
-            # on; the window is going away, so there is nothing left to restart a scan for.
-            return
-        stopped = self._scan_cancelled
-        self._stop_scan()
-        if not stopped:
-            # A scan that ran to its end read every photo it could; those still unknown are
-            # unreadable, so the restart below leaves them out. A stopped scan tried nothing more.
-            self._scan_tried |= {
-                key
-                for key in self._scan_batch
-                if (item := self._items.get(key)) is not None and item.known_fields is None
-            }
-            self._start_metadata_scan()
-        if self._scan_thread is None:
-            # Nothing left unknown (or the user stopped it): the scan is over for now.
-            self._end_scan(stopped=stopped)
-
-    def _end_scan(self, *, stopped: bool) -> None:
-        """Put the scan row away and settle whatever was waiting on the scan."""
-        self._scan_cancelled = False
-        self._hide_scan_row()
-        criterion, self._scan_pending = self._scan_pending, None
-        if criterion is None:
-            return
-        if stopped:
-            self._status.setText(_("Stopped reading metadata. No photo was unchecked."))
-        else:
-            self._apply_tagged_criterion(criterion)
-
-    def _stop_scan(self) -> None:
-        if self._scan_worker is not None:
-            # Between batches the worker checks this, so a detached scan below stops reading the
-            # rest of the library instead of running it out in the background.
-            self._scan_worker.stop()
-            # Cut the worker loose before letting go of it. A scan detached by the timeout below
-            # keeps running, and its late finished signal would otherwise reach _on_scan_finished
-            # and tear down whatever scan is current by then, not the one that just ended.
-            self._scan_worker.disconnect(self)
-            self._scan_worker.deleteLater()
-        if self._scan_thread is not None:
-            # A big folder, or a hung exiftool, can outlast the timeout. pyexiftool exposes no way
-            # to cancel a batched call mid-flight, and the scan only reads metadata, so losing its
-            # result is harmless: detach rather than block the caller (closeEvent, _clear).
-            release_thread(
-                self._scan_thread,
-                timeout_ms=_SCAN_STOP_TIMEOUT_MS,
-                detached_event="gui_metadata_scan_stop_timed_out",
-            )
-            self._scan_thread = None
-        self._scan_worker = None
-
-    def _build_right_pane(self) -> QWidget:
-        """Build the nav row over a stack: the idle placeholder, a photo's detail, a folder grid."""
-        self._right = QStackedWidget()
-        self._right.addWidget(self._build_empty_state())  # _PAGE_EMPTY
-        self._right.addWidget(self._build_detail_pane())  # _PAGE_DETAIL
-        self._right.addWidget(self._build_folder_grid())  # _PAGE_GRID
-        pane = QWidget()
-        box = QVBoxLayout(pane)
-        box.setContentsMargins(0, 0, 0, 0)
-        box.addLayout(self._build_nav_row())
-        box.addWidget(self._right, stretch=1)
-        return pane
-
-    def _build_nav_row(self) -> QHBoxLayout:
-        """
-        Build the row above the pane: Back, Forward, and the name of what is open.
-
-        The arrows are the answer to "how do I get back to the grid I came from": every page of the
-        stack shares them, so they are in the same spot whether a photo or a folder is open. The
-        label to their right says where that is, since the tree row may be scrolled out of sight.
-        """
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        self._back_button = self._nav_button("←", self._go_back)
-        self._forward_button = self._nav_button("→", self._go_forward)
-        row.addWidget(self._back_button)
-        row.addWidget(self._forward_button)
-        row.addSpacing(8)
-        self._crumb = QLabel("")
-        self._crumb.setObjectName("crumb")
-        row.addWidget(self._crumb, stretch=1)
-        return row
-
-    def _nav_button(self, glyph: str, handler: Callable[[], None]) -> QToolButton:
-        """Build one arrow button; its tooltip and enabled state come from ``_refresh_nav``."""
-        button = QToolButton()
-        button.setObjectName("navbtn")
-        button.setText(glyph)
-        button.clicked.connect(handler)
-        return button
-
-    def _build_empty_state(self) -> QWidget:
-        """Build the idle placeholder shown when no photo is open, so the pane is never empty."""
-        page = QWidget()
-        box = QVBoxLayout(page)
-        box.addStretch(1)
-        icon = QLabel()
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pixmap = app_icon().pixmap(96, 96)
-        if not pixmap.isNull():
-            icon.setPixmap(pixmap)
-        box.addWidget(icon)
-        self._empty_message = QLabel(_(_EMPTY_START))
-        self._empty_message.setObjectName("empty")
-        self._empty_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_message.setWordWrap(True)
-        box.addWidget(self._empty_message)
-        box.addStretch(1)
-        return page
-
-    def _build_folder_grid(self) -> FolderGrid:
-        """Build the folder grid page and wire it to the list, the menus, and the review pane."""
-        grid = self._folder_grid = FolderGrid(self, self._items)
-        grid.check_toggled.connect(self._on_grid_check_toggled)
-        grid.photo_activated.connect(self._on_grid_photo_activated)
-        grid.context_menu_requested.connect(self._on_grid_context_menu)
-        grid.view_changed.connect(self._resort_grid)
-        grid.used.connect(self._count)
-        return grid
-
-    def _resort_grid(self) -> None:
-        """Rebuild the grid with the current filter and order; cached thumbnails are reused."""
-        folder = self._folder_grid.folder
-        if folder is not None and self._right.currentIndex() == _PAGE_GRID:
-            self._show_grid(folder)
-
-    def _build_detail_pane(self) -> DetailPane:
-        """Build the pane that reviews one photo, sharing the window's save options and toggle."""
-        pane = self._detail = DetailPane(
-            self,
-            save_options_menu=self._save_options_menu,
-            autosave_action=self._autosave_action,
-            save_options=self._save_options,
-        )
-        pane.generate_requested.connect(
-            lambda use_cache, trigger: self._generate_current(use_cache=use_cache, trigger=trigger),
-        )
-        pane.save_requested.connect(self._save_current)
-        pane.used.connect(self._count)
-        return pane
-
-    def _on_save_options_changed(self) -> None:
-        """Follow a Save Options toggle into everything that describes or previews a save."""
-        self._count("save_options")
-        self._refresh_save_tooltips()
-        self._detail.refresh_derived()
-        self._detail.refresh_planned_copyright()
-
-    def _save_options_summary(self) -> str:
-        """Describe what a save currently writes, for the Save and Generate buttons' tooltips."""
-        return self._save_options_menu.summary(writes_copyright=self._writes_copyright())
-
-    def _writes_copyright(self) -> bool:
-        """Report whether a save stamps a copyright: one is set, and Write Copyright is on."""
-        return self._save_options_menu.write_copyright.isChecked() and self._copyright_dialog.usable
-
-    def _refresh_save_tooltips(self) -> None:
-        """Keep both Save buttons' tooltips describing the currently chosen options."""
-        summary = _("Currently writes {options}.").format(options=self._save_options_summary())
-        self._detail.save_button.setToolTip(
-            tooltip(
-                "Write this photo. {summary} Change what is written with the arrow.",
-                summary=summary,
-            ),
-        )
-        self._run_bar.save_button.setToolTip(
-            tooltip(
-                "Write the checked photos that have a generated proposal. With a copyright set, "
-                "also stamp it on the other checked photos, leaving their text alone. {summary} "
-                "Change what is written with the arrow.",
-                summary=summary,
-            ),
-        )
-        self._refresh_generate_labels()
-
-    def _build_autosave_action(self) -> QAction:
-        """
-        Build the toggle that lets a finished generation write its own photos.
-
-        Off by default: the window is built around reviewing before writing. Turning it on is what
-        an overnight batch needs, where waiting for a run to end just to press Save defeats the
-        point of leaving the machine alone.
-        """
-        action = QAction(_("Save After Generating"), self)
-        action.setCheckable(True)
-        action.setChecked(bool(self._raw_config.get("gui", {}).get("save_after_generating")))
-        action.setToolTip(
-            tooltip(
-                "Write every photo a run generates as soon as the run finishes, without "
-                "reviewing them. It is the same write the Save buttons make: Save Options, just "
-                "below, decides what goes onto the file, and Cancel stops it. First the run has "
-                "one more go at the photos that failed and at the ones whose text came back in "
-                "two writing systems, since a second answer usually settles both.",
-            ),
-        )
-        action.toggled.connect(self._on_autosave_toggled)
-        return action
-
-    def _on_autosave_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
-        """Follow the toggle: the buttons now promise a write, and must be able to make one."""
-        self._count("autosave")
-        self._refresh_generate_labels()
-        if enabled and not self._write_fields_chosen():
-            self._status.setText(_(PICK_A_FIELD))
-
-    def _refresh_generate_labels(self) -> None:
-        """Keep both Generate buttons saying whether the run writes when it is done, and what."""
-        if not self._autosave_action.isChecked():
-            self._run_bar.generate_button.setText(_("Generate Selected"))
-            self._run_bar.generate_button.setToolTip(
-                tooltip("Run the model on the checked photos."),
-            )
-            self._detail.generate_button.setText(_("Generate This Photo"))
-            self._detail.generate_button.setToolTip(
-                tooltip(
-                    "Run the model on just this photo, regardless of which photos are checked.",
-                ),
-            )
-            return
-        summary = _("Currently writes {options}.").format(options=self._save_options_summary())
-        self._run_bar.generate_button.setText(_("Generate and Save Selected"))
-        self._run_bar.generate_button.setToolTip(
-            tooltip(
-                "Run the model on the checked photos, then write them with no review, exactly as "
-                "Save Selected would. {summary} Change that under Save Options, in this button's "
-                "menu.",
-                summary=summary,
-            ),
-        )
-        self._detail.generate_button.setText(_("Generate and Save This Photo"))
-        self._detail.generate_button.setToolTip(
-            tooltip(
-                "Run the model on just this photo, then write it with no review, exactly as Save "
-                "This Photo would. {summary} Change that under Save Options, in this button's "
-                "menu.",
-                summary=summary,
-            ),
-        )
-
-    def _build_run_bar(self) -> RunBar:
-        """Build the bar under the panes: the status line, then the batch generate and save."""
-        bar = self._run_bar = RunBar(
-            self,
-            save_options_menu=self._save_options_menu,
-            autosave_action=self._autosave_action,
-        )
-        # The window's one status line, which everything it has to say is written to.
-        self._status = bar.status
-        bar.generate_requested.connect(lambda use_cache: self._generate(use_cache=use_cache))
-        bar.save_requested.connect(self._save_selected)
-        bar.retry_requested.connect(self._retry_failed)
-        bar.cancel_requested.connect(self._cancel_generation)
-        return bar
-
-    # --- drag and drop ---------------------------------------------------------------------
+    # --- adding, removing, and unchecking photos --------------------------------------------------
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 - Qt override.
         """Accept a drag that carries file/folder URLs."""
@@ -1522,8 +1215,6 @@ class MainWindow(QMainWindow):
         dropped = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.toLocalFile()]
         if dropped:
             self._add_inputs(dropped)
-
-    # --- adding, removing, listing photos --------------------------------------------------
 
     def _choose_files(self) -> None:
         self._count("add_photos")
@@ -1556,6 +1247,10 @@ class MainWindow(QMainWindow):
         self._update_status()
         self._start_metadata_scan()
         return fresh
+
+    def _item_paths(self) -> list[Path]:
+        """Return the path of every photo currently in the list."""
+        return [item.path for item in self._items.values()]
 
     def _remove_selected(self) -> None:
         """Remove every selected row (files, and folders with their contents) from the list."""
@@ -1786,36 +1481,241 @@ class MainWindow(QMainWindow):
             ).format(n=len(rows), name=target.name),
         )
 
-    def _rebuild_tree(self) -> None:
-        self._syncing = True
-        # Build with sorting off so items do not shuffle on every insert; re-enabling at the
-        # end re-applies whatever column/direction the header is currently set to.
-        self._tree.rebuild(self._visible_paths(), flat=self._flat_list())
-        self._folder_grid.sync_checks()
-        # Photos that just left the list have to leave the history with them, or Back would try to
-        # open a row that no longer exists. Folders go too when their last photo did.
-        self._history.prune(self._location_exists)
-        self._refresh_nav()
-        # Emptying the tree dropped the selection (_on_current_changed ignores it while _syncing,
-        # so the right-hand pane kept whatever was open). Restore the highlight so bulk actions
-        # (dragging photos in, Check All, Uncheck Already Tagged) do not kick the user out of
-        # the photo or folder they are reviewing.
-        if self._current is not None:
-            self._tree.select_row(str(self._current.path), is_dir=False)
-        elif self._folder_grid.folder is not None and self._right.currentIndex() == _PAGE_GRID:
-            self._tree.select_row(str(self._folder_grid.folder), is_dir=True)
-        self._syncing = False
+    # --- background metadata scan (the Tagged column) ---------------------------------------------
 
-    # --- tree interaction ------------------------------------------------------------------
+    def _build_scan_row(self) -> QWidget:
+        """
+        Build the row under the list that reports the metadata scan behind the Tagged column.
 
-    def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
-        if self._syncing or column != 0:
+        Hidden while nothing is scanning. It carries its own Stop button rather than borrowing the
+        bottom bar's Cancel, because a scan and a generate/save run can be in flight at once (a
+        watch adds photos mid-run) and the two must stay separately stoppable.
+        """
+        self._scan_progress = QProgressBar()
+        self._scan_stop_button = QToolButton()
+        self._scan_stop_button.setText(_("Stop"))
+        self._scan_stop_button.setToolTip(
+            tooltip(
+                "Stop reading metadata. The photos already read keep their Tagged column; the "
+                "rest stay unknown until the next scan. Nothing is written either way.",
+            ),
+        )
+        self._scan_stop_button.clicked.connect(self._cancel_scan)
+        # Only show the row for a scan that actually runs long enough to be worth reporting, so a
+        # handful of local photos does not make a progress bar flash on and off.
+        self._scan_show_timer = QTimer(self)
+        self._scan_show_timer.setSingleShot(True)
+        self._scan_show_timer.setInterval(_SCAN_PROGRESS_DELAY_MS)
+        self._scan_show_timer.timeout.connect(self._show_scan_row)
+
+        self._scan_row = QWidget()
+        row = QHBoxLayout(self._scan_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self._scan_progress, stretch=1)
+        row.addWidget(self._scan_stop_button)
+        self._scan_row.setVisible(False)
+        return self._scan_row
+
+    def _start_metadata_scan(self) -> None:
+        """Scan photos with an unknown Tagged state in the background, one batch at a time."""
+        if self._scan_thread is not None:
+            return  # a scan is running; _on_scan_finished re-checks for stragglers
+        # A photo a scan already tried and could not read stays unknown; asking again straight away
+        # would only fail again, and restart the scan forever.
+        pending = [
+            item.path
+            for key, item in self._items.items()
+            if item.known_fields is None and key not in self._scan_tried
+        ]
+        if not pending:
             return
-        self._syncing = True
-        self._tree.apply_check(item)
-        self._folder_grid.sync_checks()
-        self._syncing = False
-        self._update_status()
+        self._scan_batch = {str(path) for path in pending}
+        self._scan_worker = MetadataScanWorker(pending)
+        self._scan_worker.done.connect(self._on_scan_done)
+        self._scan_worker.progress.connect(self._on_scan_progress)
+        self._scan_worker.finished.connect(self._on_scan_finished)
+        self._scan_progress.setFormat(_("Reading metadata... %v / %m"))
+        self._scan_stop_button.setEnabled(True)
+        self._scan_thread = start_in_thread(self, self._scan_worker)
+        self._scan_show_timer.start()
+
+    def _on_scan_progress(self, scanned: int, total: int) -> None:
+        """Move the scan's progress bar as each batch of photos is read."""
+        self._scan_progress.setRange(0, total)
+        self._scan_progress.setValue(scanned)
+
+    def _show_scan_row(self) -> None:
+        """Reveal the scan row, unless the scan it would report has already finished."""
+        self._scan_row.setVisible(self._scan_thread is not None)
+
+    def _hide_scan_row(self) -> None:
+        """Put the scan row away, and cancel a pending reveal so it cannot pop up after."""
+        self._scan_show_timer.stop()
+        self._scan_row.setVisible(False)
+
+    def _cancel_scan(self) -> None:
+        """Stop the metadata scan after the batch it is on (the Stop button under the list)."""
+        if self._scan_worker is None:
+            return
+        self._scan_cancelled = True
+        self._scan_worker.stop()
+        self._scan_stop_button.setEnabled(False)
+        self._scan_progress.setFormat(_("Stopping..."))
+
+    def _on_scan_done(self, presence: dict[str, set[str]]) -> None:
+        """Record the scanned field sets and repaint the Tagged column."""
+        for key, fields in presence.items():
+            item = self._items.get(key)
+            if item is not None:
+                # Merge rather than replace: a save may have added fields while the scan ran.
+                item.known_fields = set(fields) | (item.known_fields or set())
+                self._refresh_status_cell(item)
+        # The Untagged and No copyright filters depend on this scan, so a grid showing one must
+        # re-evaluate once the results land; the rest read state the scan does not change.
+        if self._folder_grid.filter in SCAN_FILTERS:
+            self._resort_grid()
+
+    def _on_scan_finished(self) -> None:
+        """Tear down the scan thread and pick up photos added while it ran."""
+        if self._closing:
+            # A scan detached by _stop_scan's timeout can finish after closeEvent already moved
+            # on; the window is going away, so there is nothing left to restart a scan for.
+            return
+        stopped = self._scan_cancelled
+        self._stop_scan()
+        if not stopped:
+            # A scan that ran to its end read every photo it could; those still unknown are
+            # unreadable, so the restart below leaves them out. A stopped scan tried nothing more.
+            self._scan_tried |= {
+                key
+                for key in self._scan_batch
+                if (item := self._items.get(key)) is not None and item.known_fields is None
+            }
+            self._start_metadata_scan()
+        if self._scan_thread is None:
+            # Nothing left unknown (or the user stopped it): the scan is over for now.
+            self._end_scan(stopped=stopped)
+
+    def _end_scan(self, *, stopped: bool) -> None:
+        """Put the scan row away and settle whatever was waiting on the scan."""
+        self._scan_cancelled = False
+        self._hide_scan_row()
+        criterion, self._scan_pending = self._scan_pending, None
+        if criterion is None:
+            return
+        if stopped:
+            self._status.setText(_("Stopped reading metadata. No photo was unchecked."))
+        else:
+            self._apply_tagged_criterion(criterion)
+
+    def _stop_scan(self) -> None:
+        if self._scan_worker is not None:
+            # Between batches the worker checks this, so a detached scan below stops reading the
+            # rest of the library instead of running it out in the background.
+            self._scan_worker.stop()
+            # Cut the worker loose before letting go of it. A scan detached by the timeout below
+            # keeps running, and its late finished signal would otherwise reach _on_scan_finished
+            # and tear down whatever scan is current by then, not the one that just ended.
+            self._scan_worker.disconnect(self)
+            self._scan_worker.deleteLater()
+        if self._scan_thread is not None:
+            # A big folder, or a hung exiftool, can outlast the timeout. pyexiftool exposes no way
+            # to cancel a batched call mid-flight, and the scan only reads metadata, so losing its
+            # result is harmless: detach rather than block the caller (closeEvent, _clear).
+            release_thread(
+                self._scan_thread,
+                timeout_ms=_SCAN_STOP_TIMEOUT_MS,
+                detached_event="gui_metadata_scan_stop_timed_out",
+            )
+            self._scan_thread = None
+        self._scan_worker = None
+
+    # --- the right-hand pane: what is open, the folder grid, and the detail pane ------------------
+
+    def _build_right_pane(self) -> QWidget:
+        """Build the nav row over a stack: the idle placeholder, a photo's detail, a folder grid."""
+        self._right = QStackedWidget()
+        self._right.addWidget(self._build_empty_state())  # _PAGE_EMPTY
+        self._right.addWidget(self._build_detail_pane())  # _PAGE_DETAIL
+        self._right.addWidget(self._build_folder_grid())  # _PAGE_GRID
+        pane = QWidget()
+        box = QVBoxLayout(pane)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.addLayout(self._build_nav_row())
+        box.addWidget(self._right, stretch=1)
+        return pane
+
+    def _build_nav_row(self) -> QHBoxLayout:
+        """
+        Build the row above the pane: Back, Forward, and the name of what is open.
+
+        The arrows are the answer to "how do I get back to the grid I came from": every page of the
+        stack shares them, so they are in the same spot whether a photo or a folder is open. The
+        label to their right says where that is, since the tree row may be scrolled out of sight.
+        """
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        self._back_button = self._nav_button("←", self._go_back)
+        self._forward_button = self._nav_button("→", self._go_forward)
+        row.addWidget(self._back_button)
+        row.addWidget(self._forward_button)
+        row.addSpacing(8)
+        self._crumb = QLabel("")
+        self._crumb.setObjectName("crumb")
+        row.addWidget(self._crumb, stretch=1)
+        return row
+
+    def _nav_button(self, glyph: str, handler: Callable[[], None]) -> QToolButton:
+        """Build one arrow button; its tooltip and enabled state come from ``_refresh_nav``."""
+        button = QToolButton()
+        button.setObjectName("navbtn")
+        button.setText(glyph)
+        button.clicked.connect(handler)
+        return button
+
+    def _build_empty_state(self) -> QWidget:
+        """Build the idle placeholder shown when no photo is open, so the pane is never empty."""
+        page = QWidget()
+        box = QVBoxLayout(page)
+        box.addStretch(1)
+        icon = QLabel()
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pixmap = app_icon().pixmap(96, 96)
+        if not pixmap.isNull():
+            icon.setPixmap(pixmap)
+        box.addWidget(icon)
+        self._empty_message = QLabel(_(_EMPTY_START))
+        self._empty_message.setObjectName("empty")
+        self._empty_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_message.setWordWrap(True)
+        box.addWidget(self._empty_message)
+        box.addStretch(1)
+        return page
+
+    def _build_folder_grid(self) -> FolderGrid:
+        """Build the folder grid page and wire it to the list, the menus, and the review pane."""
+        grid = self._folder_grid = FolderGrid(self, self._items)
+        grid.check_toggled.connect(self._on_grid_check_toggled)
+        grid.photo_activated.connect(self._on_grid_photo_activated)
+        grid.context_menu_requested.connect(self._on_grid_context_menu)
+        grid.view_changed.connect(self._resort_grid)
+        grid.used.connect(self._count)
+        return grid
+
+    def _build_detail_pane(self) -> DetailPane:
+        """Build the pane that reviews one photo, sharing the window's save options and toggle."""
+        pane = self._detail = DetailPane(
+            self,
+            save_options_menu=self._save_options_menu,
+            autosave_action=self._autosave_action,
+            save_options=self._save_options,
+        )
+        pane.generate_requested.connect(
+            lambda use_cache, trigger: self._generate_current(use_cache=use_cache, trigger=trigger),
+        )
+        pane.save_requested.connect(self._save_current)
+        pane.used.connect(self._count)
+        return pane
 
     def _on_current_changed(self, current: QTreeWidgetItem | None, _previous: object) -> None:
         if self._syncing:
@@ -1856,7 +1756,92 @@ class MainWindow(QMainWindow):
             self._show_item(self._current)
         self._refresh_nav()
 
-    # --- back, forward, and up -------------------------------------------------------------
+    def _show_grid(self, folder: Path) -> None:
+        """Show *folder*'s thumbnail grid in the right-hand pane."""
+        self._folder_grid.show_folder(folder)
+        self._right.setCurrentIndex(_PAGE_GRID)
+
+    def _resort_grid(self) -> None:
+        """Rebuild the grid with the current filter and order; cached thumbnails are reused."""
+        folder = self._folder_grid.folder
+        if folder is not None and self._right.currentIndex() == _PAGE_GRID:
+            self._show_grid(folder)
+
+    def _on_grid_check_toggled(self, key: str) -> None:
+        """Mirror a thumbnail checkbox the user changed onto the photo's tree row."""
+        item = self._items.get(key)
+        if item is None:
+            return
+        self._syncing = True
+        leaf = self._tree.set_checked(Path(key), checked=item.selected)
+        if leaf is not None:
+            self._tree.sync_ancestors(leaf)
+        self._syncing = False
+        self._update_status()
+
+    def _on_grid_photo_activated(self, key: str) -> None:
+        """Open the photo whose thumbnail was clicked, the way picking its tree row would."""
+        leaf = self._tree.leaf_for(Path(key))
+        if leaf is not None:
+            self._tree.setCurrentItem(leaf)  # routes to the detail page
+
+    def _show_item(self, item: PhotoItem) -> None:
+        """Read what *item* carries, if that is not done yet, and show it in the detail pane."""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self._ensure_loaded(item)
+            self._ensure_sources(item)
+            self._detail.render_preview(item)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._detail.show_photo(item)
+
+    def _ensure_loaded(self, item: PhotoItem) -> None:
+        if item.loaded:
+            return
+        # Every caption value, not just the winning one: the pane names what a sidecar shadows.
+        found = read_caption_values(item.path)
+        context = read_image_context(
+            item.path,
+            field_tags=field_tags_to_read(self._copyright_dialog.fields),
+        )
+        item.existing_caption_sources = found
+        title = first_caption(found[FIELD_TITLE])
+        description = first_caption(found[FIELD_DESCRIPTION])
+        item.existing_title = title
+        item.existing_description = description
+        item.existing_keywords = context.existing_keywords
+        item.existing_copyright = context.existing_copyright
+        item.field_sources = context.field_sources
+        item.loaded = True
+        if not item.has_proposal:
+            # Seed the editable copy from the existing values so a file can be edited and saved
+            # without generating first. Same rendering as the Existing column, so the two match.
+            item.title = title or ""
+            item.description = description or ""
+            item.keywords = keyword_lines(context.existing_keywords)
+
+    def _ensure_sources(self, item: PhotoItem) -> None:
+        if item.sources_read:
+            return
+        item.existing_sources = read_metadata_sources(item.path)
+        item.sources_read = True
+
+    def _show_empty(self) -> None:
+        """Show the idle placeholder page instead of an empty detail form, and clear selection."""
+        self._current = None
+        self._detail.close_photo()
+        self._empty_message.setText(_(_EMPTY_PICK) if self._items else _(_EMPTY_START))
+        self._right.setCurrentIndex(_PAGE_EMPTY)
+        # Nothing is open, so Back should return to the last place rather than step past it.
+        self._history.leave()
+        self._refresh_nav()
+
+    def _commit_current(self) -> None:
+        """Copy the visible editable fields back onto the photo on show."""
+        self._detail.commit()
+
+    # --- back, forward, and up --------------------------------------------------------------------
 
     def _go_back(self) -> None:
         """Return to the place shown before this one."""
@@ -1977,80 +1962,105 @@ class MainWindow(QMainWindow):
             control.setEnabled(target is not None)
             control.setToolTip(hint)
 
-    # --- folder thumbnail grid -------------------------------------------------------------
+    # --- what a save writes, and the dialogs the menus open ---------------------------------------
 
-    def _show_grid(self, folder: Path) -> None:
-        """Show *folder*'s thumbnail grid in the right-hand pane."""
-        self._folder_grid.show_folder(folder)
-        self._right.setCurrentIndex(_PAGE_GRID)
+    def _on_save_options_changed(self) -> None:
+        """Follow a Save Options toggle into everything that describes or previews a save."""
+        self._count("save_options")
+        self._refresh_save_tooltips()
+        self._detail.refresh_derived()
+        self._detail.refresh_planned_copyright()
 
-    def _item_paths(self) -> list[Path]:
-        """Return the path of every photo currently in the list."""
-        return [item.path for item in self._items.values()]
+    def _save_options_summary(self) -> str:
+        """Describe what a save currently writes, for the Save and Generate buttons' tooltips."""
+        return self._save_options_menu.summary(writes_copyright=self._writes_copyright())
 
-    def _on_grid_photo_activated(self, key: str) -> None:
-        """Open the photo whose thumbnail was clicked, the way picking its tree row would."""
-        leaf = self._tree.leaf_for(Path(key))
-        if leaf is not None:
-            self._tree.setCurrentItem(leaf)  # routes to the detail page
+    def _writes_copyright(self) -> bool:
+        """Report whether a save stamps a copyright: one is set, and Write Copyright is on."""
+        return self._save_options_menu.write_copyright.isChecked() and self._copyright_dialog.usable
 
-    # --- detail pane -----------------------------------------------------------------------
-
-    def _show_item(self, item: PhotoItem) -> None:
-        """Read what *item* carries, if that is not done yet, and show it in the detail pane."""
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            self._ensure_loaded(item)
-            self._ensure_sources(item)
-            self._detail.render_preview(item)
-        finally:
-            QApplication.restoreOverrideCursor()
-        self._detail.show_photo(item)
-
-    def _ensure_loaded(self, item: PhotoItem) -> None:
-        if item.loaded:
-            return
-        # Every caption value, not just the winning one: the pane names what a sidecar shadows.
-        found = read_caption_values(item.path)
-        context = read_image_context(
-            item.path,
-            field_tags=field_tags_to_read(self._copyright_dialog.fields),
+    def _refresh_save_tooltips(self) -> None:
+        """Keep both Save buttons' tooltips describing the currently chosen options."""
+        summary = _("Currently writes {options}.").format(options=self._save_options_summary())
+        self._detail.save_button.setToolTip(
+            tooltip(
+                "Write this photo. {summary} Change what is written with the arrow.",
+                summary=summary,
+            ),
         )
-        item.existing_caption_sources = found
-        title = first_caption(found[FIELD_TITLE])
-        description = first_caption(found[FIELD_DESCRIPTION])
-        item.existing_title = title
-        item.existing_description = description
-        item.existing_keywords = context.existing_keywords
-        item.existing_copyright = context.existing_copyright
-        item.field_sources = context.field_sources
-        item.loaded = True
-        if not item.has_proposal:
-            # Seed the editable copy from the existing values so a file can be edited and saved
-            # without generating first. Same rendering as the Existing column, so the two match.
-            item.title = title or ""
-            item.description = description or ""
-            item.keywords = keyword_lines(context.existing_keywords)
+        self._run_bar.save_button.setToolTip(
+            tooltip(
+                "Write the checked photos that have a generated proposal. With a copyright set, "
+                "also stamp it on the other checked photos, leaving their text alone. {summary} "
+                "Change what is written with the arrow.",
+                summary=summary,
+            ),
+        )
+        self._refresh_generate_labels()
 
-    def _ensure_sources(self, item: PhotoItem) -> None:
-        if item.sources_read:
+    def _build_autosave_action(self) -> QAction:
+        """
+        Build the toggle that lets a finished generation write its own photos.
+
+        Off by default: the window is built around reviewing before writing. Turning it on is what
+        an overnight batch needs, where waiting for a run to end just to press Save defeats the
+        point of leaving the machine alone.
+        """
+        action = QAction(_("Save After Generating"), self)
+        action.setCheckable(True)
+        action.setChecked(bool(self._raw_config.get("gui", {}).get("save_after_generating")))
+        action.setToolTip(
+            tooltip(
+                "Write every photo a run generates as soon as the run finishes, without "
+                "reviewing them. It is the same write the Save buttons make: Save Options, just "
+                "below, decides what goes onto the file, and Cancel stops it. First the run has "
+                "one more go at the photos that failed and at the ones whose text came back in "
+                "two writing systems, since a second answer usually settles both.",
+            ),
+        )
+        action.toggled.connect(self._on_autosave_toggled)
+        return action
+
+    def _on_autosave_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
+        """Follow the toggle: the buttons now promise a write, and must be able to make one."""
+        self._count("autosave")
+        self._refresh_generate_labels()
+        if enabled and not self._write_fields_chosen():
+            self._status.setText(_(PICK_A_FIELD))
+
+    def _refresh_generate_labels(self) -> None:
+        """Keep both Generate buttons saying whether the run writes when it is done, and what."""
+        if not self._autosave_action.isChecked():
+            self._run_bar.generate_button.setText(_("Generate Selected"))
+            self._run_bar.generate_button.setToolTip(
+                tooltip("Run the model on the checked photos."),
+            )
+            self._detail.generate_button.setText(_("Generate This Photo"))
+            self._detail.generate_button.setToolTip(
+                tooltip(
+                    "Run the model on just this photo, regardless of which photos are checked.",
+                ),
+            )
             return
-        item.existing_sources = read_metadata_sources(item.path)
-        item.sources_read = True
-
-    def _show_empty(self) -> None:
-        """Show the idle placeholder page instead of an empty detail form, and clear selection."""
-        self._current = None
-        self._detail.close_photo()
-        self._empty_message.setText(_(_EMPTY_PICK) if self._items else _(_EMPTY_START))
-        self._right.setCurrentIndex(_PAGE_EMPTY)
-        # Nothing is open, so Back should return to the last place rather than step past it.
-        self._history.leave()
-        self._refresh_nav()
-
-    def _commit_current(self) -> None:
-        """Copy the visible editable fields back onto the photo on show."""
-        self._detail.commit()
+        summary = _("Currently writes {options}.").format(options=self._save_options_summary())
+        self._run_bar.generate_button.setText(_("Generate and Save Selected"))
+        self._run_bar.generate_button.setToolTip(
+            tooltip(
+                "Run the model on the checked photos, then write them with no review, exactly as "
+                "Save Selected would. {summary} Change that under Save Options, in this button's "
+                "menu.",
+                summary=summary,
+            ),
+        )
+        self._detail.generate_button.setText(_("Generate and Save This Photo"))
+        self._detail.generate_button.setToolTip(
+            tooltip(
+                "Run the model on just this photo, then write it with no review, exactly as Save "
+                "This Photo would. {summary} Change that under Save Options, in this button's "
+                "menu.",
+                summary=summary,
+            ),
+        )
 
     def _save_options(self) -> SaveOptions:
         """Snapshot the save toggles, so a background write never has to read a widget."""
@@ -2073,6 +2083,101 @@ class MainWindow(QMainWindow):
     def _write_fields_chosen(self) -> bool:
         """Report whether a save would write anything: a picked field, or the copyright block."""
         return self._save_options().writes_anything
+
+    def _build_keyword_rules_dialog(self) -> KeywordRulesDialog:
+        """Build the Keyword Rules dialog and put the configured vocabulary file in force."""
+        dialog = KeywordRulesDialog(
+            self,
+            self._defaults.output,
+            output_language=lambda: self._settings_menu.output_language,
+        )
+        dialog.status.connect(self._status.setText)
+        dialog.used.connect(self._count)
+        dialog.build_requested.connect(self._show_vocabulary_builder)
+        # Read once the status bar exists: it is disk IO, and a refused file needs reporting.
+        dialog.load_vocabulary(dialog.vocabulary_path, announce=False)
+        return dialog
+
+    def _show_keyword_rules(self) -> None:
+        """Open the Keyword rules dialog on the values currently in force."""
+        self._count("keyword_rules")
+        self._keyword_rules_dialog.refresh()
+        self._keyword_rules_dialog.exec()
+
+    def _show_pacing(self) -> None:
+        """Open the Pacing dialog; a run already in flight keeps the plan it started with."""
+        self._count("pacing")
+        self._pacing_dialog.exec()
+
+    def _on_copyright_changed(self) -> None:
+        """Follow an edit in the Copyright dialog: the toggle, the Save tooltips, the open photo."""
+        self._save_options_menu.set_copyright_usable(usable=self._copyright_dialog.usable)
+        self._refresh_save_tooltips()
+        self._detail.refresh_planned_copyright()
+
+    def _preview_year(self) -> int:
+        """
+        Return the year the preview stands for: the open photo's, else this one.
+
+        A photo's capture date is already in hand once it has been opened, and showing the year of
+        the photo on screen is what makes a wrong template obvious.
+        """
+        item = self._current
+        year = capture_year(item.field_sources) if item is not None else None
+        return year or datetime.now(tz=UTC).astimezone().year
+
+    def _show_copyright(self) -> None:
+        """Open the Copyright dialog, its preview refreshed for the photo on screen."""
+        self._count("copyright")
+        self._copyright_dialog.refresh()
+        self._copyright_dialog.exec()
+
+    def _show_vocabulary_builder(self) -> None:
+        """Open the builder, naming the photo count it would read from."""
+        self._builder_dialog.show_for(len(self._items))
+
+    def _show_undo_dialog(self) -> None:
+        """Open the undo dialog on a freshly-read list of recorded runs."""
+        self._undo_dialog.show_runs()
+
+    def _on_undone(self, images: list[str]) -> None:
+        """Put the photos an undo reverted back into their pre-save state."""
+        touched = False
+        for key in images:
+            item = self._items.get(key)
+            if item is None:
+                continue
+            # What is on the file changed under us, so everything read from it is stale: the
+            # proposal is still worth keeping, the file's own metadata is not.
+            item.status = READY if item.has_proposal else PENDING
+            item.known_fields = None
+            self._scan_tried.discard(key)  # the file changed, so read it again
+            item.loaded = False
+            item.sources_read = False
+            self._refresh_status_cell(item)
+            touched = True
+        if not touched:
+            return
+        self._start_metadata_scan()
+        if self._current is not None:
+            self._show_item(self._current)
+
+    # --- saving -----------------------------------------------------------------------------------
+
+    def _build_run_bar(self) -> RunBar:
+        """Build the bar under the panes: the status line, then the batch generate and save."""
+        bar = self._run_bar = RunBar(
+            self,
+            save_options_menu=self._save_options_menu,
+            autosave_action=self._autosave_action,
+        )
+        # The window's one status line, which everything it has to say is written to.
+        self._status = bar.status
+        bar.generate_requested.connect(lambda use_cache: self._generate(use_cache=use_cache))
+        bar.save_requested.connect(self._save_selected)
+        bar.retry_requested.connect(self._retry_failed)
+        bar.cancel_requested.connect(self._cancel_generation)
+        return bar
 
     def _open_undo_journal(self) -> UndoJournal | None:
         """
@@ -2310,7 +2415,7 @@ class MainWindow(QMainWindow):
         self._save_worker = None
         self._set_running(running=False)
 
-    # --- generation ------------------------------------------------------------------------
+    # --- generation, and the passes, harmonization, and save a finished run may chain -------------
 
     def _generate(self, *, use_cache: bool = True) -> None:
         self._count("generate" if use_cache else "skip_cache")
@@ -2727,59 +2832,7 @@ class MainWindow(QMainWindow):
         self._worker = None
         self._set_running(running=False)
 
-    # --- keyword rules: the vocabulary and the session gap -----------------------------------
-
-    def _build_keyword_rules_dialog(self) -> KeywordRulesDialog:
-        """Build the Keyword Rules dialog and put the configured vocabulary file in force."""
-        dialog = KeywordRulesDialog(
-            self,
-            self._defaults.output,
-            output_language=lambda: self._settings_menu.output_language,
-        )
-        dialog.status.connect(self._status.setText)
-        dialog.used.connect(self._count)
-        dialog.build_requested.connect(self._show_vocabulary_builder)
-        # Read once the status bar exists: it is disk IO, and a refused file needs reporting.
-        dialog.load_vocabulary(dialog.vocabulary_path, announce=False)
-        return dialog
-
-    def _show_keyword_rules(self) -> None:
-        """Open the Keyword rules dialog on the values currently in force."""
-        self._count("keyword_rules")
-        self._keyword_rules_dialog.refresh()
-        self._keyword_rules_dialog.exec()
-
-    # --- pacing and copyright: the settings every run and every save follow -------------------
-
-    def _show_pacing(self) -> None:
-        """Open the Pacing dialog; a run already in flight keeps the plan it started with."""
-        self._count("pacing")
-        self._pacing_dialog.exec()
-
-    def _on_copyright_changed(self) -> None:
-        """Follow an edit in the Copyright dialog: the toggle, the Save tooltips, the open photo."""
-        self._save_options_menu.set_copyright_usable(usable=self._copyright_dialog.usable)
-        self._refresh_save_tooltips()
-        self._detail.refresh_planned_copyright()
-
-    def _preview_year(self) -> int:
-        """
-        Return the year the preview stands for: the open photo's, else this one.
-
-        A photo's capture date is already in hand once it has been opened, and showing the year of
-        the photo on screen is what makes a wrong template obvious.
-        """
-        item = self._current
-        year = capture_year(item.field_sources) if item is not None else None
-        return year or datetime.now(tz=UTC).astimezone().year
-
-    def _show_copyright(self) -> None:
-        """Open the Copyright dialog, its preview refreshed for the photo on screen."""
-        self._count("copyright")
-        self._copyright_dialog.refresh()
-        self._copyright_dialog.exec()
-
-    # --- shoot harmonization -----------------------------------------------------------------
+    # --- shoot harmonization ----------------------------------------------------------------------
 
     def _harmonize_now(self) -> None:
         """Menu action: harmonize the proposals on hand, explaining when there is nothing to do."""
@@ -2864,41 +2917,7 @@ class MainWindow(QMainWindow):
             self._harmonize_thread = None
         self._harmonize_worker = None
 
-    # --- building a vocabulary ---------------------------------------------------------------
-
-    def _show_vocabulary_builder(self) -> None:
-        """Open the builder, naming the photo count it would read from."""
-        self._builder_dialog.show_for(len(self._items))
-
-    # --- undo --------------------------------------------------------------------------------
-
-    def _show_undo_dialog(self) -> None:
-        """Open the undo dialog on a freshly-read list of recorded runs."""
-        self._undo_dialog.show_runs()
-
-    def _on_undone(self, images: list[str]) -> None:
-        """Put the photos an undo reverted back into their pre-save state."""
-        touched = False
-        for key in images:
-            item = self._items.get(key)
-            if item is None:
-                continue
-            # What is on the file changed under us, so everything read from it is stale: the
-            # proposal is still worth keeping, the file's own metadata is not.
-            item.status = READY if item.has_proposal else PENDING
-            item.known_fields = None
-            self._scan_tried.discard(key)  # the file changed, so read it again
-            item.loaded = False
-            item.sources_read = False
-            self._refresh_status_cell(item)
-            touched = True
-        if not touched:
-            return
-        self._start_metadata_scan()
-        if self._current is not None:
-            self._show_item(self._current)
-
-    # --- watching a folder ---------------------------------------------------------------------
+    # --- watching a folder ------------------------------------------------------------------------
 
     def _toggle_watch(self) -> None:
         """Stop the running watch, or open the dialog to start one."""
@@ -3006,36 +3025,7 @@ class MainWindow(QMainWindow):
             self._watch_thread = None
         self._watch_worker = None
 
-    # --- providers and diagnostics ---------------------------------------------------------
-
-    def _open_logs(self) -> None:
-        """Reveal the log folder in the OS file browser so the user can read the run logs."""
-        self._count("open_logs")
-        LOG_FOLDER.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_FOLDER)))
-
-    # --- helpers ---------------------------------------------------------------------------
-
-    def _refresh_status_cell(self, item: PhotoItem) -> None:
-        """Repaint *item*'s state wherever it shows: its tree row, and its grid thumbnail."""
-        self._tree.refresh(item)
-        # Keep the folder grid's badge overlay in step with the tree.
-        self._folder_grid.refresh(item)
-
-    def _selected_count(self) -> int:
-        """How many photos are currently checked (used in deselect feedback)."""
-        return sum(1 for item in self._items.values() if item.selected)
-
-    def _update_status(self) -> None:
-        if self._items:
-            summary = status_summary(self._items.values())
-            if self._search.text().strip():
-                shown = search_summary(self._tree.shown_count(), len(self._items))
-                summary = f"{shown} · {summary}"
-            self._status.setText(summary)
-        # Retry only makes sense when something actually failed (and no run is in flight).
-        if self._thread is None and self._save_thread is None:
-            self._run_bar.retry_button.setEnabled(self._has_failures())
+    # --- closing ----------------------------------------------------------------------------------
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override.
         """
@@ -3085,6 +3075,8 @@ class MainWindow(QMainWindow):
         self._report_close(unsaved=unsaved)
         super().closeEvent(event)
 
+    # --- telemetry --------------------------------------------------------------------------------
+
     def maybe_show_telemetry_notice(self) -> None:
         """
         Show the one-time telemetry disclosure on the first run telemetry is active.
@@ -3116,8 +3108,6 @@ class MainWindow(QMainWindow):
         if box.clickedButton() is not keep:
             # Unchecking fires _on_telemetry_toggled, which persists the choice.
             self._settings_menu.turn_telemetry_off()
-
-    # --- telemetry -----------------------------------------------------------------------------
 
     def _count(self, feature: str) -> None:
         """Count one use of a feature, for the session beacon (names from GUI_FEATURES)."""
