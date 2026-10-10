@@ -39,8 +39,8 @@ configuration live in the repository.
 ## Publishing
 
 [`.github/workflows/docs.yml`][docs-workflow] publishes the site automatically. On each push to
-`main` that touches the docs sources, the workflow runs this build and deploys the result to GitHub
-Pages:
+`main` that touches the docs sources, the workflow runs this build and deploys the result to
+Cloudflare:
 
 ```bash
 uv run --only-group docs --locked --no-build zensical build --clean
@@ -52,7 +52,14 @@ Each flag has one job:
 - `--no-build` skips the build of the project itself (the command needs only the `docs` group).
 - `--clean` wipes the output directory before the build writes to it.
 
-<https://jbsilva.github.io/photo-tagger/> is the address of the published site.
+<https://docs.tagger.photo/> is the address of the published site. A Cloudflare Worker serves the
+files in `site/`, and `docs.wrangler.toml` configures it. To deploy by hand, set
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, and run `uv run poe docs-deploy` (it needs
+Node).
+
+The old address, <https://jbsilva.github.io/photo-tagger/>, stays on GitHub Pages. For each page,
+`scripts/pages_redirects.py` writes a page that sends the reader to the same page at the new
+address. Released packages still link to the old address.
 
 ## Page structure
 

@@ -1,7 +1,7 @@
 # Zensical configuration for the documentation site (https://zensical.org).
 #
 # Sources live in docs/. Preview locally with `uv run --group docs zensical serve`;
-# .github/workflows/docs.yml builds and publishes the site to GitHub Pages on pushes to main.
+# .github/workflows/docs.yml builds the site and deploys it to docs.tagger.photo on pushes to main.
 
 [project]
 site_name = "Photo Tagger"
@@ -10,7 +10,7 @@ Command-line tool that asks a vision-language model to describe your photos and 
 Lightroom-compatible keywords, titles, and descriptions as XMP sidecars or embedded metadata.\
 """
 site_author = "Julio Batista Silva"
-site_url = "https://jbsilva.github.io/photo-tagger/"
+site_url = "https://docs.tagger.photo/"
 
 # Adds the repository link in the page header and powers the edit/view page buttons.
 repo_url = "https://github.com/jbsilva/photo-tagger"

@@ -1,5 +1,6 @@
-# Build the Zensical documentation site (docs/ + zensical.toml) and publish it to GitHub Pages
-# at https://jbsilva.github.io/photo-tagger/.
+# Build the Zensical documentation site (docs/ + zensical.toml) and publish it at
+# https://docs.tagger.photo, a Cloudflare Worker that serves the static files (docs.wrangler.toml).
+# The old address, https://jbsilva.github.io/photo-tagger/, stays on GitHub Pages as redirect pages.
 #
 # Runs on pushes to main that touch the docs sources, or manually from the Actions tab.
 name: docs
@@ -11,6 +12,8 @@ on:
     paths:
       - "docs/**"
       - "zensical.toml"
+      - "docs.wrangler.toml"
+      - "scripts/pages_redirects.py"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/docs.yml"
@@ -27,13 +30,13 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
-      pages: write
-      id-token: write
+    # The environment that holds the Cloudflare secrets, as in deploy-telemetry.yml.
     environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      name: production
+      url: https://docs.tagger.photo
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,13 +50,36 @@ jobs:
         # --only-group docs: the docs build needs zensical only, not the app's dependencies.
         run: uv run --only-group docs --locked --no-build zensical build --clean
 
-      - name: Configure Pages
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.148.0"
+          command: deploy --config docs.wrangler.toml
 
-      - name: Upload site artifact
+      - name: Write redirect pages
+        run: uv run --only-group docs --locked --no-build python scripts/pages_redirects.py site redirects
+
+      - name: Upload redirect pages
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: site
+          path: redirects
+
+  redirect:
+    # After the deploy, so the old address never sends a reader to a page that is not there yet.
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Deploy to GitHub Pages
         id: deployment

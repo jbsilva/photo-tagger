@@ -81,7 +81,7 @@ test = [
 
 [project.urls]
 Homepage = "https://juliobs.com/projects/photo-tagger/"
-Documentation = "https://jbsilva.github.io/photo-tagger/"
+Documentation = "https://docs.tagger.photo/"
 Repository = "https://github.com/jbsilva/photo-tagger"
 Issues = "https://github.com/jbsilva/photo-tagger/issues"
 
@@ -165,6 +165,13 @@ executor = { group = "docs" }
 help = "Build the static docs site into site/"
 cmd = "zensical build --clean"
 executor = { group = "docs" }
+
+[tool.poe.tasks.docs-deploy]
+help = "Build the docs and deploy them to docs.tagger.photo (needs Node and Cloudflare env vars)"
+sequence = [
+    { ref = "docs-build" },
+    { cmd = "npx --yes wrangler@4.148.0 deploy --config docs.wrangler.toml" },
+]
 
 [tool.poe.tasks.translations]
 help = "Refresh the translation catalogs and recompile them"

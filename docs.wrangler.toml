@@ -1,0 +1,21 @@
+# Cloudflare Worker config for the documentation site at https://docs.tagger.photo.
+#
+# The Worker has no code: it serves the static files that `zensical build` writes to site/.
+# .github/workflows/docs.yml builds the site and deploys it on pushes to main. By hand:
+#   uv run poe docs-deploy
+# The account is taken from the CLOUDFLARE_ACCOUNT_ID env var, so no account id is hardcoded here.
+
+name = "photo-tagger-docs"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "site"
+# Zensical writes each page as <page>/index.html and links to <page>/.
+html_handling = "auto-trailing-slash"
+not_found_handling = "404-page"
+
+# tagger.photo is a zone on the same account, so Wrangler provisions the DNS record and the TLS
+# certificate for this hostname on deploy.
+[[routes]]
+pattern = "docs.tagger.photo"
+custom_domain = true
