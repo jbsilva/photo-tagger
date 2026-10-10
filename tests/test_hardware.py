@@ -152,6 +152,12 @@ def test_hardware_info_reprobes_on_corrupt_or_stale_cache(tmp_path: Path) -> Non
     with patch("photo_tagger.hardware.probe_hardware", return_value=probed):
         assert hardware_info(cache) == probed
 
+    # Valid JSON that is not an object used to raise out of every beacon of the install.
+    for not_an_object in ("[]", "null"):
+        cache.write_text(not_an_object, encoding="utf-8")
+        with patch("photo_tagger.hardware.probe_hardware", return_value=probed):
+            assert hardware_info(cache) == probed
+
 
 def test_hardware_info_without_cache_path_probes_every_time() -> None:
     """cache_path=None skips caching entirely."""

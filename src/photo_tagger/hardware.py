@@ -242,7 +242,8 @@ def hardware_info(cache_path: Path | None) -> HardwareInfo:
     if cache_path is not None:
         with contextlib.suppress(OSError, ValueError, TypeError, KeyError):
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            if cached.get("version") == _CACHE_VERSION:
+            # Valid JSON that is not an object ([] or null) is as corrupt as a broken file.
+            if isinstance(cached, dict) and cached.get("version") == _CACHE_VERSION:
                 return HardwareInfo(
                     cpu=str(cached["cpu"]),
                     gpu=str(cached["gpu"]),
