@@ -43,15 +43,18 @@ Either way the metadata is written through ExifTool. The fields generated are:
 
 | Field       | Written when                    | Notes                                     |
 | ----------- | ------------------------------- | ----------------------------------------- |
-| Keywords    | always                          | Flat keywords plus a Lightroom hierarchy. |
+| Keywords    | unless `--no-write-keywords`    | Flat keywords plus a Lightroom hierarchy. |
 | Title       | unless `--no-write-title`       | Short title for the photo.                |
 | Description | unless `--no-write-description` | One-line caption.                         |
 
 !!! note
 
-    Existing metadata is merged, not replaced. New keywords are combined with the ones already on the
-    file. This keeps Lightroom hierarchies and removes duplicates without case sensitivity. If you
-    prefer to replace existing keywords instead of merging, use `--overwrite-keywords`.
+    Only keywords are merged. New keywords are combined with the ones already on the file. This keeps
+    Lightroom hierarchies and removes duplicates without case sensitivity. To replace the existing
+    keywords instead, use `--overwrite-keywords`.
+
+    A generated title or description replaces the one that the file already has. To keep the existing
+    one, use `--preserve-title` or `--preserve-description`.
 
 ## Logs, progress, and NDJSON
 
