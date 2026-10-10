@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
 
 from photo_tagger import gui, i18n, image_io, metadata, telemetry
 from photo_tagger.errors import ProviderError
-from photo_tagger.gui import main_window, viewer, widgets, workers
+from photo_tagger.gui import detail_pane, main_window, viewer, widgets, workers
 from photo_tagger.gui.common import COL_STATUS, COL_TAGGED, IS_DIR_ROLE, PATH_ROLE
 from photo_tagger.gui_state import (
     DEFAULT_GUI_EXTENSIONS,
@@ -401,7 +401,7 @@ def test_run_generation_commits_and_passes_the_open_photos_hint(
     _stub_generation(monkeypatch)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001 - open the photo so the field is live
-    window._hint.setText("The animal is a deer")  # noqa: SLF001
+    window._detail._hint.setText("The animal is a deer")  # noqa: SLF001
 
     window._run_generation([window._items[str(img)]])  # noqa: SLF001
 
@@ -1393,10 +1393,10 @@ def test_selecting_a_photo_loads_and_populates(
     assert leaf is not None
     window._tree.setCurrentItem(leaf)  # noqa: SLF001 - triggers _on_current_changed
 
-    assert window._existing_title.text() == "Old Title"  # noqa: SLF001
-    assert "Beach" in window._existing_keywords.toPlainText()  # noqa: SLF001
-    assert window._title.text() == "Old Title"  # noqa: SLF001
-    assert window._keywords.toPlainText() == "Beach"  # noqa: SLF001
+    assert window._detail._existing_title.text() == "Old Title"  # noqa: SLF001
+    assert "Beach" in window._detail._existing_keywords.toPlainText()  # noqa: SLF001
+    assert window._detail._title.text() == "Old Title"  # noqa: SLF001
+    assert window._detail._keywords.toPlainText() == "Beach"  # noqa: SLF001
 
 
 def test_edits_and_hint_survive_navigating_between_photos(
@@ -1410,14 +1410,14 @@ def test_edits_and_hint_survive_navigating_between_photos(
     _add_dir(window, files)
 
     _select(window, window._leaf_for(files["a"]))  # noqa: SLF001
-    window._hint.setText("The animal is a deer")  # noqa: SLF001
+    window._detail._hint.setText("The animal is a deer")  # noqa: SLF001
     _select(window, window._leaf_for(files["b"]))  # noqa: SLF001
 
     assert window._items[str(files["a"])].hint == "The animal is a deer"  # noqa: SLF001
-    assert window._hint.text() == ""  # noqa: SLF001 - photo b has no hint of its own
+    assert window._detail._hint.text() == ""  # noqa: SLF001 - photo b has no hint of its own
 
     _select(window, window._leaf_for(files["a"]))  # noqa: SLF001
-    assert window._hint.text() == "The animal is a deer"  # noqa: SLF001
+    assert window._detail._hint.text() == "The animal is a deer"  # noqa: SLF001
 
 
 def test_hierarchy_preview_updates_from_keywords(
@@ -1431,8 +1431,8 @@ def test_hierarchy_preview_updates_from_keywords(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     window._save_options_menu.overwrite_actions[FIELD_KEYWORDS].setChecked(True)  # noqa: SLF001
-    window._keywords.setPlainText("Duck<Bird<Animal")  # noqa: SLF001 - triggers textChanged
-    assert window._hierarchy.toPlainText() == "Animal\n└─ Bird\n   └─ Duck"  # noqa: SLF001
+    window._detail._keywords.setPlainText("Duck<Bird<Animal")  # noqa: SLF001 - triggers textChanged
+    assert window._detail._hierarchy.toPlainText() == "Animal\n└─ Bird\n   └─ Duck"  # noqa: SLF001
 
 
 def test_save_current_writes_and_marks_saved(
@@ -1452,8 +1452,8 @@ def test_save_current_writes_and_marks_saved(
     monkeypatch.setattr(metadata, "write_metadata", fake_write)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    window._title.setText("New Title")  # noqa: SLF001
-    window._keywords.setPlainText("Eagle\nSky")  # noqa: SLF001
+    window._detail._title.setText("New Title")  # noqa: SLF001
+    window._detail._keywords.setPlainText("Eagle\nSky")  # noqa: SLF001
     # Scanned and found bare, so the column may trust what the save wrote.
     window._items[str(img)].known_fields = set()  # noqa: SLF001
     window._save_current()  # noqa: SLF001
@@ -1519,8 +1519,8 @@ def test_save_keeps_a_caption_whose_overwrite_entry_is_off(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     window._save_options_menu.overwrite_actions[FIELD_DESCRIPTION].setChecked(False)  # noqa: SLF001
-    window._description.setPlainText("A new caption.")  # noqa: SLF001
-    window._keywords.setPlainText("Eagle")  # noqa: SLF001
+    window._detail._description.setPlainText("A new caption.")  # noqa: SLF001
+    window._detail._keywords.setPlainText("Eagle")  # noqa: SLF001
     window._save_current()  # noqa: SLF001
 
     assert captured["description"] is None  # the photo keeps "Old caption."
@@ -1549,12 +1549,12 @@ def test_detail_pane_names_the_caption_a_sidecar_shadows(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
 
-    assert window._existing_description.toPlainText() == "A real caption."  # noqa: SLF001
-    note = window._description_source.text()  # noqa: SLF001
+    assert window._detail._existing_description.toPlainText() == "A real caption."  # noqa: SLF001
+    note = window._detail._description_source.text()  # noqa: SLF001
     assert 'shadows "default" in the image file' in note
-    assert not window._description_source.isHidden()  # noqa: SLF001
+    assert not window._detail._description_source.isHidden()  # noqa: SLF001
     # The title has one source, so its note says where it came from and nothing more.
-    assert window._title_source.text() == "from XMP sidecar"  # noqa: SLF001
+    assert window._detail._title_source.text() == "from XMP sidecar"  # noqa: SLF001
 
 
 def test_detail_columns_line_up_row_by_row(
@@ -1588,9 +1588,9 @@ def test_detail_columns_line_up_row_by_row(
     QApplication.processEvents()
 
     rows = (
-        (window._existing_title, window._title),  # noqa: SLF001
-        (window._existing_description, window._description),  # noqa: SLF001
-        (window._existing_keywords, window._keywords),  # noqa: SLF001
+        (window._detail._existing_title, window._detail._title),  # noqa: SLF001
+        (window._detail._existing_description, window._detail._description),  # noqa: SLF001
+        (window._detail._existing_keywords, window._detail._keywords),  # noqa: SLF001
     )
     assert [existing.y() for existing, _new in rows] == [new.y() for _existing, new in rows]
 
@@ -1612,8 +1612,8 @@ def test_detail_pane_hides_the_source_note_for_a_field_no_file_carries(
 
     # isHidden, not isVisible: nothing is visible in a window the test never shows, but only an
     # explicit hide sets isHidden.
-    assert window._title_source.isHidden()  # noqa: SLF001
-    assert window._description_source.isHidden()  # noqa: SLF001
+    assert window._detail._title_source.isHidden()  # noqa: SLF001
+    assert window._detail._description_source.isHidden()  # noqa: SLF001
 
 
 def test_opening_a_photo_seeds_the_new_column_like_the_existing_one(
@@ -1643,8 +1643,8 @@ def test_opening_a_photo_seeds_the_new_column_like_the_existing_one(
     _select(window, window._leaf_for(img))  # noqa: SLF001
 
     # Both columns render the same way, so they can be read line by line.
-    assert window._keywords.toPlainText() == window._existing_keywords.toPlainText()  # noqa: SLF001
-    assert window._keywords.toPlainText() == "Duck<Bird<Animal\nSky"  # noqa: SLF001
+    assert window._detail._keywords.toPlainText() == window._detail._existing_keywords.toPlainText()  # noqa: SLF001
+    assert window._detail._keywords.toPlainText() == "Duck<Bird<Animal\nSky"  # noqa: SLF001
 
 
 def test_selecting_shows_metadata_source(
@@ -1658,7 +1658,7 @@ def test_selecting_shows_metadata_source(
     _patch_gui(monkeypatch, "read_metadata_sources", lambda _p: ["XMP sidecar"])
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    assert window._existing_source.text() == "(from XMP sidecar)"  # noqa: SLF001
+    assert window._detail._existing_source.text() == "(from XMP sidecar)"  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -1744,8 +1744,8 @@ def test_export_csv_writes_report(
     _stub_reads(monkeypatch, keywords=["Beach"])
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    window._title.setText("New Title")  # noqa: SLF001
-    window._keywords.setPlainText("Eagle\nSky")  # noqa: SLF001
+    window._detail._title.setText("New Title")  # noqa: SLF001
+    window._detail._keywords.setPlainText("Eagle\nSky")  # noqa: SLF001
 
     target = tmp_path / "report.csv"
     _patch_save_dialog(monkeypatch, target)
@@ -2129,9 +2129,9 @@ def test_save_writes_only_title_and_description_when_keywords_unchecked(
     captured = _capture_write(monkeypatch)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    window._title.setText("New Title")  # noqa: SLF001
-    window._description.setPlainText("New description.")  # noqa: SLF001
-    window._keywords.setPlainText("Eagle")  # noqa: SLF001
+    window._detail._title.setText("New Title")  # noqa: SLF001
+    window._detail._description.setPlainText("New description.")  # noqa: SLF001
+    window._detail._keywords.setPlainText("Eagle")  # noqa: SLF001
     window._save_options_menu.write_keywords.setChecked(False)  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
@@ -2153,7 +2153,7 @@ def test_save_skips_title_when_title_unchecked(
     captured = _capture_write(monkeypatch)
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
-    window._title.setText("New Title")  # noqa: SLF001
+    window._detail._title.setText("New Title")  # noqa: SLF001
     window._save_options_menu.write_title.setChecked(False)  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
@@ -2233,7 +2233,7 @@ def test_unchecking_write_keywords_disables_overwrite_and_blanks_diff(
     window._save_options_menu.write_keywords.setChecked(False)  # noqa: SLF001 - fires _on_write_field_toggled
 
     assert not window._save_options_menu.overwrite_actions[FIELD_KEYWORDS].isEnabled()  # noqa: SLF001
-    assert "keywords will not be written" in window._diff.toPlainText().lower()  # noqa: SLF001
+    assert "keywords will not be written" in window._detail._diff.toPlainText().lower()  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -2257,8 +2257,8 @@ def test_file_failure_surfaces_reason_on_the_open_photo(
     item = window._items[str(img)]  # noqa: SLF001
     assert item.status == FAILED
     assert item.error == "model unreachable"
-    assert not window._error_banner.isHidden()  # noqa: SLF001
-    assert "model unreachable" in window._error_banner.text()  # noqa: SLF001
+    assert not window._detail._error_banner.isHidden()  # noqa: SLF001
+    assert "model unreachable" in window._detail._error_banner.text()  # noqa: SLF001
     leaf = window._leaf_for(img)  # noqa: SLF001
     assert leaf is not None
     assert leaf.toolTip(2) == "model unreachable"  # Status column
@@ -2276,10 +2276,10 @@ def test_opening_a_healthy_photo_hides_the_error_banner(
     _add_dir(window, {"a": a, "b": b})
     _select(window, window._leaf_for(a))  # noqa: SLF001
     window._on_file_failed(str(a), "boom")  # noqa: SLF001
-    assert not window._error_banner.isHidden()  # noqa: SLF001
+    assert not window._detail._error_banner.isHidden()  # noqa: SLF001
 
     _select(window, window._leaf_for(b))  # noqa: SLF001 - healthy photo
-    assert window._error_banner.isHidden()  # noqa: SLF001
+    assert window._detail._error_banner.isHidden()  # noqa: SLF001
 
 
 def test_retry_failed_targets_only_failed_photos(
@@ -2325,14 +2325,14 @@ def test_retrying_the_open_photo_clears_its_banner(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
     window._on_file_failed(str(img), "boom")  # noqa: SLF001
-    assert not window._error_banner.isHidden()  # noqa: SLF001
+    assert not window._detail._error_banner.isHidden()  # noqa: SLF001
 
     window._run_generation([window._items[str(img)]])  # noqa: SLF001
 
     # Checked synchronously, before the worker thread's queued signals are processed: the
     # pre-run bookkeeping marks the photo working and clears its stale failure banner.
     assert window._items[str(img)].status == WORKING  # noqa: SLF001
-    assert window._error_banner.isHidden()  # noqa: SLF001
+    assert window._detail._error_banner.isHidden()  # noqa: SLF001
     window._teardown_thread()  # noqa: SLF001 - join the worker thread the run started
 
 
@@ -2771,7 +2771,7 @@ def test_back_keeps_the_edits_typed_before_leaving(
     files = _open_grid(window, tmp_path, monkeypatch)
     _select(window, window._leaf_for(files["a.jpg"]))  # noqa: SLF001
     _select(window, window._leaf_for(files["b.jpg"]))  # noqa: SLF001
-    window._hint.setText("the second frame")  # noqa: SLF001
+    window._detail._hint.setText("the second frame")  # noqa: SLF001
 
     window._go_back()  # noqa: SLF001
 
@@ -3664,13 +3664,13 @@ def test_advance_progress_ignores_ticks_when_idle(window: gui.MainWindow) -> Non
 
 def test_details_disclosure_expands_and_collapses(window: gui.MainWindow) -> None:
     """The keyword-change details start collapsed and follow the disclosure toggle."""
-    assert window._details_panel.isHidden()  # noqa: SLF001
-    window._details_toggle.setChecked(True)  # noqa: SLF001
-    assert not window._details_panel.isHidden()  # noqa: SLF001
-    assert window._details_toggle.arrowType() == Qt.ArrowType.DownArrow  # noqa: SLF001
-    window._details_toggle.setChecked(False)  # noqa: SLF001
-    assert window._details_panel.isHidden()  # noqa: SLF001
-    assert window._details_toggle.arrowType() == Qt.ArrowType.RightArrow  # noqa: SLF001
+    assert window._detail._details_panel.isHidden()  # noqa: SLF001
+    window._detail._details_toggle.setChecked(True)  # noqa: SLF001
+    assert not window._detail._details_panel.isHidden()  # noqa: SLF001
+    assert window._detail._details_toggle.arrowType() == Qt.ArrowType.DownArrow  # noqa: SLF001
+    window._detail._details_toggle.setChecked(False)  # noqa: SLF001
+    assert window._detail._details_panel.isHidden()  # noqa: SLF001
+    assert window._detail._details_toggle.arrowType() == Qt.ArrowType.RightArrow  # noqa: SLF001
 
 
 def test_details_toggle_summarizes_keyword_changes(
@@ -3684,11 +3684,11 @@ def test_details_toggle_summarizes_keyword_changes(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
 
-    window._keywords.setPlainText("Beach\nEagle")  # noqa: SLF001 - one new keyword
-    assert "+1" in window._details_toggle.text()  # noqa: SLF001
+    window._detail._keywords.setPlainText("Beach\nEagle")  # noqa: SLF001 - one new keyword
+    assert "+1" in window._detail._details_toggle.text()  # noqa: SLF001
 
-    window._keywords.setPlainText("Beach")  # noqa: SLF001 - back to the existing set
-    assert "no change" in window._details_toggle.text()  # noqa: SLF001
+    window._detail._keywords.setPlainText("Beach")  # noqa: SLF001 - back to the existing set
+    assert "no change" in window._detail._details_toggle.text()  # noqa: SLF001
 
 
 def test_save_options_default_to_writing_all_fields(window: gui.MainWindow) -> None:
@@ -3753,7 +3753,7 @@ def test_generate_menus_offer_one_time_skip_cache(
         lambda items, **kwargs: calls.append((len(items), kwargs.get("use_cache", True))),
     )
     window._generate_menu.actions()[0].trigger()  # noqa: SLF001
-    window._generate_one_menu.actions()[0].trigger()  # noqa: SLF001
+    window._detail.generate_menu.actions()[0].trigger()  # noqa: SLF001
 
     assert calls == [(1, False), (1, False)]
 
@@ -3798,7 +3798,7 @@ def test_long_tooltips_are_wrapped_into_lines(window: gui.MainWindow) -> None:
 def test_save_tooltips_follow_the_chosen_options(window: gui.MainWindow) -> None:
     """Toggling a save option rewrites the Save buttons' current-options summary."""
     assert "title, description, keywords" in _unwrapped(window._save_selected_button.toolTip())  # noqa: SLF001
-    assert "XMP sidecar" in _unwrapped(window._save_button.toolTip())  # noqa: SLF001
+    assert "XMP sidecar" in _unwrapped(window._detail.save_button.toolTip())  # noqa: SLF001
 
     window._save_options_menu.write_description.setChecked(False)  # noqa: SLF001
     window._save_options_menu.sidecar_actions["none"].setChecked(True)  # noqa: SLF001
@@ -4673,10 +4673,10 @@ def test_description_boxes_grow_only_with_content(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
 
-    short = window._description.minimumHeight()  # noqa: SLF001 - setFixedHeight sets min=max
-    window._description.setPlainText("line\n" * 40)  # noqa: SLF001
+    short = window._detail._description.minimumHeight()  # noqa: SLF001 - setFixedHeight sets min=max
+    window._detail._description.setPlainText("line\n" * 40)  # noqa: SLF001
 
-    grown = window._description.minimumHeight()  # noqa: SLF001
+    grown = window._detail._description.minimumHeight()  # noqa: SLF001
     assert grown > short
     assert grown <= 140  # noqa: PLR2004 - the documented cap
 
@@ -5153,10 +5153,10 @@ def test_both_generate_menus_hold_the_one_set_of_save_options(
 ) -> None:
     """A button that writes has to show what it writes with, not point at the other button."""
     options = window._save_options_menu  # noqa: SLF001
-    for menu in (window._generate_menu, window._generate_one_menu):  # noqa: SLF001
+    for menu in (window._generate_menu, window._detail.generate_menu):  # noqa: SLF001
         assert options.menuAction() in menu.actions()
     # The very same menu, so a field unchecked here is unchecked for every save there is.
-    assert window._save_button.menu() is options  # noqa: SLF001
+    assert window._detail.save_button.menu() is options  # noqa: SLF001
     assert window._save_selected_button.menu() is options  # noqa: SLF001
     assert options.title() == "Save Options"
 
@@ -5180,12 +5180,12 @@ def test_the_toggle_renames_both_generate_buttons(
 ) -> None:
     """A button that is about to write has to say so before it is pressed."""
     assert window._generate_button.text() == "Generate Selected"  # noqa: SLF001
-    assert window._generate_one_button.text() == "Generate This Photo"  # noqa: SLF001
+    assert window._detail.generate_button.text() == "Generate This Photo"  # noqa: SLF001
 
     window._autosave_action.setChecked(True)  # noqa: SLF001
 
     assert window._generate_button.text() == "Generate and Save Selected"  # noqa: SLF001
-    assert window._generate_one_button.text() == "Generate and Save This Photo"  # noqa: SLF001
+    assert window._detail.generate_button.text() == "Generate and Save This Photo"  # noqa: SLF001
     # And the tooltip spells out what that write covers, the way the Save buttons do.
     assert "keywords" in window._generate_button.toolTip()  # noqa: SLF001
 
@@ -5923,7 +5923,7 @@ def test_saving_writes_the_vocabulary_spelling_verbatim(
     window._keyword_rules_dialog.load_vocabulary(_keyword_file(tmp_path, "gegenlicht\n"))  # noqa: SLF001
     captured = _capture_write(monkeypatch)
     _select(window, window._leaf_for(photo))  # noqa: SLF001
-    window._keywords.setPlainText("gegenlicht")  # noqa: SLF001
+    window._detail._keywords.setPlainText("gegenlicht")  # noqa: SLF001
 
     window._save_current()  # noqa: SLF001
 
@@ -6066,7 +6066,7 @@ def test_preview_click_opens_the_viewer(
         "exec",
         lambda self: opened.append(self.windowTitle()),
     )
-    window._preview.clicked.emit()  # noqa: SLF001
+    window._detail._preview.clicked.emit()  # noqa: SLF001
 
     assert opened == ["a.jpg"]
 
@@ -6078,7 +6078,7 @@ def test_preview_click_without_an_open_photo_does_nothing(
     """The placeholder preview is clickable but has nothing to open."""
     opened: list[str] = []
     monkeypatch.setattr(viewer.ImageViewerDialog, "exec", lambda _self: opened.append("opened"))
-    window._preview.clicked.emit()  # noqa: SLF001
+    window._detail._preview.clicked.emit()  # noqa: SLF001
     assert opened == []
 
 
@@ -6094,7 +6094,7 @@ def test_viewer_falls_back_to_the_preview_when_the_full_decode_fails(
     item = window._items[str(a)]  # noqa: SLF001
 
     def _fail_big(path: Path, max_size: int = 0, **_kwargs: object) -> object:
-        if max_size == main_window._VIEWER_MAX:  # noqa: SLF001
+        if max_size == detail_pane._VIEWER_MAX:  # noqa: SLF001
             msg = "no decoder"
             raise OSError(msg)
         return _real_prepare(path, max_size=max_size)
@@ -6102,11 +6102,11 @@ def test_viewer_falls_back_to_the_preview_when_the_full_decode_fails(
     _real_prepare = image_io.prepare_image_for_agent
     _patch_gui(monkeypatch, "prepare_image_for_agent", _fail_big)
 
-    pixmap = window._viewer_pixmap(item)  # noqa: SLF001
+    pixmap = window._detail._viewer_pixmap(item)  # noqa: SLF001
 
     assert pixmap is not None
     assert not pixmap.isNull()
-    assert window._viewer_cache is None  # noqa: SLF001 - a fallback is not cached as the full size
+    assert window._detail._viewer_cache is None  # noqa: SLF001 - a fallback is not cached as the full size
 
 
 def test_viewer_cache_holds_one_photo_at_a_time(
@@ -6120,15 +6120,15 @@ def test_viewer_cache_holds_one_photo_at_a_time(
     _stub_reads(monkeypatch, keywords=[])
     _add_dir(window, {"a": a, "b": b})
 
-    window._viewer_pixmap(window._items[str(a)])  # noqa: SLF001
-    assert window._viewer_cache[0] == str(a)  # noqa: SLF001
+    window._detail._viewer_pixmap(window._items[str(a)])  # noqa: SLF001
+    assert window._detail._viewer_cache[0] == str(a)  # noqa: SLF001
 
-    window._viewer_pixmap(window._items[str(b)])  # noqa: SLF001
-    assert window._viewer_cache[0] == str(b)  # noqa: SLF001
+    window._detail._viewer_pixmap(window._items[str(b)])  # noqa: SLF001
+    assert window._detail._viewer_cache[0] == str(b)  # noqa: SLF001
 
     # Removing the cached photo drops its pixmap with it.
     window._remove_items([str(b)])  # noqa: SLF001
-    assert window._viewer_cache is None  # noqa: SLF001
+    assert window._detail._viewer_cache is None  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -6261,10 +6261,10 @@ def test_the_detail_pane_says_when_the_text_mixes_writing_systems(
     items[str(flagged)].foreign_terms = ["陶笛"]
 
     window._show_item(items[str(flagged)])  # noqa: SLF001
-    assert "陶笛" in window._review_note.text()  # noqa: SLF001
+    assert "陶笛" in window._detail._review_note.text()  # noqa: SLF001
 
     window._show_item(items[str(clean)])  # noqa: SLF001
-    assert window._review_note.text() == ""  # noqa: SLF001
+    assert window._detail._review_note.text() == ""  # noqa: SLF001
 
 
 def test_the_repair_toggle_lands_in_the_saved_settings(window: gui.MainWindow) -> None:
@@ -6377,17 +6377,17 @@ def test_the_copyright_row_compares_the_file_with_what_a_save_writes(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
 
-    assert window._existing_copyright.text() == "(c) 2019 Someone Else"  # noqa: SLF001
-    assert window._planned_copyright.text() == "(not written)"  # noqa: SLF001
+    assert window._detail._existing_copyright.text() == "(c) 2019 Someone Else"  # noqa: SLF001
+    assert window._detail._planned_copyright.text() == "(not written)"  # noqa: SLF001
 
     _fill_copyright(window)
-    assert window._planned_copyright.text() == "(keeps the notice it has)"  # noqa: SLF001
+    assert window._detail._planned_copyright.text() == "(keeps the notice it has)"  # noqa: SLF001
 
     window._copyright_dialog._preserve_copyright_box.setChecked(False)  # noqa: SLF001
-    assert window._planned_copyright.text() == "Copyright (c) 2011 Ada Lovelace"  # noqa: SLF001
+    assert window._detail._planned_copyright.text() == "Copyright (c) 2011 Ada Lovelace"  # noqa: SLF001
 
     window._save_options_menu.write_copyright.setChecked(False)  # noqa: SLF001
-    assert window._planned_copyright.text() == "(not written)"  # noqa: SLF001
+    assert window._detail._planned_copyright.text() == "(not written)"  # noqa: SLF001
 
 
 def test_the_copyright_row_says_none_for_a_photo_without_one(
@@ -6401,7 +6401,7 @@ def test_the_copyright_row_says_none_for_a_photo_without_one(
     _add_dir(window, {"a": img})
     _select(window, window._leaf_for(img))  # noqa: SLF001
 
-    assert window._existing_copyright.text() == "(none)"  # noqa: SLF001
+    assert window._detail._existing_copyright.text() == "(none)"  # noqa: SLF001
 
 
 def test_a_saved_notice_takes_the_photo_out_of_no_copyright(

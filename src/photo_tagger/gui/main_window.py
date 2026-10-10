@@ -31,7 +31,6 @@ from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
     QKeySequence,
-    QPixmap,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -40,7 +39,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QFormLayout,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -49,13 +47,10 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSplitter,
     QStackedWidget,
-    QTextEdit,
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -92,13 +87,13 @@ from photo_tagger.gui.common import (
     DOCS_URL,
     IS_DIR_ROLE,
     LOG_FOLDER,
-    NONE_LABEL,
     PATH_ROLE,
     PICK_A_FIELD,
     STATUS_RANK_ROLE,
 )
 from photo_tagger.gui.connection import ConnectionBar
 from photo_tagger.gui.copyright import CopyrightDialog
+from photo_tagger.gui.detail_pane import DetailPane
 from photo_tagger.gui.folder_grid import FolderGrid
 from photo_tagger.gui.keyword_rules import KeywordRulesDialog
 from photo_tagger.gui.pacing import PacingDialog
@@ -106,16 +101,12 @@ from photo_tagger.gui.save_options import SaveOptionsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
 from photo_tagger.gui.threads import join_thread, release_thread, start_in_thread
 from photo_tagger.gui.undo_dialog import UndoDialog
-from photo_tagger.gui.viewer import ImageViewerDialog
 from photo_tagger.gui.vocabulary_builder import VocabularyBuilderDialog
 from photo_tagger.gui.watch_dialog import WatchDialog
 from photo_tagger.gui.widgets import (
-    ClickableLabel,
     InputWatcher,
     SortableTreeItem,
     check_state,
-    fit_text_height,
-    readonly_box,
 )
 from photo_tagger.gui.workers import (
     GenerateWorker,
@@ -125,7 +116,6 @@ from photo_tagger.gui.workers import (
     WatchWorker,
 )
 from photo_tagger.gui_state import (
-    ADDED,
     DEFAULT_GUI_EXTENSIONS,
     EXTRA_PASSES,
     FAILED,
@@ -139,7 +129,6 @@ from photo_tagger.gui_state import (
     OUTPUT_LANGUAGE_SUGGESTIONS,
     PENDING,
     READY,
-    REMOVED,
     RERUN_FAILED,
     RERUN_MIXED_SCRIPT,
     SAVED,
@@ -166,7 +155,6 @@ from photo_tagger.gui_state import (
     apply_write_result,
     build_save_job,
     build_tree,
-    caption_source_note,
     capture_year,
     config_text_with_language,
     config_text_with_output_language,
@@ -181,15 +169,9 @@ from photo_tagger.gui_state import (
     file_type_label,
     flat_labels,
     foreign_terms_note,
-    format_existing_keywords,
     harmonize_summary,
-    hierarchy_preview,
-    keeps_copyright,
     keys_by_check,
-    keyword_diff,
-    keyword_diff_html,
     keyword_lines,
-    keywords_to_text,
     load_sidecar_overrides,
     location_crumb,
     mark_mixed_script,
@@ -198,14 +180,12 @@ from photo_tagger.gui_state import (
     merged_config_text,
     navigation_shortcuts,
     new_paths,
-    parse_keyword_lines,
     paths_under,
     photo_item_to_report_row,
     photo_matches_filter,
     photos_for_pass,
     photos_to_save,
     photos_to_write,
-    planned_copyright,
     progress_timing_text,
     record_dropped_terms,
     reports_status,
@@ -214,9 +194,7 @@ from photo_tagger.gui_state import (
     reveal_label,
     review_summary,
     save_options_for,
-    save_targets,
     search_summary,
-    source_label,
     status_sort_rank,
     status_summary,
     tagged_legend,
@@ -247,7 +225,6 @@ from photo_tagger.gui_usage import (
     window_settings,
 )
 from photo_tagger.i18n import _, gettext_noop, ngettext
-from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.metadata import (
     FIELD_DESCRIPTION,
     FIELD_KEYWORDS,
@@ -273,13 +250,6 @@ if TYPE_CHECKING:
 
     from photo_tagger.undo import UndoJournal
 
-
-# The on-screen preview in the detail pane. Not what the model sees: that is
-# [inference] jpeg_dimensions, read into MainWindow._model_image_size.
-_PREVIEW_MAX = 640
-# What the full-size viewer decodes to. Large enough that zooming in shows real detail (more than
-# a 5K display can put up at once), small enough that a RAW file still opens in about a second.
-_VIEWER_MAX = 3200
 
 # How long a run that writes by itself waits before re-running the photos it failed on. The CLI
 # pauses before its own retry pass for the same reason (`_RETRY_PASS_DELAY_SECONDS` in pipeline):
@@ -460,7 +430,6 @@ class MainWindow(QMainWindow):
         self._raw_config = load_config()
         self._defaults = load_defaults(self._raw_config)
         self._items: dict[str, PhotoItem] = {}
-        self._init_pixmap_caches()
         self._init_tree_row_index()
         # The Select menu's last name pattern, so refining one is a small edit, not a retype.
         self._last_name_pattern = ""
@@ -535,6 +504,7 @@ class MainWindow(QMainWindow):
         self._connection_bar.status.connect(self._status.setText)
         self._connection_bar.used.connect(self._count)
         self._folder_grid.status.connect(self._status.setText)
+        self._detail.status.connect(self._status.setText)
 
     def _build_dialogs(self) -> None:
         """
@@ -644,19 +614,6 @@ class MainWindow(QMainWindow):
         # What the vocabulary did over the run in flight, for its closing summary line.
         self._vocabulary_mapped = 0
         self._vocabulary_dropped: dict[str, int] = {}
-
-    def _init_pixmap_caches(self) -> None:
-        """
-        Seed the decoded-image caches the detail pane draws from.
-
-        The grid keeps its own thumbnails. The preview cache is keyed by path and lives for the
-        session: it holds small pixmaps, and a folder of them is cheap. The viewer's is deliberately
-        a single entry, because at ``_VIEWER_MAX`` one pixmap is tens of megabytes; keeping the last
-        one is enough to reopen the photo just looked at instantly, without growing over a long
-        session.
-        """
-        self._preview_cache: dict[str, QPixmap] = {}
-        self._viewer_cache: tuple[str, QPixmap] | None = None
 
     def _init_tree_row_index(self) -> None:
         """
@@ -1920,7 +1877,7 @@ class MainWindow(QMainWindow):
         """Build the nav row over a stack: the idle placeholder, a photo's detail, a folder grid."""
         self._right = QStackedWidget()
         self._right.addWidget(self._build_empty_state())  # _PAGE_EMPTY
-        self._right.addWidget(self._build_detail_panel())  # _PAGE_DETAIL
+        self._right.addWidget(self._build_detail_pane())  # _PAGE_DETAIL
         self._right.addWidget(self._build_folder_grid())  # _PAGE_GRID
         pane = QWidget()
         box = QVBoxLayout(pane)
@@ -1992,208 +1949,27 @@ class MainWindow(QMainWindow):
         if folder is not None and self._right.currentIndex() == _PAGE_GRID:
             self._show_grid(folder)
 
-    def _build_detail_panel(self) -> QWidget:
-        content = QWidget()
-        box = QVBoxLayout(content)
-        # Shown only when the selected photo failed to generate: carries the reason and a hint
-        # that "Open logs" has the full traceback. Hidden for healthy photos.
-        self._error_banner = QLabel()
-        self._error_banner.setObjectName("error")
-        self._error_banner.setWordWrap(True)
-        self._error_banner.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._error_banner.hide()
-        box.addWidget(self._error_banner)
-        self._preview = ClickableLabel(_("Select a photo to preview it."))
-        self._preview.setObjectName("preview")
-        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setMinimumHeight(240)
-        self._preview.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._preview.setToolTip(
-            tooltip("Click the photo to open it full size, where it can be zoomed and panned."),
+    def _build_detail_pane(self) -> DetailPane:
+        """Build the pane that reviews one photo, sharing the window's save options and toggle."""
+        pane = self._detail = DetailPane(
+            self,
+            save_options_menu=self._save_options_menu,
+            autosave_action=self._autosave_action,
+            save_options=self._save_options,
         )
-        self._preview.clicked.connect(self._open_viewer)
-        box.addWidget(self._preview)
-        box.addLayout(self._build_compare_grid())
-        box.addLayout(self._build_details_section())
-        box.addLayout(self._build_save_row())
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(content)
-        return scroll
-
-    def _section_label(self, text: str) -> QLabel:
-        label = QLabel(text)
-        label.setObjectName("section")
-        return label
-
-    def _build_compare_grid(self) -> QGridLayout:
-        """Existing (read-only) and New (editable) columns side by side for easy comparison."""
-        grid = QGridLayout()
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 1)
-        # The metadata source rides along in the Existing header (it has no "New" counterpart,
-        # so a full grid row of its own broke the columns' symmetry).
-        existing_header = QHBoxLayout()
-        existing_header.addWidget(self._section_label(_("Existing")))
-        self._existing_source = QLabel("")
-        self._existing_source.setObjectName("hint")
-        self._existing_source.setToolTip(
-            tooltip(
-                "Where the existing metadata was read from: the image file, an XMP sidecar, "
-                "or both.",
-            ),
+        pane.generate_requested.connect(
+            lambda use_cache, trigger: self._generate_current(use_cache=use_cache, trigger=trigger),
         )
-        existing_header.addWidget(self._existing_source)
-        existing_header.addStretch(1)
-        grid.addLayout(existing_header, 0, 1)
-        # The New header carries the review note the same way, so a warning about the generated
-        # text sits over the fields it is about instead of somewhere else in the pane.
-        new_header = QHBoxLayout()
-        new_header.addWidget(self._section_label(_("New (editable)")))
-        self._review_note = QLabel("")
-        self._review_note.setObjectName("warning")
-        self._review_note.setToolTip(
-            tooltip(
-                "The generated text mixes writing systems. That is right when the photo shows "
-                "that text, and a word the model failed to translate when it does not.",
-            ),
-        )
-        new_header.addWidget(self._review_note)
-        new_header.addStretch(1)
-        grid.addLayout(new_header, 0, 2)
-
-        self._existing_title = QLineEdit()
-        self._existing_title.setReadOnly(True)
-        self._title = QLineEdit()
-        self._title.setToolTip(tooltip("The title to write. Edit freely before saving."))
-        grid.addWidget(QLabel(_("Title")), 1, 0)
-        grid.addWidget(self._existing_title, 1, 1)
-        grid.addWidget(self._title, 1, 2)
-        # A row of its own under the field, not a layout nested in its cell: nesting makes the grid
-        # size the row by the box's sizeHint instead of its minimum, which stretches the row.
-        self._title_source = self._source_note()
-        grid.addWidget(self._title_source, 2, 1)
-
-        top = Qt.AlignmentFlag.AlignTop
-        self._existing_description = readonly_box(44)
-        self._description = QPlainTextEdit()
-        self._description.setToolTip(tooltip("The description to write."))
-        # Descriptions are usually a sentence or two; grow the boxes with the text instead of
-        # reserving a fixed block of the pane (textChanged also fires on programmatic fills).
-        self._description.textChanged.connect(lambda: fit_text_height(self._description))
-        fit_text_height(self._description)
-        grid.addWidget(QLabel(_("Description")), 3, 0, top)
-        grid.addWidget(self._existing_description, 3, 1)
-        grid.addWidget(self._description, 3, 2)
-        self._description_source = self._source_note()
-        grid.addWidget(self._description_source, 4, 1)
-
-        self._existing_keywords = readonly_box(150)
-        self._keywords = QPlainTextEdit()
-        self._keywords.setMinimumHeight(150)
-        self._keywords.setPlaceholderText(_("One per line. Use < for hierarchy (Duck<Bird<Animal)"))
-        self._keywords.setToolTip(
-            tooltip(
-                "Keywords to write, one per line. Use '<' for a hierarchy "
-                "(e.g. 'Duck<Bird<Animal'); the changes and resulting paths show below.",
-            ),
-        )
-        self._keywords.textChanged.connect(self._refresh_derived)
-        grid.addWidget(QLabel(_("Keywords")), 5, 0, top)
-        grid.addWidget(self._existing_keywords, 5, 1)
-        grid.addWidget(self._keywords, 5, 2)
-        self._add_copyright_row(grid, 6)
-        return grid
-
-    def _add_copyright_row(self, grid: QGridLayout, row: int) -> None:
-        """
-        Add the Copyright row: the notice on the file, and the one a save writes.
-
-        Read-only on both sides: the notice is one setting for every photo, not a per-photo edit,
-        so the New side only says what that setting puts on this one.
-        """
-        self._existing_copyright = QLineEdit()
-        self._existing_copyright.setReadOnly(True)
-        self._planned_copyright = QLineEdit()
-        self._planned_copyright.setReadOnly(True)
-        self._planned_copyright.setToolTip(
-            tooltip(
-                "The notice a save writes on this photo, dated by the year it was taken. Change "
-                "it in Settings > Copyright.",
-            ),
-        )
-        grid.addWidget(QLabel(_("Copyright")), row, 0)
-        grid.addWidget(self._existing_copyright, row, 1)
-        grid.addWidget(self._planned_copyright, row, 2)
-
-    def _source_note(self) -> QLabel:
-        """Build the dimmed line under an Existing field that says where its value came from."""
-        label = QLabel("")
-        label.setObjectName("hint")
-        label.setWordWrap(True)
-        label.setToolTip(
-            tooltip(
-                "Which file this value came from. A sidecar wins, so a value left in the photo is "
-                "named rather than hidden: only a save to the photo itself replaces it.",
-            ),
-        )
-        return label
-
-    def _build_details_section(self) -> QVBoxLayout:
-        """Collapsible keyword-change details: the diff and the resulting hierarchy paths."""
-        box = QVBoxLayout()
-        self._details_toggle = QToolButton()
-        self._details_toggle.setText(_("Keyword changes"))
-        self._details_toggle.setCheckable(True)
-        self._details_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self._details_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._details_toggle.setToolTip(
-            tooltip(
-                "Show exactly what saving will change: added and removed keywords, plus the "
-                "resulting keyword tree.",
-            ),
-        )
-        self._details_toggle.toggled.connect(self._on_details_toggled)
-        box.addWidget(self._details_toggle)
-
-        self._details_panel = QWidget()
-        form = QFormLayout(self._details_panel)
-        form.setContentsMargins(0, 0, 0, 0)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        self._diff = QTextEdit()
-        self._diff.setReadOnly(True)
-        self._diff.setMinimumHeight(90)
-        self._diff.setToolTip(
-            tooltip("Keyword changes a save will make: green added, red removed."),
-        )
-        self._hierarchy = readonly_box(60)
-        self._hierarchy.setObjectName("tree")  # monospace, so the branch guides line up
-        self._hierarchy.setToolTip(
-            tooltip(
-                "The keyword tree that saving will write (stored as Lightroom hierarchy paths).",
-            ),
-        )
-        form.addRow(_("Changes"), self._diff)
-        form.addRow(_("Tree"), self._hierarchy)
-        self._details_panel.hide()
-        box.addWidget(self._details_panel)
-        return box
-
-    def _on_details_toggled(self, expanded: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
-        """Expand or collapse the keyword-change details under the disclosure arrow."""
-        if expanded:
-            self._count("keyword_changes")
-        arrow = Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
-        self._details_toggle.setArrowType(arrow)
-        self._details_panel.setVisible(expanded)
+        pane.save_requested.connect(self._save_current)
+        pane.used.connect(self._count)
+        return pane
 
     def _on_save_options_changed(self) -> None:
         """Follow a Save Options toggle into everything that describes or previews a save."""
         self._count("save_options")
         self._refresh_save_tooltips()
-        self._refresh_derived()
-        self._refresh_planned_copyright()
+        self._detail.refresh_derived()
+        self._detail.refresh_planned_copyright()
 
     def _save_options_summary(self) -> str:
         """Describe what a save currently writes, for the Save and Generate buttons' tooltips."""
@@ -2206,7 +1982,7 @@ class MainWindow(QMainWindow):
     def _refresh_save_tooltips(self) -> None:
         """Keep both Save buttons' tooltips describing the currently chosen options."""
         summary = _("Currently writes {options}.").format(options=self._save_options_summary())
-        self._save_button.setToolTip(
+        self._detail.save_button.setToolTip(
             tooltip(
                 "Write this photo. {summary} Change what is written with the arrow.",
                 summary=summary,
@@ -2257,8 +2033,8 @@ class MainWindow(QMainWindow):
         if not self._autosave_action.isChecked():
             self._generate_button.setText(_("Generate Selected"))
             self._generate_button.setToolTip(tooltip("Run the model on the checked photos."))
-            self._generate_one_button.setText(_("Generate This Photo"))
-            self._generate_one_button.setToolTip(
+            self._detail.generate_button.setText(_("Generate This Photo"))
+            self._detail.generate_button.setToolTip(
                 tooltip(
                     "Run the model on just this photo, regardless of which photos are checked.",
                 ),
@@ -2274,8 +2050,8 @@ class MainWindow(QMainWindow):
                 summary=summary,
             ),
         )
-        self._generate_one_button.setText(_("Generate and Save This Photo"))
-        self._generate_one_button.setToolTip(
+        self._detail.generate_button.setText(_("Generate and Save This Photo"))
+        self._detail.generate_button.setToolTip(
             tooltip(
                 "Run the model on just this photo, then write it with no review, exactly as Save "
                 "This Photo would. {summary} Change that under Save Options, in this button's "
@@ -2283,63 +2059,6 @@ class MainWindow(QMainWindow):
                 summary=summary,
             ),
         )
-
-    def _build_save_row(self) -> QHBoxLayout:
-        """Per-photo actions at the bottom of the detail pane; batch actions live below."""
-        row = QHBoxLayout()
-        hint_label = QLabel(_("Hint for the AI"))
-        self._hint = QLineEdit()
-        self._hint.setPlaceholderText(_("e.g. 'The animal is a deer, not a boar'"))
-        self._hint.setClearButtonEnabled(True)
-        self._hint.setToolTip(
-            tooltip(
-                "A note about this photo that the model trusts over its own reading of the "
-                "image; useful when it misidentifies the subject. It is sent along on every "
-                "generation of this photo (a hinted photo skips the cached result) and is "
-                "never written to the file. Press Enter to regenerate right away.",
-            ),
-        )
-        hint_label.setToolTip(self._hint.toolTip())
-        self._hint.returnPressed.connect(lambda: self._generate_current(trigger=TRIGGER_HINT))
-        row.addWidget(hint_label)
-        row.addWidget(self._hint, stretch=1)
-        self._generate_one_button = QToolButton()
-        self._generate_one_button.setObjectName("split")
-        self._generate_one_button.setText(_("Generate This Photo"))
-        self._generate_one_button.setToolTip(
-            tooltip("Run the model on just this photo, regardless of which photos are checked."),
-        )
-        self._generate_one_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._generate_one_button.clicked.connect(
-            lambda: self._generate_current(),  # noqa: PLW0108  # drop Qt's clicked(checked) arg
-        )
-        self._generate_one_menu = QMenu(self)
-        self._generate_one_menu.setToolTipsVisible(True)
-        skip_one = self._generate_one_menu.addAction(
-            _("Generate This Photo (Skip Cache)"),
-            lambda: self._generate_current(use_cache=False),
-        )
-        skip_one.setToolTip(tooltip("One-time: call the model even when a cached result exists."))
-        # The same QAction hangs in both Generate menus, so the two can never disagree about it,
-        # and the save options follow it: what the toggle writes with is one click away from the
-        # toggle rather than something to know about the other button.
-        self._generate_one_menu.addSeparator()
-        self._generate_one_menu.addAction(self._autosave_action)
-        self._generate_one_menu.addMenu(self._save_options_menu)
-        self._generate_one_button.setMenu(self._generate_one_menu)
-        # The save options live on the button's own arrow, so what a save writes is
-        # discoverable right where the save happens (both Save buttons share one menu).
-        self._save_button = QToolButton()
-        self._save_button.setObjectName("split")
-        self._save_button.setText(_("Save This Photo"))
-        self._save_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._save_button.clicked.connect(
-            lambda: self._save_current(),  # noqa: PLW0108  # drop Qt's clicked(checked) arg
-        )
-        self._save_button.setMenu(self._save_options_menu)
-        row.addWidget(self._generate_one_button)
-        row.addWidget(self._save_button)
-        return row
 
     def _build_bottom_bar(self) -> QHBoxLayout:
         """Status on the left; the batch workflow (generate, then save) on the right."""
@@ -2526,10 +2245,8 @@ class MainWindow(QMainWindow):
         for key in keys:
             self._items.pop(key, None)
             self._scan_tried.discard(key)  # added again later, it deserves a fresh read
-            self._preview_cache.pop(key, None)
+            self._detail.forget(key)
             self._folder_grid.forget(key)
-            if self._viewer_cache is not None and self._viewer_cache[0] == key:
-                self._viewer_cache = None
             if self._current is not None and str(self._current.path) == key:
                 self._show_empty()
 
@@ -2562,8 +2279,7 @@ class MainWindow(QMainWindow):
         self._end_scan(stopped=True)  # the list is gone, so nothing is left to uncheck in it
         self._items.clear()
         self._scan_tried.clear()
-        self._preview_cache.clear()
-        self._viewer_cache = None
+        self._detail.forget_all()
         self._current = None
         self._rebuild_tree()
         self._show_empty()
@@ -2865,7 +2581,7 @@ class MainWindow(QMainWindow):
         if location.is_dir:
             # A folder: show its thumbnail grid instead of a single photo's detail.
             self._current = None
-            self._show_detail(enabled=False)
+            self._detail.close_photo()
             self._show_grid(location.path)
         else:
             self._folder_grid.stop_thumbs()
@@ -3020,58 +2736,15 @@ class MainWindow(QMainWindow):
     # --- detail pane -----------------------------------------------------------------------
 
     def _show_item(self, item: PhotoItem) -> None:
+        """Read what *item* carries, if that is not done yet, and show it in the detail pane."""
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             self._ensure_loaded(item)
             self._ensure_sources(item)
-            self._render_preview(item)
+            self._detail.render_preview(item)
         finally:
             QApplication.restoreOverrideCursor()
-        sources = ", ".join(source_label(source) for source in item.existing_sources)
-        self._existing_source.setText(
-            _("(from {sources})").format(sources=sources) if sources else _("(no metadata found)"),
-        )
-        self._existing_title.setText(item.existing_title or _(NONE_LABEL))
-        self._existing_description.setPlainText(item.existing_description or _(NONE_LABEL))
-        fit_text_height(self._existing_description)
-        self._fill_source_notes(item)
-        existing_kw = format_existing_keywords(item.existing_keywords)
-        self._existing_keywords.setPlainText(existing_kw or _(NONE_LABEL))
-        self._existing_copyright.setText(item.existing_copyright or _(NONE_LABEL))
-        self._refresh_planned_copyright()
-        self._title.setText(item.title)
-        self._description.setPlainText(item.description)
-        self._keywords.setPlainText(keywords_to_text(item.keywords))
-        self._hint.setText(item.hint)
-        self._review_note.setText(foreign_terms_note(item.foreign_terms))
-        self._show_detail(enabled=True)
-        self._update_error_banner(item)
-        self._refresh_derived()
-
-    def _fill_source_notes(self, item: PhotoItem) -> None:
-        """Say under each Existing caption where it was read from, and what it shadows."""
-        for field_name, label in (
-            (FIELD_TITLE, self._title_source),
-            (FIELD_DESCRIPTION, self._description_source),
-        ):
-            note = caption_source_note(item.existing_caption_sources.get(field_name, []))
-            label.setText(note)
-            # A field no file carries has nothing to say, and an empty label would still take a
-            # line of the pane.
-            label.setVisible(bool(note))
-
-    def _update_error_banner(self, item: PhotoItem) -> None:
-        """Show the failure reason for a failed photo; hide the banner otherwise."""
-        if item.status == FAILED and item.error:
-            self._error_banner.setText(
-                _(
-                    "Generation failed: {error}\nUse 'Retry Failed' to try again, or "
-                    "Help > Open Logs for the full traceback.",
-                ).format(error=item.error),
-            )
-            self._error_banner.show()
-        else:
-            self._error_banner.hide()
+        self._detail.show_photo(item)
 
     def _ensure_loaded(self, item: PhotoItem) -> None:
         if item.loaded:
@@ -3104,115 +2777,10 @@ class MainWindow(QMainWindow):
         item.existing_sources = read_metadata_sources(item.path)
         item.sources_read = True
 
-    def _render_preview(self, item: PhotoItem) -> None:
-        pixmap = self._preview_pixmap(item)
-        if pixmap is None or pixmap.isNull():
-            self._preview.setText(_("(no preview available)"))
-            return
-        scaled = pixmap.scaled(
-            self._preview.width(),
-            self._preview.height(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._preview.setPixmap(scaled)
-
-    def _preview_pixmap(self, item: PhotoItem) -> QPixmap | None:
-        key = str(item.path)
-        if key in self._preview_cache:
-            return self._preview_cache[key]
-        try:
-            content = prepare_image_for_agent(item.path, max_size=_PREVIEW_MAX)
-        except Exception as exc:  # noqa: BLE001
-            # A preview must never crash the window; degrade to a placeholder.
-            logger.warning("gui_preview_failed", file=item.path.name, error=str(exc))
-            return None
-        pixmap = QPixmap()
-        pixmap.loadFromData(content.data)
-        self._preview_cache[key] = pixmap
-        return pixmap
-
-    def _open_viewer(self) -> None:
-        """Open the photo on show in a window of its own, big enough to zoom into."""
-        self._count("viewer")
-        item = self._current
-        if item is None:
-            return
-        # Decoding a RAW file at _VIEWER_MAX takes about a second, which is short enough to just
-        # wait through and long enough that the window must say it is working.
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            pixmap = self._viewer_pixmap(item)
-        finally:
-            QApplication.restoreOverrideCursor()
-        if pixmap is None or pixmap.isNull():
-            self._status.setText(_("That photo cannot be opened for viewing."))
-            return
-        viewer = ImageViewerDialog(self, item.path, pixmap)
-        viewer.resize(self.size())
-        viewer.exec()
-
-    def _viewer_pixmap(self, item: PhotoItem) -> QPixmap | None:
-        """
-        Decode *item* at viewer resolution, reusing the last one and falling back to the preview.
-
-        A failure here is not worth an error dialog: the small preview is already on screen and good
-        enough to look at, so the viewer opens on that rather than on nothing.
-        """
-        key = str(item.path)
-        if self._viewer_cache is not None and self._viewer_cache[0] == key:
-            return self._viewer_cache[1]
-        try:
-            content = prepare_image_for_agent(item.path, max_size=_VIEWER_MAX)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("gui_viewer_decode_failed", file=item.path.name, error=str(exc))
-            return self._preview_pixmap(item)
-        pixmap = QPixmap()
-        pixmap.loadFromData(content.data)
-        self._viewer_cache = (key, pixmap)
-        return pixmap
-
-    def _refresh_derived(self) -> None:
-        """Recompute the keyword-change diff and hierarchy preview from the edited fields."""
-        if self._current is None:
-            return
-        if not self._save_options_menu.write_keywords.isChecked():
-            # Keywords are not being written, so the diff and hierarchy do not apply.
-            self._diff.setHtml(_("(keywords will not be written)"))
-            self._hierarchy.setPlainText(_(NONE_LABEL))
-            self._details_toggle.setText(_("Keyword changes (not written)"))
-            return
-        edited = parse_keyword_lines(self._keywords.toPlainText())
-        overwrite = self._save_options_menu.overwrites(FIELD_KEYWORDS)
-        existing = self._current.existing_keywords
-        verbatim = self._verbatim_spellings()
-        paths = hierarchy_preview(existing, edited, overwrite=overwrite, verbatim=verbatim)
-        self._hierarchy.setPlainText(paths or _(NONE_LABEL))
-        diff = keyword_diff(existing, edited, overwrite=overwrite, verbatim=verbatim)
-        self._diff.setHtml(keyword_diff_html(diff))
-        # A collapsed section still tells the user whether saving changes anything.
-        added = sum(1 for _kw, state in diff if state == ADDED)
-        removed = sum(1 for _kw, state in diff if state == REMOVED)
-        summary = f"+{added} / -{removed}" if added or removed else _("no change")
-        self._details_toggle.setText(_("Keyword changes ({summary})").format(summary=summary))
-
-    def _show_detail(self, *, enabled: bool) -> None:
-        for widget in (
-            self._title,
-            self._description,
-            self._keywords,
-            self._hint,
-            self._save_button,
-            self._generate_one_button,
-        ):
-            widget.setEnabled(enabled)
-        if not enabled:
-            self._error_banner.hide()
-
     def _show_empty(self) -> None:
         """Show the idle placeholder page instead of an empty detail form, and clear selection."""
         self._current = None
-        self._show_detail(enabled=False)
+        self._detail.close_photo()
         self._empty_message.setText(_(_EMPTY_PICK) if self._items else _(_EMPTY_START))
         self._right.setCurrentIndex(_PAGE_EMPTY)
         # Nothing is open, so Back should return to the last place rather than step past it.
@@ -3220,14 +2788,8 @@ class MainWindow(QMainWindow):
         self._refresh_nav()
 
     def _commit_current(self) -> None:
-        """Copy the visible editable fields back onto the selected item."""
-        item = self._current
-        if item is None:
-            return
-        item.title = self._title.text().strip()
-        item.description = self._description.toPlainText().strip()
-        item.keywords = parse_keyword_lines(self._keywords.toPlainText())
-        item.hint = self._hint.text().strip()
+        """Copy the visible editable fields back onto the photo on show."""
+        self._detail.commit()
 
     def _save_options(self) -> SaveOptions:
         """Snapshot the save toggles, so a background write never has to read a widget."""
@@ -3552,7 +3114,7 @@ class MainWindow(QMainWindow):
         current = self._current
         if current is not None and current in items:
             # Clear a stale failure banner the moment its photo is re-queued.
-            self._update_error_banner(current)
+            self._detail.update_error(current)
         self._cancelling = False
         self._set_running(running=True, total=len(items))
         # Kept so a pacing rest can report itself in the status line and hand it back afterwards.
@@ -3625,7 +3187,7 @@ class MainWindow(QMainWindow):
         self._refresh_status_cell(item)
         self._advance_progress()
         if self._current is item:
-            self._update_error_banner(item)
+            self._detail.update_error(item)
         self._update_status()
 
     def _cancel_generation(self) -> None:
@@ -3731,8 +3293,8 @@ class MainWindow(QMainWindow):
         """
         for button in (
             self._generate_button,
-            self._generate_one_button,
-            self._save_button,
+            self._detail.generate_button,
+            self._detail.save_button,
             self._save_selected_button,
             self._retry_button,
         ):
@@ -3880,8 +3442,8 @@ class MainWindow(QMainWindow):
     def _set_running(self, *, running: bool, total: int = 0) -> None:
         """Switch the window between idle and busy: buttons, progress bar, and the clock."""
         self._generate_button.setEnabled(not running)
-        self._generate_one_button.setEnabled(not running)
-        self._save_button.setEnabled(not running)
+        self._detail.generate_button.setEnabled(not running)
+        self._detail.save_button.setEnabled(not running)
         self._save_selected_button.setEnabled(not running)
         self._retry_button.setEnabled(not running and self._has_failures())
         self._connection_bar.set_testable(enabled=not running)
@@ -3980,7 +3542,7 @@ class MainWindow(QMainWindow):
         """Follow an edit in the Copyright dialog: the toggle, the Save tooltips, the open photo."""
         self._save_options_menu.set_copyright_usable(usable=self._copyright_dialog.usable)
         self._refresh_save_tooltips()
-        self._refresh_planned_copyright()
+        self._detail.refresh_planned_copyright()
 
     def _preview_year(self) -> int:
         """
@@ -3992,20 +3554,6 @@ class MainWindow(QMainWindow):
         item = self._current
         year = capture_year(item.field_sources) if item is not None else None
         return year or datetime.now(tz=UTC).astimezone().year
-
-    def _refresh_planned_copyright(self) -> None:
-        """Say in the Copyright row what a save writes on the open photo, if anything."""
-        if self._current is None:
-            return
-        options = self._save_options()
-        fields = options.extra_fields
-        sources = self._current.field_sources
-        targets = save_targets(options, self._current.path)
-        if keeps_copyright(fields, sources, targets):
-            self._planned_copyright.setText(_("(keeps the notice it has)"))
-            return
-        planned = planned_copyright(fields, sources, targets)
-        self._planned_copyright.setText(planned or _("(not written)"))
 
     def _show_copyright(self) -> None:
         """Open the Copyright dialog, its preview refreshed for the photo on screen."""
@@ -4063,7 +3611,7 @@ class MainWindow(QMainWindow):
             self._usage.run.harmonized += len(result.keywords)
         if self._current is not None and str(self._current.path) in result.keywords:
             # The open photo's keyword box is showing what harmonization just replaced.
-            self._keywords.setPlainText(keywords_to_text(self._current.keywords))
+            self._detail.set_keywords(self._current.keywords)
         self._status.setText(harmonize_summary(result))
 
     def _on_harmonize_finished(self) -> None:
@@ -4404,10 +3952,7 @@ class MainWindow(QMainWindow):
         for widget in (
             self._tree,
             self._folder_grid.view,
-            self._title,
-            self._description,
-            self._keywords,
-            self._hint,
+            *self._detail.input_widgets(),
         ):
             widget.installEventFilter(self._input_watcher)
             if hasattr(widget, "viewport"):
