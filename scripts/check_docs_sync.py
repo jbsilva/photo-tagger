@@ -69,16 +69,18 @@ def _cli_surface() -> tuple[set[str], list[tuple[str, ...]]]:
     """
     Walk the app and its subcommands, returning the command names and every parameter's names.
 
+    Command names come from the app's own registry, which is what a user types. A sub-app reports
+    the name of the function behind it instead, and the two differ whenever a command is registered
+    under a name of its own (``set``, from ``set_fields``).
+
     ``watch`` re-exposes the whole tagging option set, so parameters are deduplicated: one flag
     should be reported once, however many commands accept it.
     """
-    commands = set()
+    commands = {name for name in app if not name.startswith("-")} - BUILTIN_COMMANDS
     parameters = dict.fromkeys(_flag_names(app))
     for subapp in app.subapps:
-        name = subapp.name[0]
-        if name in BUILTIN_COMMANDS:
+        if subapp.name[0] in BUILTIN_COMMANDS:
             continue
-        commands.add(name)
         parameters.update(dict.fromkeys(_flag_names(subapp)))
     return commands, list(parameters)
 
