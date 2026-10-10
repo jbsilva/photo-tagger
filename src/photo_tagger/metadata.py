@@ -45,7 +45,7 @@ from photo_tagger.write_plan import WriteTarget, plan_writes, write_target
 
 
 # Exception types that pyexiftool raises on bad inputs or subprocess failures.
-# Centralized here to avoid seven copies of the same tuple. FileNotFoundError belongs with them:
+# Centralized here to avoid a copy at every call site. FileNotFoundError belongs with them:
 # it is what pyexiftool raises when the binary itself is missing, which is the most basic way for
 # an exiftool call to fail. Without it every read here raised a bare traceback instead of logging
 # and degrading, and every write raised instead of reporting the photo as failed.
@@ -1422,7 +1422,7 @@ class WriteResult(IntEnum):
     """
     What :func:`write_metadata` did to its target.
 
-    An IntEnum so the old bool contract still holds: FAILED is falsy, and WRITTEN equals True.
+    An IntEnum so FAILED is falsy and a caller can test the result as a bool (``if not result``).
     UNCHANGED is the case a bool cannot say: the file already carried every value, so it was not
     touched, and the undo journal must not claim it.
     """

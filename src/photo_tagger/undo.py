@@ -109,8 +109,8 @@ def list_journals(directory: Path | None = None) -> list[Path]:
     """
     Return the undo journals, newest first.
 
-    The name starts with a fixed-width UTC timestamp, so sorting by name sorts by time without stat-
-    ing every file.
+    The name starts with a fixed-width timestamp (callers pass UTC), so sorting by name sorts by
+    time without a stat of every file.
     """
     folder = runs_dir() if directory is None else directory
     try:

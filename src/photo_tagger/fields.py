@@ -80,8 +80,8 @@ class FieldSpec:
     tags: tuple[str, ...]
 
 
-# What ``photo-tagger show`` reports, in reading order. Title and description repeat the priority
-# the writer uses, so the value shown first is the one a catalog picks up.
+# What ``photo-tagger show`` reports, in reading order. Title and description use the readers'
+# tag priority (see metadata.py), so the value shown first is the one a catalog picks up.
 SHOWN_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("Title", (TAG_XMP_TITLE, TAG_IPTC_OBJECT_NAME)),
     FieldSpec(

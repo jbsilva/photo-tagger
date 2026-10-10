@@ -24,8 +24,8 @@ def parse_hierarchical_keyword(keyword: str) -> tuple[str, list[str]]:
     Parse a hierarchical keyword in format 'Child<Parent<Grandparent' to Lightroom format.
 
     Args:
-        keyword: Keyword string, either flat or hierarchical with '<' separators.
-                 Example: "Duck<Bird<Animal" or just "Landscape"
+        keyword: Keyword string, either flat or hierarchical with '<' separators ('>' is read
+                 as '<'). Example: "Duck<Bird<Animal" or just "Landscape"
 
     Returns:
         Tuple of (hierarchical_format, flat_list) where:
@@ -282,7 +282,7 @@ def merge_keywords(
         A new :class:`KeywordSet` with merged views:
         - ``subject``: all flat keywords (existing + new flattened)
         - ``hierarchical``: hierarchical keywords (existing + new hierarchical)
-        - ``weighted``: weighted flat keywords (mirrors subject)
+        - ``weighted``: weighted flat keywords, de-duplicated on its own (usually the subject terms)
 
     Note:
         Duplicate detection is case-insensitive (using casefold). Hierarchical keywords
