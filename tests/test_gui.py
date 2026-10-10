@@ -5017,9 +5017,9 @@ def test_undo_puts_back_what_a_save_wrote(
 ) -> None:
     """Undoing a run deletes the sidecars it created and frees its photos to be saved again."""
     a, b = _save_two_photos(window, tmp_path, monkeypatch)
-    window._refresh_journals()  # noqa: SLF001
+    window._undo_dialog.refresh()  # noqa: SLF001
 
-    window._run_undo(dry_run=False)  # noqa: SLF001
+    window._undo_dialog._run(dry_run=False)  # noqa: SLF001
 
     assert not a.with_suffix(".xmp").exists()
     assert not b.with_suffix(".xmp").exists()
@@ -5035,14 +5035,14 @@ def test_undo_preview_touches_nothing(
 ) -> None:
     """Preview is how you check you picked the right run before anything is rewritten."""
     a, _b = _save_two_photos(window, tmp_path, monkeypatch)
-    window._refresh_journals()  # noqa: SLF001
+    window._undo_dialog.refresh()  # noqa: SLF001
 
-    window._run_undo(dry_run=True)  # noqa: SLF001
+    window._undo_dialog._run(dry_run=True)  # noqa: SLF001
 
     assert a.with_suffix(".xmp").exists()
     assert window._items[str(a)].status == SAVED  # noqa: SLF001
     assert "Preview:" in window._status.text()  # noqa: SLF001
-    assert "What undoing would do:" in window._undo_details.toPlainText()  # noqa: SLF001
+    assert "What undoing would do:" in window._undo_dialog._details.toPlainText()  # noqa: SLF001
 
 
 def test_undo_list_shows_every_recorded_run(
@@ -5053,26 +5053,26 @@ def test_undo_list_shows_every_recorded_run(
     """One row per run, newest first, saying when it ran and how much it wrote."""
     _save_two_photos(window, tmp_path, monkeypatch)
 
-    window._refresh_journals()  # noqa: SLF001
+    window._undo_dialog.refresh()  # noqa: SLF001
 
-    assert window._journal_list.count() == 1  # noqa: SLF001
-    assert "2 files" in window._journal_list.item(0).text()  # noqa: SLF001
-    assert window._undo_button.isEnabled()  # noqa: SLF001
+    assert window._undo_dialog._journals.count() == 1  # noqa: SLF001
+    assert "2 files" in window._undo_dialog._journals.item(0).text()  # noqa: SLF001
+    assert window._undo_dialog._undo_button.isEnabled()  # noqa: SLF001
 
 
 def test_undo_list_is_empty_before_anything_is_saved(window: gui.MainWindow) -> None:
     """A fresh machine has nothing to undo, and the button says so by staying off."""
-    window._refresh_journals()  # noqa: SLF001
+    window._undo_dialog.refresh()  # noqa: SLF001
 
-    assert window._journal_list.count() == 0  # noqa: SLF001
-    assert not window._undo_button.isEnabled()  # noqa: SLF001
-    assert "No recorded runs" in window._undo_details.toPlainText()  # noqa: SLF001
+    assert window._undo_dialog._journals.count() == 0  # noqa: SLF001
+    assert not window._undo_dialog._undo_button.isEnabled()  # noqa: SLF001
+    assert "No recorded runs" in window._undo_dialog._details.toPlainText()  # noqa: SLF001
 
 
 def test_undo_without_a_selected_run_asks_for_one(window: gui.MainWindow) -> None:
     """Undo acts on one run, so it will not guess which."""
-    window._run_undo(dry_run=False)  # noqa: SLF001
-    assert "Pick a run first." in window._undo_details.toPlainText()  # noqa: SLF001
+    window._undo_dialog._run(dry_run=False)  # noqa: SLF001
+    assert "Pick a run first." in window._undo_dialog._details.toPlainText()  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -5862,13 +5862,13 @@ def test_undo_waits_for_a_run_in_progress(
 ) -> None:
     """A save in flight is writing the very files an undo would revert, so it has to finish."""
     a, _b = _save_two_photos(window, tmp_path, monkeypatch)
-    window._refresh_journals()  # noqa: SLF001
-    monkeypatch.setattr(window, "_busy", lambda: True)
+    window._undo_dialog.refresh()  # noqa: SLF001
+    monkeypatch.setattr(window._undo_dialog, "_busy", lambda: True)  # noqa: SLF001
 
-    window._run_undo(dry_run=False)  # noqa: SLF001
+    window._undo_dialog._run(dry_run=False)  # noqa: SLF001
 
     assert a.with_suffix(".xmp").exists()
-    assert "Wait for the run in progress" in window._undo_details.toPlainText()  # noqa: SLF001
+    assert "Wait for the run in progress" in window._undo_dialog._details.toPlainText()  # noqa: SLF001
 
 
 def test_saving_writes_the_vocabulary_spelling_verbatim(

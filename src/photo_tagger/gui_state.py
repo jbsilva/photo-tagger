@@ -103,7 +103,7 @@ if TYPE_CHECKING:
 
     from photo_tagger.diagnostics import CheckResult
     from photo_tagger.providers import ProviderName
-    from photo_tagger.undo import UndoResult
+    from photo_tagger.undo import UndoResult, WriteRecord
     from photo_tagger.vocabulary import Vocabulary
 
 
@@ -1814,6 +1814,22 @@ def undo_summary(results: Iterable[UndoResult]) -> str:
     if not left:
         return f"{restored}."
     return _("{restored}; left {left} alone.").format(restored=restored, left=left)
+
+
+def reverted_images(records: Iterable[WriteRecord], results: Iterable[UndoResult]) -> list[str]:
+    """
+    Name the photos an undo put back, each once, in the order their writes were reverted.
+
+    A photo is back once any file written for it was restored or deleted. Everything read from such
+    a photo is stale afterwards, so the window reads it again.
+    """
+    images = {record.target: record.image for record in records}
+    reverted = (
+        images[str(result.target)]
+        for result in results
+        if result.action in UNDO_OK_ACTIONS and str(result.target) in images
+    )
+    return list(dict.fromkeys(reverted))
 
 
 def undo_details_text(results: Iterable[UndoResult], *, dry_run: bool) -> str:

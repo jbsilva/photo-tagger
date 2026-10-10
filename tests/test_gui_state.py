@@ -150,6 +150,7 @@ from photo_tagger.gui_state import (
     resolve_extra_tags,
     reveal_command,
     reveal_label,
+    reverted_images,
     review_summary,
     save_options_for,
     search_summary,
@@ -191,7 +192,7 @@ from photo_tagger.models import KeywordSet
 from photo_tagger.pacing import PacingPlan
 from photo_tagger.pipeline import MAX_TRACKED_DROPPED_TERMS
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES
-from photo_tagger.undo import CHANGED, DELETED, RESTORED, UndoResult
+from photo_tagger.undo import CHANGED, DELETED, RESTORED, UndoResult, WriteRecord
 from photo_tagger.vocabulary import Vocabulary
 
 
@@ -2050,6 +2051,27 @@ def test_undo_summary_counts_what_was_put_back() -> None:
     assert undo_summary(all_good) == "Put back 2 files."
     mixed = [*all_good, UndoResult(Path("/c.xmp"), CHANGED, "changed since the run")]
     assert undo_summary(mixed) == "Put back 2 files; left 1 alone."
+
+
+def test_reverted_images_names_each_photo_an_undo_put_back_once() -> None:
+    """A photo whose sidecar and file were both put back is named once; a refused one is not."""
+    records = [
+        WriteRecord(image="/p/a.cr3", target="/p/a.xmp", created=True),
+        WriteRecord(image="/p/a.cr3", target="/p/a.cr3", created=False),
+        WriteRecord(image="/p/b.cr3", target="/p/b.xmp", created=True),
+    ]
+    results = [
+        UndoResult(Path("/p/a.xmp"), DELETED),
+        UndoResult(Path("/p/a.cr3"), RESTORED),
+        UndoResult(Path("/p/b.xmp"), CHANGED, "edited since"),
+    ]
+    assert reverted_images(records, results) == ["/p/a.cr3"]
+
+
+def test_reverted_images_ignores_a_result_no_record_explains() -> None:
+    """An outcome for a file the journal never listed names no photo."""
+    results = [UndoResult(Path("/elsewhere/c.xmp"), DELETED)]
+    assert reverted_images([], results) == []
 
 
 def test_undo_details_text_lists_what_happened_to_each_file() -> None:

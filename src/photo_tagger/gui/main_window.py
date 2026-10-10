@@ -113,6 +113,7 @@ from photo_tagger.gui.keyword_rules import KeywordRulesDialog
 from photo_tagger.gui.pacing import PacingDialog
 from photo_tagger.gui.save_options import SaveOptionsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
+from photo_tagger.gui.undo_dialog import UndoDialog
 from photo_tagger.gui.viewer import ImageViewerDialog
 from photo_tagger.gui.vocabulary_builder import VocabularyBuilderDialog
 from photo_tagger.gui.widgets import (
@@ -169,7 +170,6 @@ from photo_tagger.gui_state import (
     SORT_STATUS,
     SORT_TAGGED,
     SORT_TYPE,
-    UNDO_OK_ACTIONS,
     WORKING,
     Connection,
     FolderNode,
@@ -210,7 +210,6 @@ from photo_tagger.gui_state import (
     format_existing_keywords,
     harmonize_summary,
     hierarchy_preview,
-    journal_label,
     keeps_copyright,
     keys_by_check,
     keyword_diff,
@@ -254,8 +253,6 @@ from photo_tagger.gui_state import (
     telemetry_toggle_note,
     thumb_badges,
     tooltip,
-    undo_details_text,
-    undo_summary,
     vocabulary_summary,
     watch_status_text,
     wrap_tooltip,
@@ -296,7 +293,7 @@ from photo_tagger.pacing import SECONDS_PER_MINUTE
 from photo_tagger.pipeline import FAILURE_OTHER
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
-from photo_tagger.undo import UndoError, list_journals, open_journal, read_journal, undo_run
+from photo_tagger.undo import open_journal
 from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
 
 
@@ -304,7 +301,7 @@ if TYPE_CHECKING:
     # Annotation-only on Python 3.14 (lazy), so no runtime import is needed.
     from collections.abc import Callable
 
-    from photo_tagger.undo import UndoJournal, UndoResult, WriteRecord
+    from photo_tagger.undo import UndoJournal
 
 
 # The on-screen preview in the detail pane. Not what the model sees: that is
@@ -594,7 +591,10 @@ class MainWindow(QMainWindow):
         self._builder_dialog.status.connect(self._status.setText)
         self._builder_dialog.used.connect(self._count)
         self._builder_dialog.use_vocabulary.connect(self._keyword_rules_dialog.load_vocabulary)
-        self._undo_dialog = self._build_undo_dialog()
+        self._undo_dialog = UndoDialog(self, busy=self._busy)
+        self._undo_dialog.status.connect(self._status.setText)
+        self._undo_dialog.used.connect(self._count)
+        self._undo_dialog.undone.connect(self._on_undone)
         self._watch_dialog = self._build_watch_dialog()
 
     def _init_worker_state(self) -> None:
@@ -4517,152 +4517,22 @@ class MainWindow(QMainWindow):
 
     # --- undo --------------------------------------------------------------------------------
 
-    def _build_undo_dialog(self) -> QDialog:
-        """Build the dialog behind Tools > Undo Writes."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle(_("Undo writes"))
-        dialog.setMinimumWidth(660)
-        box = QVBoxLayout(dialog)
-        intro = QLabel(
-            _(
-                "Every recorded run, newest first, from this window and from the command line. "
-                "Undoing deletes the sidecars a run created and restores the files it overwrote "
-                "from their ExifTool backup.",
-            ),
-        )
-        intro.setWordWrap(True)
-        box.addWidget(intro)
-
-        self._journal_list = QListWidget()
-        self._journal_list.setMinimumHeight(150)
-        box.addWidget(self._journal_list, stretch=1)
-
-        self._undo_force = QCheckBox(_("Also revert files changed since the run"))
-        self._undo_force.setToolTip(
-            tooltip(
-                "Off by default: a file that changed since the run was edited afterwards, and "
-                "that edit is not this run's to undo.",
-            ),
-        )
-        box.addWidget(self._undo_force)
-
-        self._undo_details = readonly_box(120)
-        self._undo_details.setPlaceholderText(_("What happened to each file appears here."))
-        box.addWidget(self._undo_details)
-
-        preview = QPushButton(_("Preview"))
-        preview.setToolTip(
-            tooltip("Report what undoing would put back, without touching anything."),
-        )
-        preview.clicked.connect(lambda: self._run_undo(dry_run=True))
-        self._undo_button = QPushButton(_("Undo"))
-        self._undo_button.setObjectName("primary")
-        self._undo_button.clicked.connect(lambda: self._run_undo(dry_run=False))
-        close = QPushButton(_(CLOSE_LABEL))
-        close.clicked.connect(dialog.accept)
-        buttons = QHBoxLayout()
-        buttons.addWidget(preview)
-        buttons.addStretch(1)
-        buttons.addWidget(close)
-        buttons.addWidget(self._undo_button)
-        box.addLayout(buttons)
-        return dialog
-
     def _show_undo_dialog(self) -> None:
         """Open the undo dialog on a freshly-read list of recorded runs."""
-        self._refresh_journals()
-        self._undo_dialog.exec()
+        self._undo_dialog.show_runs()
 
-    def _refresh_journals(self) -> None:
-        """List the recorded runs, newest first, with how many files each one wrote."""
-        self._journal_list.clear()
-        for path in list_journals():
-            try:
-                entries = len(read_journal(path))
-            except UndoError as exc:  # pragma: no cover - one unreadable journal, not the list
-                logger.warning("gui_journal_unreadable", file=str(path), error=str(exc))
-                continue
-            entry = QListWidgetItem(journal_label(path, entries))
-            entry.setData(PATH_ROLE, str(path))
-            self._journal_list.addItem(entry)
-        listed = self._journal_list.count()
-        if listed:
-            self._journal_list.setCurrentRow(0)
-        else:
-            self._undo_details.setPlainText(_("No recorded runs to undo."))
-        self._undo_button.setEnabled(bool(listed))
-
-    def _run_undo(self, *, dry_run: bool) -> None:
-        """Put back (or preview putting back) everything the selected run wrote."""
-        self._count("undo_preview" if dry_run else "undo")
-        if not dry_run and self._busy():
-            # A save in flight is writing the very files an undo would be reverting.
-            self._undo_details.setPlainText(_("Wait for the run in progress to finish first."))
-            return
-        entry = self._journal_list.currentItem()
-        if entry is None:
-            self._undo_details.setPlainText(_("Pick a run first."))
-            return
-        try:
-            records = read_journal(Path(entry.data(PATH_ROLE)))
-        except UndoError as exc:
-            QMessageBox.warning(self._undo_dialog, _("Could not read that run"), str(exc))
-            return
-        if not records:
-            self._undo_details.setPlainText(_("That run recorded no writes."))
-            return
-        if not dry_run and not self._confirm_undo(len(records)):
-            return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            results = undo_run(records, force=self._undo_force.isChecked(), dry_run=dry_run)
-        finally:
-            QApplication.restoreOverrideCursor()
-        self._undo_details.setPlainText(undo_details_text(results, dry_run=dry_run))
-        summary = undo_summary(results)
-        self._status.setText(
-            _("Preview: {summary}").format(summary=summary) if dry_run else summary,
-        )
-        if not dry_run:
-            self._apply_undo_results(records, results)
-            self._refresh_journals()
-
-    def _confirm_undo(self, count: int) -> bool:
-        """Ask before reverting: this rewrites files, and the run may not be the one in mind."""
-        reply = QMessageBox.question(
-            self._undo_dialog,
-            _("Undo this run?"),
-            ngettext(
-                "Put back {n} file? Sidecars the run created are deleted, and files it "
-                "overwrote are restored from their backup.",
-                "Put back {n} files? Sidecars the run created are deleted, and files it "
-                "overwrote are restored from their backup.",
-                count,
-            ).format(n=count),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return reply == QMessageBox.StandardButton.Yes
-
-    def _apply_undo_results(
-        self,
-        records: list[WriteRecord],
-        results: list[UndoResult],
-    ) -> None:
-        """Put the photos whose writes were reverted back into their pre-save state."""
-        images = {record.target: record.image for record in records}
+    def _on_undone(self, images: list[str]) -> None:
+        """Put the photos an undo reverted back into their pre-save state."""
         touched = False
-        for result in results:
-            if result.action not in UNDO_OK_ACTIONS:
-                continue
-            item = self._items.get(images.get(str(result.target), ""))
+        for key in images:
+            item = self._items.get(key)
             if item is None:
                 continue
             # What is on the file changed under us, so everything read from it is stale: the
             # proposal is still worth keeping, the file's own metadata is not.
             item.status = READY if item.has_proposal else PENDING
             item.known_fields = None
-            self._scan_tried.discard(str(item.path))  # the file changed, so read it again
+            self._scan_tried.discard(key)  # the file changed, so read it again
             item.loaded = False
             item.sources_read = False
             self._refresh_status_cell(item)
