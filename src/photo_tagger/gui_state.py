@@ -287,6 +287,8 @@ class Proposal:
     # Whether a hint went into the prompt, and whether a second call rewrote mixed-script text.
     hinted: bool = False
     repaired: bool = False
+    # The first answer came from the cache, even when a repair then made a call of its own.
+    replayed: bool = False
 
 
 def expand_inputs(

@@ -4569,6 +4569,53 @@ def test_a_refresh_run_replaces_the_answer_it_read_past(
     assert replayed[0].from_cache is True
 
 
+def test_a_cached_mixed_answer_is_repaired_when_the_setting_is_on(
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Turning the repair on fixes a mixed answer cached before, and the fix replaces it."""
+    _stub_generation(monkeypatch)
+    _patch_gui(monkeypatch, "analyze_image_with_ai", lambda **_k: _GUI_MIXED)
+    img = _jpeg(tmp_path / "a.jpg")
+    cache_file = tmp_path / "cache.sqlite"
+    first = workers.GenerateWorker("lmstudio", "m", None, [img], cache_file=cache_file)
+    first.file_done.connect(lambda _p: None)
+    first.run()  # caches the mixed answer, with the repair off
+
+    _patch_gui(monkeypatch, "analyze_image_with_ai", lambda **_k: _GUI_REPAIRED)
+    options = GenerateOptions(repair_language=True)
+    again = workers.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        [img],
+        cache_file=cache_file,
+        options=options,
+    )
+    fixed: list[Proposal] = []
+    again.file_done.connect(fixed.append)
+    again.run()
+    assert fixed[0].title == _GUI_REPAIRED.title
+    assert fixed[0].from_cache is False
+
+    _patch_gui(monkeypatch, "analyze_image_with_ai", lambda **_k: pytest.fail("no call expected"))
+    later = workers.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        [img],
+        cache_file=cache_file,
+        options=options,
+    )
+    replayed: list[Proposal] = []
+    later.file_done.connect(replayed.append)
+    later.run()
+
+    assert replayed[0].title == _GUI_REPAIRED.title
+    assert replayed[0].from_cache is True
+
+
 def test_hinted_photo_does_not_poison_the_shared_cache(
     qapp: QApplication,
     tmp_path: Path,

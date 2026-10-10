@@ -171,6 +171,15 @@ def test_review_tally_counts_edits_hints_flags_and_waiting(tmp_path: Path) -> No
 # --- runs ------------------------------------------------------------------------------------
 
 
+def test_a_repaired_replay_counts_only_the_repair_call(tmp_path: Path) -> None:
+    """The first answer came from the cache, so only the repair reached the model."""
+    a = tmp_path / "a.jpg"
+    tally = _tally()
+    tally.generated(str(a), _proposal(a, repaired=True, replayed=True))
+
+    assert (tally.language_repairs, tally.cache_hits, tally.inference_calls) == (1, 0, 1)
+
+
 def test_a_generation_run_counts_passes_repairs_and_failures(tmp_path: Path) -> None:
     """The retry pass saves a photo, the mixed-script pass fixes another, one stays failed."""
     a, b, c = (tmp_path / name for name in ("a.jpg", "b.jpg", "c.jpg"))

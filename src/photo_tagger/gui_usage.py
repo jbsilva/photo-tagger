@@ -336,7 +336,8 @@ class RunTally:
         self.output_tokens += proposal.output_tokens
         self.total_tokens += proposal.total_tokens
         if not proposal.from_cache:
-            self.inference_calls += 1 + int(proposal.repaired)
+            # A repaired replay made only the repair call; the first one was an earlier run's.
+            self.inference_calls += int(not proposal.replayed) + int(proposal.repaired)
             self.inference_seconds += proposal.seconds
             if proposal.seconds > 0:
                 self.photo_seconds.append(proposal.seconds)

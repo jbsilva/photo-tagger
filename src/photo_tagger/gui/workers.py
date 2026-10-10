@@ -10,6 +10,7 @@ harmonization, the vocabulary build, and the folder watch each get their own, so
 another.
 """
 
+from dataclasses import replace
 from itertools import islice
 from typing import TYPE_CHECKING
 
@@ -302,6 +303,34 @@ class GenerateWorker(QObject):
             return inference.with_cost_of(repaired), True
         return repaired.with_cost_of(inference), True
 
+    def _repair_cached(
+        self,
+        cached: InferenceResult,
+        agent: object,
+        path: Path,
+        cache: InferenceCache | None,
+        content_key: str | None,
+    ) -> tuple[InferenceResult, bool]:
+        """
+        Repair a replayed answer that mixes scripts, when the setting is on, and store the fix.
+
+        An answer cached before the setting was turned on would otherwise come back mixed on every
+        run, as in the CLI pipeline. An earlier run paid for the cached call, so the proposal counts
+        only the repair. A repair that does not help leaves the cache as it was.
+        """
+        if not self._repair_language or find_in_result(cached) is None:
+            return cached, False
+        jpeg = prepare_image_for_agent(path, max_size=self._jpeg_dimensions)
+        unpaid = replace(cached, input_tokens=0, output_tokens=0, total_tokens=0, seconds=0.0)
+        result, repaired = self._repair_one(unpaid, agent, jpeg, file_name=path.name)
+        if not repaired:
+            return cached, False  # the call failed: a plain replay, with what it cost back then
+        text = (result.title, result.description, result.keywords)
+        helped = text != (cached.title, cached.description, cached.keywords)
+        if helped and cache is not None and content_key is not None:
+            safe_cache_put(cache, content_key, result, file_name=path.name)
+        return result, repaired
+
     def _generate_one(self, agent: object, path: Path, cache: InferenceCache | None) -> Proposal:
         """Read existing metadata, run the model (or hit the cache), and assemble a proposal."""
         # The content hash rides along in the context read (one exiftool call), so the cache
@@ -353,6 +382,7 @@ class GenerateWorker(QObject):
                 safe_cache_put(cache, content_key, inference, file_name=path.name)
         else:
             logger.info("gui_cache_hit", file=path.name)
+            inference, repaired = self._repair_cached(inference, agent, path, cache, content_key)
         # After the cache, not before it: a cached answer is the model's raw output, so a
         # vocabulary chosen (or made stricter) since it was stored still applies to it.
         snapped = apply_vocabulary(
@@ -388,7 +418,9 @@ class GenerateWorker(QObject):
             location_tags=dict(context.location_tags),
             gps_position=context.gps_position,
             existing_copyright=context.existing_copyright,
-            from_cache=cached is not None,
+            # A replay that needed a repair paid for a model call, so it is no cache hit.
+            from_cache=cached is not None and not repaired,
+            replayed=cached is not None,
             input_tokens=inference.input_tokens,
             output_tokens=inference.output_tokens,
             total_tokens=inference.total_tokens,
