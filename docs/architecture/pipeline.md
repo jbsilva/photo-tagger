@@ -49,8 +49,8 @@ instant, and `--older-than` drops files on or after it. `--skip-tagged` uses one
 !!! tip
 
     Pair `--append-to-skip-file run.txt` on one run with `--skip-from run.txt` on the next. The appender
-    records every successfully tagged filename as work progresses, so a re-run after a crash skips
-    finished photos without redoing them.
+    records the full path of every successfully tagged photo as work progresses, so a re-run after a
+    crash skips finished photos without redoing them.
 
 ## Per-photo steps
 

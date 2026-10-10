@@ -633,7 +633,10 @@ class ArtifactConfig:
         Parameter(
             name=("--skip-from",),
             validator=validators.Path(exists=True, file_okay=True, dir_okay=False),
-            help="Path to newline-delimited text file listing filenames to skip",
+            help=(
+                "Path to a newline-delimited text file that lists the photos to skip: bare "
+                "filenames or full paths, matched case-insensitively"
+            ),
         ),
     ] = None
     append_to_skip_file: Annotated[

@@ -46,14 +46,14 @@ All checks passed.
 
 `-i/--input` is required and repeatable: pass it once per file or directory you want to process.
 
-| Flag                         | Default    | Env var | Description                                                                                                             |
-| ---------------------------- | ---------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `-i`, `--input` PATH         | (required) | `-`     | One or more files, directories, or both. Repeat the flag for each one.                                                  |
-| `--ext`, `--extensions` LIST | `cr3,jpg`  | `-`     | Comma-separated list of extensions to scan for in directories (case-insensitive).                                       |
-| `-r`, `--recursive`          | `false`    | `-`     | Recurse into subdirectories while scanning input directories.                                                           |
-| `-w`, `--workers` N          | `1`        | `-`     | Process N photos at once with a thread pool. The model server is usually the bottleneck.                                |
-| `--skip-from` PATH           | none       | `-`     | Skip the filenames listed in PATH, one per line. A line that starts with `#` is a comment.                              |
-| `--append-to-skip-file` PATH | none       | `-`     | Append each successfully tagged filename to PATH as the run continues. If PATH does not exist, photo-tagger creates it. |
+| Flag                         | Default    | Env var | Description                                                                                                                                   |
+| ---------------------------- | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-i`, `--input` PATH         | (required) | `-`     | One or more files, directories, or both. Repeat the flag for each one.                                                                        |
+| `--ext`, `--extensions` LIST | `cr3,jpg`  | `-`     | Comma-separated list of extensions to scan for in directories (case-insensitive).                                                             |
+| `-r`, `--recursive`          | `false`    | `-`     | Recurse into subdirectories while scanning input directories.                                                                                 |
+| `-w`, `--workers` N          | `1`        | `-`     | Process N photos at once with a thread pool. The model server is usually the bottleneck.                                                      |
+| `--skip-from` PATH           | none       | `-`     | Skip the photos listed in PATH, one per line: a bare filename or a full path, matched without case. A line that starts with `#` is a comment. |
+| `--append-to-skip-file` PATH | none       | `-`     | Append the full path of each successfully tagged photo to PATH as the run continues. If PATH does not exist, photo-tagger creates it.         |
 
 ## Provider
 
@@ -711,10 +711,11 @@ though: treat the output as a proposal to read, which is what the whole file is 
 
 Three flags cooperate to skip work you already did and to resume a run that stopped partway through:
 
-- `--skip-from PATH` reads a list of filenames (one per line, `#` comments allowed) and drops any
-    matching files from the batch before processing starts.
-- `--append-to-skip-file PATH` appends each successfully tagged filename to PATH as the run
-    continues. If the file does not exist, it creates one.
+- `--skip-from PATH` reads a list of photos (one per line, `#` comments allowed) and drops any
+    matching files from the batch before processing starts. A line is a bare filename, which matches
+    that name in any folder, or a full path. The match ignores case.
+- `--append-to-skip-file PATH` appends the full path of each successfully tagged photo to PATH as
+    the run continues. If the file does not exist, it creates one.
 - `--skip-tagged` inspects each file's existing metadata and skips anything that already has
     keywords, a title, or a description (in the image or its XMP sidecar). When you want the skip
     decision to come from the files themselves, rather than from a list, use it instead.

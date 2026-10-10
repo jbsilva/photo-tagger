@@ -247,10 +247,11 @@ Key options:
 
 Three flags work together so you can re-run on a folder without redoing finished work:
 
-- `--skip-from FILE`: skip filenames listed in `FILE` (one per line, with `#` marking a comment).
-- `--append-to-skip-file FILE`: append each successfully tagged filename to `FILE` as the run
-  progresses. If `FILE` is missing, photo-tagger creates it, so you can pass the same path to both
-  flags from the very first run.
+- `--skip-from FILE`: skip the photos listed in `FILE`, one per line, with `#` marking a comment. A
+  line is a bare filename or a full path, and the match ignores case.
+- `--append-to-skip-file FILE`: append the full path of each successfully tagged photo to `FILE` as
+  the run progresses. If `FILE` is missing, photo-tagger creates it, so you can pass the same path
+  to both flags from the very first run.
 - `--skip-tagged`: skip files that already have keywords, a description, or a title in either the
   image or its XMP sidecar. It catches photos tagged in Lightroom or by hand without needing a skip
   list at all.

@@ -364,9 +364,10 @@ photo-tagger \
   --append-to-skip-file ~/Pictures/done.txt
 ```
 
-`--append-to-skip-file` adds each successfully tagged filename as the run progresses, and
-`--skip-from` drops those filenames on the next run. The file uses one filename per line. Lines
-starting with `#` are comments.
+`--append-to-skip-file` adds the full path of each successfully tagged photo as the run progresses,
+and `--skip-from` drops those photos on the next run. The file holds one photo per line: a full
+path, or a bare filename that matches in any folder. The match ignores case. Lines starting with `#`
+are comments.
 
 ## Tag a mixed folder, skipping already-tagged files
 
