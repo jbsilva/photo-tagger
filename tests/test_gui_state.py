@@ -105,7 +105,6 @@ from photo_tagger.gui_state import (
     foreign_terms_note,
     format_duration,
     format_existing_keywords,
-    group_by_parent,
     gui_cache_namespace,
     harmonize_sessions,
     harmonize_summary,
@@ -229,15 +228,6 @@ def test_new_paths_filters_already_present() -> None:
     existing = [Path("/a.jpg"), Path("/b.jpg")]
     found = [Path("/b.jpg"), Path("/c.jpg"), Path("/c.jpg"), Path("/d.jpg")]
     assert new_paths(existing, found) == [Path("/c.jpg"), Path("/d.jpg")]
-
-
-def test_group_by_parent_groups_and_preserves_order() -> None:
-    """Files group under their parent folder in first-seen order."""
-    paths = [Path("/x/a.jpg"), Path("/y/b.jpg"), Path("/x/c.jpg")]
-    assert group_by_parent(paths) == [
-        (Path("/x"), [Path("/x/a.jpg"), Path("/x/c.jpg")]),
-        (Path("/y"), [Path("/y/b.jpg")]),
-    ]
 
 
 def test_parse_keyword_lines_strips_and_drops_blanks() -> None:

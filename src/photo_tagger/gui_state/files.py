@@ -47,14 +47,6 @@ def new_paths(existing: Iterable[Path], found: Iterable[Path]) -> list[Path]:
     return out
 
 
-def group_by_parent(paths: Iterable[Path]) -> list[tuple[Path, list[Path]]]:
-    """Group file paths under their parent directory, first-seen order preserved."""
-    groups: dict[Path, list[Path]] = {}
-    for path in paths:
-        groups.setdefault(path.parent, []).append(path)
-    return list(groups.items())
-
-
 def _extension(path: Path) -> str:
     """Return a path's extension, lowercased and without the dot ("" when it has none)."""
     return path.suffix.lstrip(".").lower()

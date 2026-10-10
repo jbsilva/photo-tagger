@@ -5,7 +5,6 @@ import pytest
 from photo_tagger.errors import FieldError
 from photo_tagger.fields import (
     SHOWN_FIELDS,
-    SHOWN_TAGS,
     TAG_EXIF_ARTIST,
     TAG_EXIF_COPYRIGHT,
     TAG_IPTC_BY_LINE,
@@ -250,12 +249,6 @@ def test_build_parses_every_assignment() -> None:
     """Repeated --set options accumulate into one tag map."""
     fields = build_extra_fields(assignments=["A=1", "B=2"])
     assert fields.resolve(_taken(2025)) == {"A": "1", "B": "2"}
-
-
-def test_shown_tags_covers_every_field_once() -> None:
-    """The one read behind ``show`` asks for each tag a shown field can come from, exactly once."""
-    assert set(SHOWN_TAGS) == {tag for spec in SHOWN_FIELDS for tag in spec.tags}
-    assert len(SHOWN_TAGS) == len(set(SHOWN_TAGS))
 
 
 def test_shown_fields_report_the_rights_tags() -> None:

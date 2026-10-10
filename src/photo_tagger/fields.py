@@ -101,11 +101,6 @@ SHOWN_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("GPS", ("Composite:GPSPosition",)),
 )
 
-# Every tag the shown fields can come from, asked for in one read.
-SHOWN_TAGS: tuple[str, ...] = tuple(
-    dict.fromkeys(tag for spec in SHOWN_FIELDS for tag in spec.tags),
-)
-
 
 def _parsed(template: str | None, flag: str) -> Template | None:
     """Parse a notice template, None and blank ones staying unwritten."""

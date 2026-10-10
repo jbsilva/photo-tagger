@@ -290,8 +290,6 @@ def build_system_prompt(output_language: str = DEFAULT_OUTPUT_LANGUAGE) -> str:
     return _SYSTEM_PROMPT_TEMPLATE.format(language=output_language)
 
 
-DEFAULT_SYSTEM_PROMPT = build_system_prompt()
-
 DEFAULT_USER_PROMPT = (
     "Execute your mission: analyze this image and generate the structured metadata."
 )

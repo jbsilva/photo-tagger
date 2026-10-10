@@ -4,7 +4,6 @@ import pytest
 
 from photo_tagger.config import (
     DEFAULT_OUTPUT_LANGUAGE,
-    DEFAULT_SYSTEM_PROMPT,
     _env_float,
     _env_int,
     build_repair_prompt,
@@ -14,12 +13,11 @@ from photo_tagger.config import (
 
 
 def test_build_system_prompt_defaults_to_english() -> None:
-    """With no argument the prompt asks for English and is what DEFAULT_SYSTEM_PROMPT holds."""
+    """With no argument the prompt asks for English."""
     prompt = build_system_prompt()
     assert DEFAULT_OUTPUT_LANGUAGE == "English"
     assert "Title Case, English." in prompt
     assert "English only, in every field" in prompt
-    assert prompt == DEFAULT_SYSTEM_PROMPT
 
 
 def test_build_system_prompt_swaps_in_the_requested_language() -> None:
