@@ -20,6 +20,7 @@ from photo_tagger.fields import SHOWN_FIELDS
 from photo_tagger.metadata import (
     FIELD_KEYWORDS,
     FIELD_TITLE,
+    SOFTWARE_AGENT,
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
     WriteResult,
@@ -91,6 +92,37 @@ def test_saving_the_same_values_again_leaves_the_file_alone(
 
     assert again == WriteResult.UNCHANGED
     assert target.stat().st_mtime_ns == before
+
+
+def test_a_save_stamps_the_software_and_keeps_the_camera_firmware(tmp_path: Path) -> None:
+    """
+    A write names photo-tagger in ProcessingSoftware and in the history, and leaves Software alone.
+
+    Software holds the camera's firmware. A second identical save writes nothing, so it adds no
+    second history entry.
+    """
+    img = _write_jpeg(tmp_path / "img.jpg")
+    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
+        et.set_tags(
+            files=[str(img)],
+            tags={"EXIF:Software": "Ver.1.00"},
+            params=["-overwrite_original"],
+        )
+
+    for _ in range(2):
+        write_metadata(img, KeywordSet(subject=["Frog"]), backup=False, use_sidecar=False)
+
+    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
+        block = et.get_tags(
+            files=[str(img)],
+            tags=["EXIF:Software", "EXIF:ProcessingSoftware", "XMP:History"],
+            params=["-struct"],
+        )[0]
+    assert block["EXIF:Software"] == "Ver.1.00"
+    assert block["EXIF:ProcessingSoftware"] == SOFTWARE_AGENT
+    [event] = block["XMP:History"]
+    assert event["SoftwareAgent"] == SOFTWARE_AGENT
+    assert event["Changed"] == "/metadata"
 
 
 def test_metadata_targets_returns_empty_for_missing_file(tmp_path: Path) -> None:

@@ -566,8 +566,9 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
     photo was taken (its EXIF capture date, falling back to the file's own timestamp), so one
     command stamps a decade of shoots correctly.
 
-    Nothing else on the photo is touched: no keyword, title, or description is read or rewritten.
-    Writes are recorded, so ``photo-tagger undo`` puts back a run that went to the wrong folder.
+    No keyword, title, or description is read or rewritten. Like every save, a write also names
+    photo-tagger in the file (ProcessingSoftware, and an xmpMM:History event). Writes are recorded,
+    so ``photo-tagger undo`` puts back a run that went to the wrong folder.
 
     Exit status: 1 when nothing was asked for, no photo matched, or any write failed.
 

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     from photo_tagger.fields import FieldSpec
 
+from photo_tagger import __version__
 from photo_tagger.config import (
     CAMERA_TAGS,
     CITY_TAGS,
@@ -1180,6 +1181,51 @@ def _build_write_payload(
     return payload
 
 
+# The name every save stamps into the files it changes, as digiKam and Lightroom do.
+SOFTWARE_AGENT = f"photo-tagger {__version__}"
+
+# IFD0 ProcessingSoftware (0x000b) names the program that edited the photo after the camera, which
+# is what digiKam writes. IFD0 Software (0x0131) is not touched: it holds the camera's firmware,
+# and a metadata edit is no reason to lose it. xmp:CreatorTool names the tool that made the image,
+# so it is left alone too.
+TAG_EXIF_PROCESSING_SOFTWARE = "EXIF:ProcessingSoftware"
+
+
+def _software_stamp(
+    payload: Mapping[str, str | list[str]],
+    *,
+    use_sidecar: bool,
+) -> dict[str, str]:
+    """
+    Return the tag that names photo-tagger as the program behind a save.
+
+    Empty for a sidecar, which holds XMP only, and when *payload* already names the tag (a ``--set``
+    by hand wins).
+    """
+    if use_sidecar or TAG_EXIF_PROCESSING_SOFTWARE in payload:
+        return {}
+    return {TAG_EXIF_PROCESSING_SOFTWARE: SOFTWARE_AGENT}
+
+
+def history_event_param(when: datetime) -> str:
+    """
+    Return the ExifTool argument that appends one save to the file's ``xmpMM:History``.
+
+    The event reads the way Lightroom logs a metadata save. The history is a list, so it goes in
+    as a parameter with ``+=``: pyexiftool's tag map can only replace a tag.
+
+    Examples:
+        >>> history_event_param(datetime(2026, 9, 24, 10, 0, tzinfo=UTC)).startswith(
+        ...     "-XMP-xmpMM:History+={Action=saved,When=2026-09-24T10:00:00+00:00,"
+        ... )
+        True
+    """
+    return (
+        f"-XMP-xmpMM:History+={{Action=saved,When={when.isoformat(timespec='seconds')},"
+        f"SoftwareAgent={SOFTWARE_AGENT},Changed=/metadata}}"
+    )
+
+
 def is_raw_file(image_path: Path) -> bool:
     """
     Report whether *image_path* looks like a camera RAW file, by extension alone.
@@ -1504,7 +1550,8 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
 
     Only the tags whose value differs from what the target already carries are written. ExifTool
     rewrites a file even for identical values, which moves its mtime, and a backup tool such as
-    rsync then copies an unchanged photo again.
+    rsync then copies an unchanged photo again. A write that does happen also names photo-tagger
+    as its software (see :data:`SOFTWARE_AGENT`).
 
     Args:
         image_path: Path to the image file. The sidecar shares its name with a `.xmp` extension.
@@ -1545,9 +1592,15 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
             if not pending:
                 logger.info("metadata_unchanged", target=str(target_path))
                 return WriteResult.UNCHANGED
-            set_kwargs: dict[str, Any] = {"tags": pending, "files": [str(target_path)]}
-            if not backup:
-                set_kwargs["params"] = ["-overwrite_original"]
+            # The stamp joins only a write that happens anyway. Compared like the rest, it would
+            # never match (the history grows with every save), and no file would stay untouched.
+            params: list[str] = [] if backup else ["-overwrite_original"]
+            params.append(history_event_param(datetime.now().astimezone()))
+            set_kwargs: dict[str, Any] = {
+                "tags": pending | _software_stamp(payload, use_sidecar=use_sidecar),
+                "files": [str(target_path)],
+                "params": params,
+            }
             _set_tags(helper, set_kwargs, target_path)
     except _EXIFTOOL_ERRORS as e:
         logger.exception("xmp_write_failed", error=str(e), target=str(target_path))

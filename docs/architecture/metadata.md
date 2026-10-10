@@ -140,6 +140,22 @@ values, which moves the file's mtime. A backup tool such as rsync then copies an
 again. A file that a save did not touch is also left out of the undo journal. A tag that the
 comparison cannot match to a read (a group other than EXIF, IPTC, or XMP) is always written.
 
+### Software stamp
+
+A save that writes a file also names photo-tagger and its version in that file, as digiKam and
+Lightroom do. The comparison above ignores the stamp, so a file with no changed values gets no
+stamp.
+
+| Tag                       | Target      | Value                                                     |
+| ------------------------- | ----------- | --------------------------------------------------------- |
+| `EXIF:ProcessingSoftware` | Photo only  | `photo-tagger X.Y.Z`                                      |
+| `XMP-xmpMM:History`       | Photo, .xmp | A new event: `saved`, the time, the name, and `/metadata` |
+
+Each save adds one event to the history, so the file keeps a log of its edits. `EXIF:Software` is
+not changed. It holds the name and firmware version of the camera, and a metadata edit is no reason
+to lose that. `xmp:CreatorTool` is also not changed, because it names the tool that made the image.
+If you name `EXIF:ProcessingSoftware` with `--set`, your value wins.
+
 ### Fields the model has no part in
 
 `photo_tagger.fields` holds the other half of the payload: the metadata only the photographer knows.

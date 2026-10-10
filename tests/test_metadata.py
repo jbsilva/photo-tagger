@@ -15,8 +15,10 @@ from photo_tagger.metadata import (
     FIELD_DESCRIPTION,
     FIELD_KEYWORDS,
     FIELD_TITLE,
+    SOFTWARE_AGENT,
     SOURCE_IMAGE,
     SOURCE_SIDECAR,
+    TAG_EXIF_PROCESSING_SOFTWARE,
     WriteResult,
     _block_has_indicator,
     _build_write_payload,
@@ -28,6 +30,7 @@ from photo_tagger.metadata import (
     find_field_presence,
     find_tagged_images,
     format_metadata_value,
+    history_event_param,
     iter_field_presence,
     managed_helper,
     parse_sidecar_overrides,
@@ -391,7 +394,60 @@ def test_write_metadata_always_writes_a_tag_it_cannot_compare(tmp_path: Path) ->
     with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
         write_metadata(img, KeywordSet(), extra=extra, use_sidecar=False)
 
-    assert set(helper.set_tags.call_args.kwargs["tags"]) == set(extra)
+    assert set(helper.set_tags.call_args.kwargs["tags"]) == {*extra, TAG_EXIF_PROCESSING_SOFTWARE}
+
+
+def test_an_embedded_write_names_photo_tagger_as_its_software(tmp_path: Path) -> None:
+    """The photo gets ProcessingSoftware and a history entry, as digiKam and Lightroom write."""
+    img = _jpeg_file(tmp_path / "a.jpg")
+    helper = _fake_helper()
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        write_metadata(img, KeywordSet(subject=["Bird"]), use_sidecar=False)
+
+    kwargs = helper.set_tags.call_args.kwargs
+    assert kwargs["tags"][TAG_EXIF_PROCESSING_SOFTWARE] == SOFTWARE_AGENT
+    assert "EXIF:Software" not in kwargs["tags"]
+    assert kwargs["params"][-1].startswith("-XMP-xmpMM:History+={Action=saved,")
+
+
+def test_a_sidecar_write_logs_the_save_in_xmp_only(tmp_path: Path) -> None:
+    """A sidecar holds XMP only, so the history entry is its whole stamp."""
+    img = tmp_path / "a.dng"
+    helper = _fake_helper()
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        write_metadata(img, KeywordSet(subject=["Bird"]), use_sidecar=True)
+
+    kwargs = helper.set_tags.call_args.kwargs
+    assert TAG_EXIF_PROCESSING_SOFTWARE not in kwargs["tags"]
+    assert kwargs["params"][-1].startswith("-XMP-xmpMM:History+=")
+
+
+def test_a_set_processing_software_wins_over_the_stamp(tmp_path: Path) -> None:
+    """A value the user named by hand stays, even when the file already carries it."""
+    img = _jpeg_file(tmp_path / "a.jpg")
+    helper = _fake_helper([{"EXIF:ProcessingSoftware": "Mine"}])
+
+    with patch("photo_tagger.metadata.ExifToolHelper", return_value=helper):
+        write_metadata(
+            img,
+            KeywordSet(subject=["Bird"]),
+            extra={TAG_EXIF_PROCESSING_SOFTWARE: "Mine"},
+            use_sidecar=False,
+        )
+
+    assert TAG_EXIF_PROCESSING_SOFTWARE not in helper.set_tags.call_args.kwargs["tags"]
+
+
+def test_history_event_param_names_the_version_and_the_time() -> None:
+    """The entry says who saved, when, and that only the metadata changed."""
+    param = history_event_param(datetime(2026, 9, 24, 10, 0, tzinfo=UTC))
+
+    assert param == (
+        "-XMP-xmpMM:History+={Action=saved,When=2026-09-24T10:00:00+00:00,"
+        f"SoftwareAgent={SOFTWARE_AGENT},Changed=/metadata}}"
+    )
 
 
 def test_write_metadata_everywhere_leaves_an_untouched_target_out_of_the_journal(
@@ -1139,8 +1195,7 @@ def test_write_metadata_with_backup_omits_overwrite_param(tmp_path: Path) -> Non
         ok = write_metadata(img, KeywordSet(subject=["Bird"]), backup=True)
 
     assert ok == WriteResult.WRITTEN
-    _, kwargs = helper.set_tags.call_args
-    assert "params" not in kwargs
+    assert "-overwrite_original" not in helper.set_tags.call_args.kwargs["params"]
 
 
 def test_write_metadata_without_backup_passes_overwrite_original(tmp_path: Path) -> None:
@@ -1152,7 +1207,7 @@ def test_write_metadata_without_backup_passes_overwrite_original(tmp_path: Path)
         ok = write_metadata(img, KeywordSet(subject=["Bird"]), backup=False)
 
     assert ok == WriteResult.WRITTEN
-    assert helper.set_tags.call_args.kwargs["params"] == ["-overwrite_original"]
+    assert helper.set_tags.call_args.kwargs["params"][0] == "-overwrite_original"
 
 
 def test_write_metadata_targets_the_sidecar_by_default(tmp_path: Path) -> None:
@@ -1297,7 +1352,7 @@ def test_write_metadata_retries_a_minor_error_ignoring_it(tmp_path: Path) -> Non
     assert helper.set_tags.call_count == 2  # noqa: PLR2004 - the refused write plus its one retry.
     retry_params = helper.set_tags.call_args.kwargs["params"]
     # The retry keeps whatever the first attempt asked for and only adds the waiver.
-    assert retry_params == ["-overwrite_original", "-m"]
+    assert retry_params == [*helper.set_tags.call_args_list[0].kwargs["params"], "-m"]
 
 
 def test_write_metadata_does_not_retry_an_error_m_would_not_waive(tmp_path: Path) -> None:

@@ -8,6 +8,9 @@ This file lists all notable changes to this project. The format follows the
 
 ### Added
 
+- Each save names photo-tagger and its version in the file, as digiKam and Lightroom do. The photo
+  gets `EXIF:ProcessingSoftware`, and the photo and the sidecar get an `xmpMM:History` event.
+
 - `--sidecar-override EXT=TARGET` (`sidecar_overrides` in the configuration file) sends one file
   type elsewhere, whatever `--sidecar-mode` says. `dng=photo` writes into each DNG, as Lightroom
   Classic does.
