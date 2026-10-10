@@ -1541,6 +1541,80 @@ def _log_totals(totals: BatchTotals, *, workers: int) -> None:
         logger.error("files_failed_after_retry", files=totals.failed_files)
 
 
+@dataclass(slots=True)
+class _PassResults:
+    """What the passes over one batch came to, before the totals are added up."""
+
+    success: int
+    # The photos the first pass failed, which the retry pass took on.
+    pending: list[Path]
+    retry_successes: int
+    still_failing: list[Path]
+    # Session-mode write failures, which never enter the retry pass.
+    unrecoverable: list[Path]
+    interrupted: bool
+
+
+def _run_all_passes(image_files: list[Path], ctx: _BatchContext, *, workers: int) -> _PassResults:
+    """
+    Run the first pass (by session, when there is a plan) and then the retry pass.
+
+    One ExifToolHelper serves the whole batch on one worker. With more, each task opens its own,
+    since pyexiftool's -stay_open pipe is not safe to share across threads.
+    """
+    with managed_helper(None) if workers <= 1 else _no_helper() as et:
+        unrecoverable: list[Path] = []
+        if ctx.session_plan is not None:
+            outcome = _run_session_passes(image_files, ctx, et=et, workers=workers)
+            success, pending, interrupted = (
+                outcome.successes,
+                outcome.retryable,
+                outcome.interrupted,
+            )
+            unrecoverable = outcome.final_failures
+        else:
+            success, pending, interrupted = _run_pass(
+                image_files,
+                ctx,
+                retry=False,
+                et=et,
+                workers=workers,
+            )
+        if interrupted:
+            # Don't retry after the user asked us to stop. Mark everything that was still pending
+            # as failed so the summary file reflects reality.
+            return _PassResults(success, pending, 0, pending, unrecoverable, interrupted=True)
+        retry_successes, still_failing, interrupted = _run_retry_phase(
+            pending,
+            ctx,
+            et=et,
+            workers=workers,
+        )
+    return _PassResults(
+        success,
+        pending,
+        retry_successes,
+        still_failing,
+        unrecoverable,
+        interrupted=interrupted,
+    )
+
+
+def _rests_since(
+    pacer: Pacer | None,
+    seconds_before: float,
+    count_before: int,
+) -> tuple[float, int]:
+    """
+    Return the seconds rested and the rests taken since the batch started.
+
+    A watch shares its pacer across batches, so a batch reports only the rests it took.
+    """
+    if pacer is None:
+        return 0.0, 0
+    return round(pacer.rested_seconds - seconds_before, 1), pacer.rests_taken - count_before
+
+
 def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct caller knob.
     image_files: list[Path],
     agent: Agent[None, GeneratedMetadata],
@@ -1614,48 +1688,20 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
     )
 
     try:
-        with managed_helper(None) if workers <= 1 else _no_helper() as et:
-            if session_plan is not None:
-                outcome = _run_session_passes(image_files, ctx, et=et, workers=workers)
-                success, pending, interrupted = (
-                    outcome.successes,
-                    outcome.retryable,
-                    outcome.interrupted,
-                )
-                unrecoverable = outcome.final_failures
-            else:
-                success, pending, interrupted = _run_pass(
-                    image_files,
-                    ctx,
-                    retry=False,
-                    et=et,
-                    workers=workers,
-                )
-                unrecoverable = []
-            if interrupted:
-                # Don't retry after the user asked us to stop. Mark everything that
-                # was still pending as failed so the summary file reflects reality.
-                retry_successes = 0
-                still_failing = pending
-            else:
-                retry_successes, still_failing, interrupted = _run_retry_phase(
-                    pending,
-                    ctx,
-                    et=et,
-                    workers=workers,
-                )
+        passes = _run_all_passes(image_files, ctx, workers=workers)
     finally:
         # Waiting for the next batch of a watch is not work.
         if pacer is not None:
             pacer.pause()
 
+    rested_seconds, rests_taken = _rests_since(pacer, rested_before, rests_before)
     # Session-mode write failures never entered the retry pass, so fold them in here.
-    still_failing = still_failing + unrecoverable
+    still_failing = passes.still_failing + passes.unrecoverable
     totals = BatchTotals(
         total_files=len(image_files),
-        success=success + retry_successes,
-        initial_failures=len(pending) + len(unrecoverable),
-        retry_successes=retry_successes,
+        success=passes.success + passes.retry_successes,
+        initial_failures=len(passes.pending) + len(passes.unrecoverable),
+        retry_successes=passes.retry_successes,
         failed_files=[str(path) for path in still_failing],
         successful_files=[str(path) for path in successful_files],
         input_tokens=usage.input_tokens,
@@ -1672,9 +1718,9 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
         vocabulary_dropped=dict(usage.vocabulary_dropped),
         flagged_files=sorted(str(path) for path in usage.flagged_for_review),
         language_repairs=usage.language_repairs,
-        rested_seconds=round(pacer.rested_seconds - rested_before, 1) if pacer is not None else 0.0,
-        rests_taken=pacer.rests_taken - rests_before if pacer is not None else 0,
-        interrupted=interrupted,
+        rested_seconds=rested_seconds,
+        rests_taken=rests_taken,
+        interrupted=passes.interrupted,
     )
 
     _log_totals(totals, workers=workers)
