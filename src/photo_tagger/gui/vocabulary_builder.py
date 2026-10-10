@@ -6,7 +6,6 @@
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from loguru import logger
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -25,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_tagger.gui.common import CHOOSE_LABEL, CLOSE_LABEL, DEFAULT_VOCABULARY_FILE
+from photo_tagger.gui.threads import release_thread, start_in_thread
 from photo_tagger.gui.widgets import hint_label
 from photo_tagger.gui.workers import VocabularyBuildWorker
 from photo_tagger.gui_state import tooltip
@@ -309,7 +309,6 @@ class VocabularyBuilderDialog(QDialog):
             return
         self._built = output
         connection = self._connection()
-        self._thread = QThread(self)
         self._worker = VocabularyBuildWorker(
             paths,
             export,
@@ -330,15 +329,13 @@ class VocabularyBuilderDialog(QDialog):
             api_base_url=connection.api_base_url,
             api_key=connection.api_key,
         )
-        self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._status.setText)
         self._worker.done.connect(self._on_done)
         self._worker.failed.connect(self._on_failed)
         self._worker.finished.connect(self._on_finished)
         self._button.setEnabled(False)
         self._status.setText(_("Working..."))
-        self._thread.start()
+        self._thread = start_in_thread(self, self._worker)
 
     def _on_done(self, message: str, kept: int) -> None:
         """Report the finished file and offer to put it straight to work."""
@@ -387,13 +384,11 @@ class VocabularyBuilderDialog(QDialog):
         writes one file and exits; nothing it does afterwards touches the window.
         """
         if self._thread is not None:
-            thread = self._thread
-            thread.quit()
-            if thread.wait(_STOP_TIMEOUT_MS):
-                thread.deleteLater()
-            else:
-                logger.warning("gui_vocabulary_build_still_running")
-                thread.finished.connect(thread.deleteLater)
+            release_thread(
+                self._thread,
+                timeout_ms=_STOP_TIMEOUT_MS,
+                detached_event="gui_vocabulary_build_still_running",
+            )
             self._thread = None
         if self._worker is not None:
             self._worker.deleteLater()

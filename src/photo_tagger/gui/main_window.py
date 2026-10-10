@@ -109,6 +109,7 @@ from photo_tagger.gui.keyword_rules import KeywordRulesDialog
 from photo_tagger.gui.pacing import PacingDialog
 from photo_tagger.gui.save_options import SaveOptionsMenu
 from photo_tagger.gui.style import app_icon, svg_icon
+from photo_tagger.gui.threads import join_thread, release_thread, start_in_thread
 from photo_tagger.gui.undo_dialog import UndoDialog
 from photo_tagger.gui.viewer import ImageViewerDialog
 from photo_tagger.gui.vocabulary_builder import VocabularyBuilderDialog
@@ -1892,16 +1893,13 @@ class MainWindow(QMainWindow):
         if not pending:
             return
         self._scan_batch = {str(path) for path in pending}
-        self._scan_thread = QThread(self)
         self._scan_worker = MetadataScanWorker(pending)
-        self._scan_worker.moveToThread(self._scan_thread)
-        self._scan_thread.started.connect(self._scan_worker.run)
         self._scan_worker.done.connect(self._on_scan_done)
         self._scan_worker.progress.connect(self._on_scan_progress)
         self._scan_worker.finished.connect(self._on_scan_finished)
         self._scan_progress.setFormat(_("Reading metadata... %v / %m"))
         self._scan_stop_button.setEnabled(True)
-        self._scan_thread.start()
+        self._scan_thread = start_in_thread(self, self._scan_worker)
         self._scan_show_timer.start()
 
     def _on_scan_progress(self, scanned: int, total: int) -> None:
@@ -1984,17 +1982,14 @@ class MainWindow(QMainWindow):
             self._scan_worker.disconnect(self)
             self._scan_worker.deleteLater()
         if self._scan_thread is not None:
-            thread = self._scan_thread
-            thread.quit()
-            if thread.wait(_SCAN_STOP_TIMEOUT_MS):
-                thread.deleteLater()
-            else:
-                # Still running: a big folder, or a hung exiftool. pyexiftool exposes no way to
-                # cancel a batched call mid-flight, so detach instead of blocking the caller
-                # (closeEvent, _clear) indefinitely. The scan only reads metadata; losing its
-                # result is harmless. Clean up once it actually finishes, whenever that is.
-                logger.warning("gui_metadata_scan_stop_timed_out")
-                thread.finished.connect(thread.deleteLater)
+            # A big folder, or a hung exiftool, can outlast the timeout. pyexiftool exposes no way
+            # to cancel a batched call mid-flight, and the scan only reads metadata, so losing its
+            # result is harmless: detach rather than block the caller (closeEvent, _clear).
+            release_thread(
+                self._scan_thread,
+                timeout_ms=_SCAN_STOP_TIMEOUT_MS,
+                detached_event="gui_metadata_scan_stop_timed_out",
+            )
             self._scan_thread = None
         self._scan_worker = None
 
@@ -3283,15 +3278,11 @@ class MainWindow(QMainWindow):
             self._update_grid_item(item, grid_item)
 
     def _start_thumbs(self, paths: list[Path]) -> None:
-        self._thumb_thread = QThread(self)
         self._thumb_worker = ThumbnailWorker(paths)
-        self._thumb_worker.moveToThread(self._thumb_thread)
-        self._thumb_thread.started.connect(self._thumb_worker.run)
         self._thumb_worker.ready.connect(self._on_thumb_ready)
         # Stop the thread's event loop once every thumbnail is decoded; without this the idle
         # thread would keep running until the next navigation or the window closed.
-        self._thumb_worker.finished.connect(self._thumb_thread.quit)
-        self._thumb_thread.start()
+        self._thumb_thread = start_in_thread(self, self._thumb_worker, quit_when_done=True)
 
     def _stop_thumbs(self, *, blocking: bool = False) -> None:
         """
@@ -3310,16 +3301,15 @@ class MainWindow(QMainWindow):
             self._thumb_worker.stop()
             self._thumb_worker.deleteLater()
         if self._thumb_thread is not None:
-            thread = self._thumb_thread
-            thread.quit()
             if blocking:
-                thread.wait()
-                thread.deleteLater()
-            elif thread.wait(_THUMB_STOP_TIMEOUT_MS):
-                thread.deleteLater()
+                join_thread(self._thumb_thread)
             else:
-                logger.debug("gui_thumbnail_stop_detached")
-                thread.finished.connect(thread.deleteLater)
+                release_thread(
+                    self._thumb_thread,
+                    timeout_ms=_THUMB_STOP_TIMEOUT_MS,
+                    detached_event="gui_thumbnail_stop_detached",
+                    level="DEBUG",
+                )
             self._thumb_thread = None
         self._thumb_worker = None
 
@@ -3710,14 +3700,11 @@ class MainWindow(QMainWindow):
             ngettext("Saving {n} photo...", "Saving {n} photos...", len(jobs)).format(n=len(jobs)),
         )
 
-        self._save_thread = QThread(self)
         self._save_journal = self._open_undo_journal()
         self._save_worker = SaveWorker(jobs, options=options, journal=self._save_journal)
-        self._save_worker.moveToThread(self._save_thread)
-        self._save_thread.started.connect(self._save_worker.run)
         self._save_worker.file_done.connect(self._on_save_done)
         self._save_worker.finished.connect(self._on_save_finished)
-        self._save_thread.start()
+        self._save_thread = start_in_thread(self, self._save_worker)
 
     def _on_save_done(self, path: str, ok: bool) -> None:  # noqa: FBT001 - Qt signal argument
         """Fold one finished write into its item and tick the progress bar."""
@@ -3789,9 +3776,7 @@ class MainWindow(QMainWindow):
     def _teardown_save_thread(self) -> None:
         """Join the save thread and release both it and its worker."""
         if self._save_thread is not None:
-            self._save_thread.quit()
-            self._save_thread.wait()
-            self._save_thread.deleteLater()
+            join_thread(self._save_thread)
             self._save_thread = None
         if self._save_worker is not None:
             self._save_worker.deleteLater()
@@ -3875,7 +3860,6 @@ class MainWindow(QMainWindow):
         self._status.setText(self._run_status_text)
 
         connection = self._connection_bar.connection()
-        self._thread = QThread(self)
         self._worker = GenerateWorker(
             connection.provider,
             connection.model,
@@ -3894,13 +3878,11 @@ class MainWindow(QMainWindow):
                 refresh=refresh,
             ),
         )
-        self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
         self._worker.file_done.connect(self._on_file_done)
         self._worker.file_failed.connect(self._on_file_failed)
         self._worker.resting.connect(self._on_resting)
         self._worker.finished.connect(self._on_generate_finished)
-        self._thread.start()
+        self._thread = start_in_thread(self, self._worker)
 
     def _on_resting(self, text: str) -> None:
         """Report a pacing rest, or put the run's own status line back once it ends."""
@@ -4254,9 +4236,7 @@ class MainWindow(QMainWindow):
         # deleteLater releases the C++ side of the thread and the (parentless, moved) worker;
         # dropping only the Python refs would leak both once per generation run.
         if self._thread is not None:
-            self._thread.quit()
-            self._thread.wait()
-            self._thread.deleteLater()
+            join_thread(self._thread)
             self._thread = None
         if self._worker is not None:
             self._worker.deleteLater()
@@ -4357,17 +4337,14 @@ class MainWindow(QMainWindow):
             if announce:
                 self._status.setText(harmonize_summary(HarmonizeResult()))
             return False
-        self._harmonize_thread = QThread(self)
         self._harmonize_worker = HarmonizeWorker(
             keywords,
             gap_minutes=gap,
             output_language=self._output_language,
         )
-        self._harmonize_worker.moveToThread(self._harmonize_thread)
-        self._harmonize_thread.started.connect(self._harmonize_worker.run)
         self._harmonize_worker.done.connect(self._on_harmonize_done)
         self._harmonize_worker.finished.connect(self._on_harmonize_finished)
-        self._harmonize_thread.start()
+        self._harmonize_thread = start_in_thread(self, self._harmonize_worker)
         return True
 
     def _on_harmonize_done(self, result: HarmonizeResult) -> None:
@@ -4409,13 +4386,11 @@ class MainWindow(QMainWindow):
             self._harmonize_worker.disconnect(self)
             self._harmonize_worker.deleteLater()
         if self._harmonize_thread is not None:
-            thread = self._harmonize_thread
-            thread.quit()
-            if thread.wait(_HARMONIZE_STOP_TIMEOUT_MS):
-                thread.deleteLater()
-            else:
-                logger.warning("gui_harmonize_stop_timed_out")
-                thread.finished.connect(thread.deleteLater)
+            release_thread(
+                self._harmonize_thread,
+                timeout_ms=_HARMONIZE_STOP_TIMEOUT_MS,
+                detached_event="gui_harmonize_stop_timed_out",
+            )
             self._harmonize_thread = None
         self._harmonize_worker = None
 
@@ -4472,13 +4447,10 @@ class MainWindow(QMainWindow):
         self._watch_settings = settings
         self._watch_added = 0
         self._watch_pending = []
-        self._watch_thread = QThread(self)
         self._watch_worker = WatchWorker(settings)
-        self._watch_worker.moveToThread(self._watch_thread)
-        self._watch_thread.started.connect(self._watch_worker.run)
         self._watch_worker.batch.connect(self._on_watch_batch)
         self._watch_worker.finished.connect(self._on_watch_finished)
-        self._watch_thread.start()
+        self._watch_thread = start_in_thread(self, self._watch_worker)
         self._watch_action.setText(_("Stop Watching"))
         self._status.setText(watch_status_text(settings, added=0))
         logger.info(
@@ -4553,16 +4525,14 @@ class MainWindow(QMainWindow):
         if self._watch_worker is not None:
             self._watch_worker.deleteLater()
         if self._watch_thread is not None:
-            thread = self._watch_thread
-            thread.quit()
-            if thread.wait(_WATCH_STOP_TIMEOUT_MS):
-                thread.deleteLater()
-            else:
-                # Still inside a poll: a huge folder, or a network share that is not answering.
-                # Detach rather than block the caller (a Stop click, or closeEvent); the worker
-                # only lists directories, so leaving it to finish costs nothing.
-                logger.warning("gui_watch_stop_timed_out")
-                thread.finished.connect(thread.deleteLater)
+            # A poll of a huge folder, or of a network share that is not answering, can outlast
+            # the timeout. The worker only lists directories, so leaving it to finish costs
+            # nothing, and detaching spares the caller (a Stop click, or closeEvent) the wait.
+            release_thread(
+                self._watch_thread,
+                timeout_ms=_WATCH_STOP_TIMEOUT_MS,
+                detached_event="gui_watch_stop_timed_out",
+            )
             self._watch_thread = None
         self._watch_worker = None
 
