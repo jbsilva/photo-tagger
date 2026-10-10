@@ -14,6 +14,20 @@ All notable changes to this project are documented here. The format is based on
   (`osascript`, `notify-send`, a PowerShell toast), so no new dependency and no failure where there
   is none.
 
+- Every run now checks the generated text for mixed writing systems and flags the photos that have
+  them, so a stray `陶笛` in English output is something you are told about instead of something you
+  find in the catalog later. The photo is still tagged: the flag names the words in a
+  `foreign_terms` CSV column and `--json` key, a line in the log, and `flagged_files` in the
+  `--summary-file`. No language list is involved, so it works for any `--output-language`. In the
+  GUI a flagged photo gets an amber note over its editable fields and a `⚠` in the **Status**
+  column. Its thumbnail gets an amber `!`. **Mixed writing systems** joins the **Select > Status**
+  criteria and the folder grid's **Show** box, so the closing count turns into rows you can open.
+
+- `--repair-language` asks the model again, with the same photo, for the flagged photos only, so
+  `Decorated陶笛` comes back as `Decorated Ocarina`. One extra call per affected photo and nothing on
+  the rest, so it is off by default; a repair that fails or comes back mixed keeps the original
+  answer and the flag. In the GUI: **Settings > Rewrite Mixed-Language Output**.
+
 ### Fixed
 
 - The system prompt now rules out a foreign word used *as* the concept name (a title reading

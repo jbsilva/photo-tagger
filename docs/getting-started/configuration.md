@@ -88,6 +88,7 @@ timeout_seconds = 60.0   # Per-image inference timeout in seconds.
 frequency_penalty = 0.5  # Penalty on repeated tokens; discourages output loops.
 jpeg_dimensions = 1280   # Max dimension (px) of the JPEG sent to the model.
 jpeg_quality = 80        # JPEG quality (1-100) of the image sent to the model.
+repair_language = false  # Re-ask the model when its answer mixes writing systems.
 
 [output]
 preserve_keywords = true  # Merge with existing keywords (false replaces them).

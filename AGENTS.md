@@ -24,6 +24,11 @@ module owns one slice of that pipeline:
 - `vocabulary.py` - the controlled vocabulary (`--vocabulary`): parse a keyword list, snap generated
   keywords onto it. `sessions.py` groups a batch into shoots (`--session-gap`) and builds each
   shoot's vocabulary from its own output; both go through the same matcher.
+- `script_guard.py` - flags generated text that mixes writing systems (a CJK word in English
+  output). Pure and language-free: it reads the dominant script off the text itself rather than
+  mapping `--output-language` to a script, so callers re-run it on cache replays instead of storing
+  a verdict. `--repair-language` then re-asks the model (prompt in `config.build_repair_prompt`);
+  the repair runs before the cache write so a rerun never pays for the second call.
 - `undo.py` - the per-run write journal and the `undo` command's restore logic; `watch.py` - the
   polling folder watcher behind the `watch` command.
 - `models.py` - shared data types: `GeneratedMetadata` (the model's schema), `InferenceResult`, and

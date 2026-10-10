@@ -112,6 +112,18 @@ class InferenceConfig:
             ),
         ),
     ] = DEFAULT_OUTPUT_LANGUAGE
+    repair_language: Annotated[
+        bool,
+        Parameter(
+            name=("--repair-language",),
+            negative="--no-repair-language",
+            help=(
+                "When the generated text mixes writing systems, spend one more model call asking "
+                "for it in the output language (e.g. 'Ocarina' for a stray '陶笛'). Off by "
+                "default; the photos are flagged either way"
+            ),
+        ),
+    ] = False
     hint: Annotated[
         str | None,
         Parameter(
@@ -861,6 +873,7 @@ def to_processing_options(
         vocabulary=vocabulary,
         vocabulary_strict=output.vocabulary_strict,
         output_language=inference.output_language,
+        repair_language=inference.repair_language,
     )
 
 

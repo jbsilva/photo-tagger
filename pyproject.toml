@@ -126,6 +126,11 @@ ignore = [
     "TC002",  # here, and a TYPE_CHECKING block for a test's own framework import reads oddly.
     "TC003",
 ]
+# The whole point of these tests is characters that look like each other but are not, so the rule
+# that warns about exactly that has nothing to add here.
+"**/tests/test_script_guard.py" = [
+    "RUF001", # Ambiguous unicode characters are the subject under test
+]
 "**/__init__.py" = [
     "D104", # Allow empty __init__.py files
 ]

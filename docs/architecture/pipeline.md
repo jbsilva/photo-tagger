@@ -156,8 +156,8 @@ that raises is logged and swallowed so it cannot abort the batch.
 | `on_complete`     | summary writer (`--summary-file`)                          | Once at the end, with the `BatchTotals`. |
 
 The NDJSON emitter writes one JSON line per photo to stdout (file, status, `from_cache`, `retry`,
-title, description, keywords, token counts, seconds). Logs and the progress bar stay on stderr, so
-stdout pipes cleanly into `jq`. The CSV writer
+title, description, keywords, token counts, seconds, `foreign_terms`). Logs and the progress bar
+stay on stderr, so stdout pipes cleanly into `jq`. The CSV writer
 ([`csv_report.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/csv_report.py))
 streams the same per-photo `ImageOutcome` into a spreadsheet-friendly row (adding the read EXIF and
 the keywords already on the file) and is flushed per row so an interrupted run still leaves a valid

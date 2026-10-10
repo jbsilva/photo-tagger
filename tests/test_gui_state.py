@@ -16,6 +16,7 @@ from photo_tagger.gui_state import (
     ADDED,
     BADGE_FAILED,
     BADGE_METADATA,
+    BADGE_MIXED_SCRIPT,
     BADGE_SAVED,
     BADGE_SIDECAR,
     BADGE_UNSAVED,
@@ -24,6 +25,7 @@ from photo_tagger.gui_state import (
     FILTER_ALL,
     FILTER_FAILED,
     FILTER_GENERATED,
+    FILTER_MIXED_SCRIPT,
     FILTER_PENDING,
     FILTER_SAVED,
     FILTER_SELECTED,
@@ -81,6 +83,7 @@ from photo_tagger.gui_state import (
     filter_photos,
     fit_zoom,
     flat_labels,
+    foreign_terms_note,
     format_duration,
     format_existing_keywords,
     group_by_parent,
@@ -97,6 +100,7 @@ from photo_tagger.gui_state import (
     load_vocabulary_file,
     location_crumb,
     login_shell_path,
+    mark_mixed_script,
     matches_extension,
     matches_name_pattern,
     merged_config_text,
@@ -114,6 +118,7 @@ from photo_tagger.gui_state import (
     record_dropped_terms,
     reveal_command,
     reveal_label,
+    review_summary,
     search_summary,
     sort_photos,
     source_label,
@@ -873,6 +878,17 @@ def test_config_writers_persist_the_end_of_run_alert_choices() -> None:
         assert display.notify_sound is True
 
 
+def test_config_writers_persist_the_repair_choice() -> None:
+    """A fresh file and a merged one both carry it, into the [inference] table the CLI reads."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    from photo_tagger.cli_options import load_defaults  # noqa: PLC0415
+
+    values = _config_values(repair_language=True)
+    for text in (config_toml_text(values), merged_config_text("[inference]\n", values)):
+        assert load_defaults(tomllib.loads(text)).inference.repair_language is True
+
+
 def test_config_writers_persist_the_per_field_overwrite_choices() -> None:
     """A fresh file and a merged one both carry all three keep-or-replace answers."""
     import tomllib  # noqa: PLC0415 - test-local parser.
@@ -1004,6 +1020,16 @@ def test_thumb_badges_lifecycle_and_info_markers() -> None:
 
     pending = PhotoItem(path=Path("/a.jpg"), known_fields=set())
     assert thumb_badges(pending, has_sidecar=False) == []
+
+    # Mixed script is informational: it marks the generated thumbnail, it does not replace
+    # the lifecycle badge that says the proposal is there.
+    mixed = PhotoItem(
+        path=Path("/a.jpg"),
+        status=READY,
+        has_proposal=True,
+        foreign_terms=["陶笛"],
+    )
+    assert thumb_badges(mixed, has_sidecar=False) == [BADGE_UNSAVED, BADGE_MIXED_SCRIPT]
 
 
 def test_keyword_diff_merge_marks_added_and_unchanged() -> None:
@@ -1346,6 +1372,13 @@ def test_filter_untagged_matches_only_scanned_empty() -> None:
     assert filter_photos([empty, tagged, unscanned], FILTER_UNTAGGED) == [empty]
 
 
+def test_filter_mixed_script_finds_the_photos_the_run_flagged() -> None:
+    """The count in the status line has to turn into rows, which is what this filter is."""
+    flagged = PhotoItem(path=Path("/d/a.jpg"), foreign_terms=["陶笛"])
+    clean = PhotoItem(path=Path("/d/b.jpg"), has_proposal=True)
+    assert filter_photos([flagged, clean], FILTER_MIXED_SCRIPT) == [flagged]
+
+
 def test_photo_matches_filter_unknown_criterion_matches_all() -> None:
     """An unrecognized criterion behaves like FILTER_ALL rather than hiding every photo."""
     assert photo_matches_filter(PhotoItem(path=Path("/d/a.jpg")), "bogus") is True
@@ -1650,6 +1683,55 @@ def test_vocabulary_status_describes_each_state(tmp_path: Path) -> None:
     loaded = vocabulary_status(tmp_path / "k.txt", _vocabulary())
     assert "4 keywords" in loaded  # Animal, Bird, Osprey, Sunset
     assert "k.txt" in loaded
+
+
+def test_review_summary_is_silent_when_no_photo_is_flagged() -> None:
+    """A run where every answer stayed in one script has nothing to say about it."""
+    assert review_summary(0) == ""
+
+
+def test_review_summary_counts_the_photos_to_go_back_to() -> None:
+    """With thousands of rows in the list, the count is what says to go click something."""
+    assert "1 photo mixes writing systems" in review_summary(1)
+    assert "4 photos mix writing systems" in review_summary(4)
+
+
+def test_review_summary_says_how_to_reach_those_photos() -> None:
+    """A count with no route left people scrolling a long list for a row they could not spot."""
+    assert "Select > Check Only > Status" in review_summary(3)
+
+
+def test_mark_mixed_script_marks_only_a_flagged_row() -> None:
+    """The Status cell carries the mark so a flagged photo is visible without the filter on."""
+    assert mark_mixed_script("ready", ["陶笛"]) == "ready ⚠"
+    assert mark_mixed_script("ready", []) == "ready"
+    # A photo with no status text yet still has to show the mark rather than a leading space.
+    assert mark_mixed_script("", ["陶笛"]) == "⚠"
+
+
+def test_foreign_terms_note_names_the_words_to_check() -> None:
+    """The detail pane points at the exact terms, and says nothing when there are none."""
+    assert foreign_terms_note([]) == ""
+    note = foreign_terms_note(["陶笛", "居酒屋"])
+    assert "陶笛, 居酒屋" in note
+
+
+def test_apply_proposal_carries_the_review_flag() -> None:
+    """A proposal that mixes writing systems arrives at the detail pane already marked."""
+    item = PhotoItem(path=Path("/a.jpg"))
+    proposal = Proposal(
+        path=Path("/a.jpg"),
+        existing_title=None,
+        existing_description=None,
+        existing_keywords=KeywordSet(),
+        title="Decorated陶笛",
+        description="A陶笛 on a table.",
+        keywords=[],
+        foreign_terms=["陶笛"],
+    )
+    apply_proposal(item, proposal)
+    assert item.foreign_terms == ["陶笛"]
+    assert photo_item_to_report_row(item, overwrite=False).as_dict()["foreign_terms"] == "陶笛"
 
 
 def test_vocabulary_summary_is_silent_when_nothing_changed() -> None:

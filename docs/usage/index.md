@@ -54,8 +54,8 @@ photo-tagger keeps machine output and human output on separate streams so a run 
 - Logs and the live progress bar go to **stderr**. The progress bar is shown on a TTY and is
     auto-disabled when stderr is redirected; disable it explicitly with `--no-progress`.
 - With `--json`, one NDJSON line per processed photo goes to **stdout** (file, status, from_cache,
-    retry, title, description, keywords, token counts, seconds). Because logs stay on stderr, stdout
-    pipes cleanly into tools like `jq`.
+    retry, title, description, keywords, token counts, seconds, foreign_terms). Because logs stay on
+    stderr, stdout pipes cleanly into tools like `jq`.
 
 ## End-to-end example
 

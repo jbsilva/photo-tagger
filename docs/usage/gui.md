@@ -76,9 +76,10 @@ folders stay grouped above their sibling files either way):
 - **Photos**: the file name.
 - **Type**: the extension, with `+xmp` appended when an XMP sidecar sits next to the file.
 - **Status**: blank (pending), `working...`, `ready` (or `ready (cached)` when the proposal was
-    replayed from the result cache), `saved ✓` (green), or `failed ✗` (red). Sorting uses the
-    processing stage, not the label text, so clicking it groups all the failures or all the ready
-    photos together.
+    replayed from the result cache), `saved ✓` (green), or `failed ✗` (red). A trailing `⚠` means
+    the generated text mixes writing systems; hover it for the words. Sorting uses the processing
+    stage, not the label text, so clicking it groups all the failures or all the ready photos
+    together.
 - **Tagged**: which metadata the file already carries, filled in by a background scan after you add
     photos: `T` title, `D` description, `K` keywords, `-` for none (hover for the full list). The
     scan reads a few dozen photos at a time and fills the column as it goes. A scan that runs longer
@@ -116,8 +117,9 @@ list by hand:
     - **File Type** lists the extensions actually in the list with a count each (`dng (120)`,
         `jpg (120)`), built fresh every time the menu opens.
     - **Status** works on where a photo is in the cycle: **Not generated**, **Generated**, **Saved**,
-        **Failed**, or **Untagged**. These are the same criteria as the thumbnail grid's filter, so
-        **Uncheck > Status > Saved** before a rerun means the same thing in both places.
+        **Failed**, **Untagged**, or **Mixed writing systems**. These are the same criteria as the
+        thumbnail grid's filter, so **Uncheck > Status > Saved** before a rerun means the same thing
+        in both places.
     - **Name Pattern...** asks for text to match against the filename. Plain text means "contains"
         (`IMG` finds `IMG_0001.dng`), and anything with `*`, `?`, or `[` is treated as a glob
         (`*_edit.jpg`). A pattern holding a `/` is matched against the whole path, so it can name a
@@ -148,8 +150,9 @@ responsive. Click any thumbnail to open that photo's detail, tick its checkbox t
 it (kept in sync with the tree), or right-click it for the same menu as its row in the tree (retry,
 skip cache, reveal, remove). Each thumbnail carries small badges (hover for the explanation): the
 top-right one tracks the lifecycle (red ✗ failed, green ✓ saved, indigo dot for
-generated-but-not-saved), and the top-left ones flag a photo that already has metadata (`M`) or an
-XMP sidecar (`S`).
+generated-but-not-saved), and the top-left ones flag a photo that already has metadata (`M`), an XMP
+sidecar (`S`), or text that mixes writing systems (an amber `!`). The **Show** box above the grid
+filters it by any of the same states.
 
 #### Getting back to where you were
 
@@ -193,6 +196,18 @@ type any language name the model understands (it then joins the menu). The choic
 next generation on (cached results in the old language are not reused) and is saved to the config
 file as `output_language` under `[inference]`, so CLI runs pick it up too. It is separate from
 **Settings > Language**, which translates the interface itself.
+
+A model asked for one language sometimes answers in two, and a title comes back as
+`Decorated陶笛 with Geometric Pattern` where `Ocarina` would have said the same thing. Every generated
+proposal is checked for this, and a photo with mixed writing systems gets an amber note over its
+editable fields naming the words, a `⚠` in its **Status** column (hover it for the words), and a
+count in the run's closing status line. To pull those photos out of a long list, use **Select >
+Check Only > Status > Mixed writing systems**, which the closing line names; the folder grid offers
+the same entry under **Show**, and marks each flagged thumbnail with an amber `!`. The proposal is
+still yours to save: mixed script is right when the photo shows the text (a sign, a book cover, a
+printed character), and only you can tell. **Settings > Rewrite Mixed-Language Output** makes the
+run ask the model again for those photos, at the cost of one extra call each; it is off by default,
+and the note appears either way.
 
 To regenerate a single photo without touching your selection, open it and press **Generate this
 photo** in the detail pane, or right-click it in the tree and choose **Generate** (a failed photo

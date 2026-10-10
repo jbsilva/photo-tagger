@@ -191,6 +191,9 @@ class PhotoItem:
     output_tokens: int = 0
     total_tokens: int = 0
     seconds: float = 0.0
+    # Mixed-script bits of the generated text, carried over from the proposal so the detail pane
+    # can point at them. Cleared when the photo is generated again.
+    foreign_terms: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +204,9 @@ class Proposal:
     ``keywords`` is what a save would write, so a controlled vocabulary has already had its say by
     the time a proposal reaches the window; the two ``vocabulary_*`` fields report what it did, for
     the run's summary line.
+
+    ``foreign_terms`` is non-empty when the generated text mixes writing systems (see
+    :mod:`photo_tagger.script_guard`), which the detail pane says out loud before a save.
     """
 
     path: Path
@@ -220,6 +226,7 @@ class Proposal:
     seconds: float = 0.0
     vocabulary_mapped: int = 0
     vocabulary_dropped: list[str] = field(default_factory=list)
+    foreign_terms: list[str] = field(default_factory=list)
 
 
 def expand_inputs(
@@ -433,6 +440,7 @@ def apply_proposal(
     item.seconds = proposal.seconds
     item.has_proposal = True
     item.from_cache = proposal.from_cache
+    item.foreign_terms = list(proposal.foreign_terms)
     item.status = READY
     item.error = ""
 
@@ -471,6 +479,37 @@ def caption_source_note(values: list[CaptionValue]) -> str:
         if other.value != shown.value
     ]
     return "\n".join(lines)
+
+
+# Appended to a flagged photo's Status cell. A glyph rather than a word: the column is narrow, it
+# has to survive translation, and it reads at a glance down a list of hundreds of rows.
+MIXED_SCRIPT_MARK = "⚠"  # warning sign
+
+
+def mark_mixed_script(label: str, terms: Iterable[str]) -> str:
+    """
+    Append the mixed-script mark to a Status cell *label*, or return it unchanged.
+
+    The mark is what lets you find a flagged photo by scrolling, without first knowing the filter
+    exists. A photo flagged before it was ever generated has no label to append to, so the mark
+    stands alone.
+    """
+    if not list(terms):
+        return label
+    return f"{label} {MIXED_SCRIPT_MARK}" if label else MIXED_SCRIPT_MARK
+
+
+def foreign_terms_note(terms: Iterable[str]) -> str:
+    """
+    Build the detail pane's line about mixed-script text, empty when the text is not mixed.
+
+    Worded as a prompt to look, not as an error: a foreign term is right when the photo shows that
+    text, and only the person looking at the photo can tell.
+    """
+    listed = list(terms)
+    if not listed:
+        return ""
+    return _("Mixed script, worth a look: {terms}").format(terms=", ".join(listed))
 
 
 def photo_item_to_report_row(
@@ -518,6 +557,7 @@ def photo_item_to_report_row(
         total_tokens=item.total_tokens,
         seconds=item.seconds,
         from_cache=item.from_cache if item.has_proposal else None,
+        foreign_terms=list(item.foreign_terms),
     )
 
 
@@ -1116,6 +1156,23 @@ def vocabulary_status(path: Path | None, vocabulary: Vocabulary | None, error: s
     return _("{terms} from {name}.").format(terms=terms, name=path.name)
 
 
+def review_summary(flagged: int) -> str:
+    """
+    One line for the status bar naming how many photos in the run mix writing systems.
+
+    Empty when none do. The line names the menu path that isolates them: a bare count sent people
+    scrolling a list of hundreds for a row it had never said how to find. :func:`mark_mixed_script`
+    marks those rows and :func:`foreign_terms_note` says which words, once you are on one.
+    """
+    if not flagged:
+        return ""
+    return ngettext(
+        "{n} photo mixes writing systems (Select > Check Only > Status).",
+        "{n} photos mix writing systems (Select > Check Only > Status).",
+        flagged,
+    ).format(n=flagged)
+
+
 def vocabulary_summary(mapped: int, dropped: Mapping[str, int]) -> str:
     """
     One line for the status bar after a run: what the vocabulary changed across the batch.
@@ -1619,6 +1676,7 @@ FILTER_GENERATED = "generated"
 FILTER_SAVED = "saved"
 FILTER_FAILED = "failed"
 FILTER_UNTAGGED = "untagged"
+FILTER_MIXED_SCRIPT = "mixed_script"
 
 
 def photo_matches_filter(item: PhotoItem, criterion: str) -> bool:
@@ -1628,7 +1686,8 @@ def photo_matches_filter(item: PhotoItem, criterion: str) -> bool:
     The status filters key off the lifecycle state the badges show, FILTER_SELECTED follows the
     checkbox, and FILTER_UNTAGGED matches only once the metadata scan has run and found nothing (a
     None/unknown scan state does not match, so no photo is hidden while the scan is still pending).
-    FILTER_ALL and any unrecognized value match everything.
+    FILTER_MIXED_SCRIPT is what turns the run's "3 photos mix writing systems" line into three rows
+    you can actually open. FILTER_ALL and any unrecognized value match everything.
     """
     # A dict of cheap boolean checks keeps this to one return (no PLR0911). FILTER_ALL is not a
     # key, so it falls through to the default True, as does any value the grid never sends.
@@ -1639,6 +1698,7 @@ def photo_matches_filter(item: PhotoItem, criterion: str) -> bool:
         FILTER_SAVED: item.status == SAVED,
         FILTER_FAILED: item.status == FAILED,
         FILTER_UNTAGGED: item.known_fields is not None and not item.known_fields,
+        FILTER_MIXED_SCRIPT: bool(item.foreign_terms),
     }
     return checks.get(criterion, True)
 
@@ -1654,6 +1714,7 @@ BADGE_SAVED = "saved"
 BADGE_UNSAVED = "unsaved"
 BADGE_METADATA = "metadata"
 BADGE_SIDECAR = "sidecar"
+BADGE_MIXED_SCRIPT = "mixed_script"
 
 
 def thumb_badges(item: PhotoItem, *, has_sidecar: bool) -> list[str]:
@@ -1661,7 +1722,11 @@ def thumb_badges(item: PhotoItem, *, has_sidecar: bool) -> list[str]:
     Decide which overlay badges a photo's grid thumbnail shows.
 
     At most one lifecycle badge (failed beats saved beats unsaved-proposal), plus the already-has-
-    metadata and sidecar markers. The GUI maps each name to a color and glyph.
+    metadata, sidecar, and mixed-script markers. The GUI maps each name to a color and glyph.
+
+    Mixed script is informational, not a lifecycle state: the proposal is perfectly usable, it just
+    wants reading first, so it marks a thumbnail that already says "generated" rather than replacing
+    that.
     """
     badges: list[str] = []
     if item.status == FAILED:
@@ -1674,6 +1739,8 @@ def thumb_badges(item: PhotoItem, *, has_sidecar: bool) -> list[str]:
         badges.append(BADGE_METADATA)
     if has_sidecar:
         badges.append(BADGE_SIDECAR)
+    if item.foreign_terms:
+        badges.append(BADGE_MIXED_SCRIPT)
     return badges
 
 
@@ -1771,6 +1838,7 @@ class GuiConfigValues:
     preserve_description: bool = False
     notify: bool = False
     notify_sound: bool = False
+    repair_language: bool = False
 
 
 def config_toml_text(values: GuiConfigValues) -> str:
@@ -1809,6 +1877,9 @@ def config_toml_text(values: GuiConfigValues) -> str:
     lines += [
         f"vocabulary_strict = {_toml_bool(values.vocabulary_strict)}",
         f"session_gap_minutes = {values.session_gap_minutes}",
+        "",
+        "[inference]",
+        f"repair_language = {_toml_bool(values.repair_language)}",
         "",
         "[display]",
         f"notify = {_toml_bool(values.notify)}",
@@ -1901,6 +1972,9 @@ def merged_config_text(existing_text: str, values: GuiConfigValues) -> str:
         # No vocabulary chosen: drop the key rather than write an empty path the CLI would then
         # fail to open on its next run.
         output.pop("vocabulary", None)
+
+    inference = _config_table(document, "inference")
+    inference["repair_language"] = values.repair_language
 
     display = _config_table(document, "display")
     display["notify"] = values.notify

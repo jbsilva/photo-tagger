@@ -3,7 +3,11 @@
 import os
 import warnings
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "OFF"]
@@ -231,3 +235,43 @@ DEFAULT_SYSTEM_PROMPT = build_system_prompt()
 DEFAULT_USER_PROMPT = (
     "Execute your mission: analyze this image and generate the structured metadata."
 )
+
+# Sent back to the same agent, with the same image, when script_guard finds that an answer mixed
+# writing systems. The previous answer is quoted so the model edits it rather than starting over,
+# and the offending words are named so it does not have to find them again. The image goes along
+# because the one question that decides the right fix ("is that text in the photo?") needs it.
+_REPAIR_PROMPT_TEMPLATE = (
+    "Your previous answer for this photo mixes writing systems. Every field must be written in "
+    "{language}.\n"
+    "\n"
+    "Previous answer:\n"
+    "- Title: {title}\n"
+    "- Description: {description}\n"
+    "- Keywords: {keywords}\n"
+    "\n"
+    "Not in {language}: {terms}\n"
+    "\n"
+    "Return the same metadata with each of those replaced by its ordinary {language} name (write "
+    "'Ocarina' for '陶笛'). Leave everything else exactly as it was. If the photo actually shows "
+    "that text (a sign, a book cover, a printed character), keep the term and put the {language} "
+    "name beside it instead of dropping it. Never leave one word written half in one script and "
+    "half in another."
+)
+
+
+def build_repair_prompt(
+    *,
+    title: str,
+    description: str,
+    keywords: Iterable[str],
+    terms: Iterable[str],
+    output_language: str = DEFAULT_OUTPUT_LANGUAGE,
+) -> str:
+    """Render the follow-up prompt that asks the model to redo an answer in *output_language*."""
+    return _REPAIR_PROMPT_TEMPLATE.format(
+        language=output_language,
+        title=title,
+        description=description,
+        keywords=", ".join(keywords),
+        terms=", ".join(terms),
+    )

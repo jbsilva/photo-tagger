@@ -71,16 +71,17 @@ over `--api-key` so the key never lands in your shell history.
 These flags tune sampling and the image sent to the model. Lower temperature and a frequency penalty
 keep the output focused; the JPEG settings control how much detail the model sees.
 
-| Flag                               | Default   | Env var             | Description                                                                                                                                                                                                             |
-| ---------------------------------- | --------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--output-language`, `--lang` NAME | `English` | `-`                 | Language of the generated title, description, and keywords (any language name the model understands, e.g. `German`, `"Brazilian Portuguese"`).                                                                          |
-| `--hint` TEXT                      | none      | `-`                 | A note about every photo in the run that the model trusts over its own reading of the image, e.g. `"The animal in these photos is a deer"`. Changes the cache namespace, so hinted runs never replay hint-less results. |
-| `--temperature` FLOAT              | `0.2`     | `TEMPERATURE`       | Sampling temperature.                                                                                                                                                                                                   |
-| `--max-tokens` N                   | `1200`    | `MAX_TOKENS`        | Maximum tokens to generate.                                                                                                                                                                                             |
-| `--timeout-seconds` FLOAT          | `60.0`    | `TIMEOUT_SECONDS`   | Per-image inference timeout; on timeout the retry loop steps in.                                                                                                                                                        |
-| `--frequency-penalty` FLOAT        | `0.5`     | `FREQUENCY_PENALTY` | Penalty on repeated tokens; discourages repetitive output loops.                                                                                                                                                        |
-| `--jpeg-dimensions` N              | `1280`    | `JPEG_DIMENSIONS`   | Max dimension (px) of the JPEG sent to the model.                                                                                                                                                                       |
-| `--jpeg-quality` N                 | `80`      | `JPEG_QUALITY`      | JPEG quality (1-100) of the image sent to the model.                                                                                                                                                                    |
+| Flag                                         | Default   | Env var             | Description                                                                                                                                                                                                                                                    |
+| -------------------------------------------- | --------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--output-language`, `--lang` NAME           | `English` | `-`                 | Language of the generated title, description, and keywords (any language name the model understands, e.g. `German`, `"Brazilian Portuguese"`).                                                                                                                 |
+| `--hint` TEXT                                | none      | `-`                 | A note about every photo in the run that the model trusts over its own reading of the image, e.g. `"The animal in these photos is a deer"`. Changes the cache namespace, so hinted runs never replay hint-less results.                                        |
+| `--repair-language` / `--no-repair-language` | `false`   | `-`                 | When the generated text mixes writing systems, spend one more model call asking for it in `--output-language` (`Ocarina` for a stray `陶笛`). Off by default; the affected photos are flagged either way. See [Mixed-language output](#mixed-language-output). |
+| `--temperature` FLOAT                        | `0.2`     | `TEMPERATURE`       | Sampling temperature.                                                                                                                                                                                                                                          |
+| `--max-tokens` N                             | `1200`    | `MAX_TOKENS`        | Maximum tokens to generate.                                                                                                                                                                                                                                    |
+| `--timeout-seconds` FLOAT                    | `60.0`    | `TIMEOUT_SECONDS`   | Per-image inference timeout; on timeout the retry loop steps in.                                                                                                                                                                                               |
+| `--frequency-penalty` FLOAT                  | `0.5`     | `FREQUENCY_PENALTY` | Penalty on repeated tokens; discourages repetitive output loops.                                                                                                                                                                                               |
+| `--jpeg-dimensions` N                        | `1280`    | `JPEG_DIMENSIONS`   | Max dimension (px) of the JPEG sent to the model.                                                                                                                                                                                                              |
+| `--jpeg-quality` N                           | `80`      | `JPEG_QUALITY`      | JPEG quality (1-100) of the image sent to the model.                                                                                                                                                                                                           |
 
 ## Output
 
@@ -224,12 +225,12 @@ photo-tagger writes a timestamped log file and mirrors messages to stderr, so st
 The display group controls how a run makes itself visible: the progress bar, machine-readable
 output, and the desktop alert when the batch ends.
 
-| Flag                                   | Default           | Env var | Description                                                                                                                                                                                                                                  |
-| -------------------------------------- | ----------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--progress` / `--no-progress`         | progress (`true`) | `-`     | Live rich progress bar; auto-disabled when stderr is not a TTY.                                                                                                                                                                              |
-| `--json`                               | `false`           | `-`     | Emit one NDJSON line per processed photo to stdout (`file`, `status`, `from_cache`, `retry`, `title`, `description`, `keywords`, input/output/total tokens, `seconds`). Logs and progress stay on stderr, so stdout pipes cleanly into `jq`. |
-| `--notify` / `--no-notify`             | `false`           | `-`     | Raise a desktop notification when the batch ends, carrying the run's tally (`38 of 42 photos tagged, 4 failed.`).                                                                                                                            |
-| `--notify-sound` / `--no-notify-sound` | `false`           | `-`     | Play a sound with the notification. Implies `--notify`.                                                                                                                                                                                      |
+| Flag                                   | Default           | Env var | Description                                                                                                                                                                                                                                                   |
+| -------------------------------------- | ----------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--progress` / `--no-progress`         | progress (`true`) | `-`     | Live rich progress bar; auto-disabled when stderr is not a TTY.                                                                                                                                                                                               |
+| `--json`                               | `false`           | `-`     | Emit one NDJSON line per processed photo to stdout (`file`, `status`, `from_cache`, `retry`, `title`, `description`, `keywords`, input/output/total tokens, `seconds`, `foreign_terms`). Logs and progress stay on stderr, so stdout pipes cleanly into `jq`. |
+| `--notify` / `--no-notify`             | `false`           | `-`     | Raise a desktop notification when the batch ends, carrying the run's tally (`38 of 42 photos tagged, 4 failed.`).                                                                                                                                             |
+| `--notify-sound` / `--no-notify-sound` | `false`           | `-`     | Play a sound with the notification. Implies `--notify`.                                                                                                                                                                                                       |
 
 ### End-of-batch notification
 
@@ -285,12 +286,41 @@ single file that gathers everything extracted and computed for each image:
 - `existing_keywords` (what was already on the file)
 - `camera_model`, `lens_model`, `capture_date`, `gps_position`, `city`, `country` (read EXIF)
 - `input_tokens`, `output_tokens`, `total_tokens`, `seconds`, `from_cache`, `retry`
+- `foreign_terms`: filled only when the generated text mixes writing systems, with the words in the
+    odd script out (see [Mixed-language output](#mixed-language-output))
 
 Multi-value cells (the keyword lists) are joined with a semicolon and a space. Rows are flushed as
 each photo completes, so interrupting the run with Ctrl-C still leaves a complete, openable CSV of
 the work done so far. `--csv-file` and `--json` can be used together; both observe every photo. A
 `--dry-run` still fills the report, which makes it handy for previewing a batch before writing any
 metadata.
+
+## Mixed-language output
+
+Asked for English, a model now and then reaches for a word in its own script anyway, and a title
+comes back as `Decorated陶笛 with Geometric Pattern` where `Ocarina` would have said the same thing.
+Every run checks the generated text for this: whatever script the bulk of the title, description,
+and keywords is written in is taken as the one it meant to use, and anything in another script is
+reported. No language list is involved, so it works for whatever `--output-language` is set to.
+
+A flagged photo is still tagged. Mixed script is right often enough (the photo shows a sign, a book
+cover, a printed character) that only the person looking at the photo can say. What the flag does is
+point you at it:
+
+- a `foreign_terms` cell in the `--csv-file` report and key in the `--json` stream, naming the words
+- a `files_flagged_for_review` line in the log at the end of the run
+- `flagged_files` in the `--summary-file` JSON
+- in the GUI, an amber note over the editable fields and a count in the closing status line
+
+`--repair-language` goes one step further: on a flagged photo only, it asks the same model again,
+with the same image, quoting its previous answer and naming the offending words. The image goes
+along because the question that decides the right fix is whether the photo shows that text, which no
+text-only pass can answer. That costs one extra call per affected photo, so it is off by default; a
+clean answer never pays for it. If the repair fails or comes back mixed again, the original answer
+is kept and the photo stays flagged. The repaired answer is what goes into the `--cache-file`, so a
+rerun replays the fix instead of paying for it twice.
+
+In the GUI: **Settings > Rewrite Mixed-Language Output**.
 
 ## Building a vocabulary
 

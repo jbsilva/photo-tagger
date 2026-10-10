@@ -133,6 +133,7 @@ from photo_tagger.config import (
     DEFAULT_TEMPERATURE,
     DEFAULT_USER_PROMPT,
     SidecarMode,
+    build_repair_prompt,
 )
 from photo_tagger.config_file import find_config_file, load_config, user_config_path
 from photo_tagger.csv_report import write_report
@@ -148,6 +149,7 @@ from photo_tagger.gui_state import (
     ADDED,
     BADGE_FAILED,
     BADGE_METADATA,
+    BADGE_MIXED_SCRIPT,
     BADGE_SAVED,
     BADGE_SIDECAR,
     BADGE_UNSAVED,
@@ -156,6 +158,7 @@ from photo_tagger.gui_state import (
     FILTER_ALL,
     FILTER_FAILED,
     FILTER_GENERATED,
+    FILTER_MIXED_SCRIPT,
     FILTER_PENDING,
     FILTER_SAVED,
     FILTER_SELECTED,
@@ -206,6 +209,7 @@ from photo_tagger.gui_state import (
     filter_photos,
     fit_zoom,
     flat_labels,
+    foreign_terms_note,
     format_existing_keywords,
     harmonize_sessions,
     harmonize_summary,
@@ -217,6 +221,7 @@ from photo_tagger.gui_state import (
     load_vocabulary_file,
     location_crumb,
     login_shell_path,
+    mark_mixed_script,
     matches_extension,
     matches_name_pattern,
     merged_config_text,
@@ -231,6 +236,7 @@ from photo_tagger.gui_state import (
     record_dropped_terms,
     reveal_command,
     reveal_label,
+    review_summary,
     search_summary,
     sort_photos,
     source_label,
@@ -270,6 +276,7 @@ from photo_tagger.metadata import (
 )
 from photo_tagger.notify import APP_NAME, notify
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
+from photo_tagger.script_guard import find_in_result
 from photo_tagger.undo import (
     UndoError,
     list_journals,
@@ -297,8 +304,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
     from exiftool import ExifToolHelper
+    from pydantic_ai import BinaryContent
 
     from photo_tagger.metadata import WriteTarget
+    from photo_tagger.models import InferenceResult
     from photo_tagger.undo import UndoJournal, UndoResult, WriteRecord
     from photo_tagger.vocabulary import Vocabulary
     from photo_tagger.vocabulary_build import TrimResult
@@ -487,6 +496,7 @@ _SELECT_STATUSES: tuple[tuple[str, str], ...] = (
     (FILTER_SAVED, gettext_noop("Saved")),
     (FILTER_FAILED, gettext_noop("Failed")),
     (FILTER_UNTAGGED, gettext_noop("Untagged")),
+    (FILTER_MIXED_SCRIPT, gettext_noop("Mixed writing systems")),
 )
 
 # The Write To submenu, mirroring the CLI's --sidecar-mode. Each entry is (mode, menu label,
@@ -656,6 +666,8 @@ QLabel#error {
     background: rgba(248, 81, 73, 18%); color: #f85149;
     border: 1px solid rgba(248, 81, 73, 45%); border-radius: 6px; padding: 8px;
 }
+/* Amber, not red: the text is usable, it just deserves a read before it is saved. */
+QLabel#warning { color: #d29922; }
 """
 
 
@@ -757,6 +769,7 @@ class GenerateWorker(QObject):
         hints: dict[str, str] | None = None,
         vocabulary: Vocabulary | None = None,
         vocabulary_strict: bool = False,
+        repair_language: bool = False,
     ) -> None:
         """
         Store the run parameters; nothing happens until :meth:`run`.
@@ -776,6 +789,7 @@ class GenerateWorker(QObject):
         self._hints = hints or {}
         self._vocabulary = vocabulary
         self._vocabulary_strict = vocabulary_strict
+        self._repair_language = repair_language
         # The vocabulary listing rides in the user prompt (so the model prefers those terms in the
         # first place), which also puts it in the cache namespace below: swapping vocabularies
         # starts a fresh slice instead of replaying keywords chosen under the old one.
@@ -847,6 +861,41 @@ class GenerateWorker(QObject):
             ),
         )
 
+    def _repair_one(
+        self,
+        inference: InferenceResult,
+        agent: object,
+        jpeg: BinaryContent,
+        *,
+        file_name: str,
+    ) -> InferenceResult:
+        """
+        Ask the model once more when its answer mixed writing systems, if the setting is on.
+
+        The GUI's counterpart to the pipeline's ``--repair-language``, kept here rather than shared
+        because the two call the agent differently (no sampling knobs here, and no batch usage to
+        fold into). A failed repair keeps the original answer: the note over the fields still marks
+        it, and a proposal you can edit beats no proposal.
+        """
+        if not self._repair_language:
+            return inference
+        finding = find_in_result(inference)
+        if finding is None:
+            return inference
+        logger.info("gui_foreign_script_repair_started", file=file_name, terms=finding.terms)
+        prompt = build_repair_prompt(
+            title=inference.title,
+            description=inference.description,
+            keywords=inference.keywords,
+            terms=finding.terms,
+            output_language=self._output_language,
+        )
+        try:
+            return analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
+        except Exception as exc:  # noqa: BLE001 - a failed repair must not cost the photo its proposal.
+            logger.warning("gui_foreign_script_repair_failed", file=file_name, error=str(exc))
+            return inference
+
     def _generate_one(self, agent: object, path: Path, cache: InferenceCache | None) -> Proposal:
         """Read existing metadata, run the model (or hit the cache), and assemble a proposal."""
         # The content hash rides along in the context read (one exiftool call), so the cache
@@ -882,6 +931,9 @@ class GenerateWorker(QObject):
         if inference is None:
             jpeg = prepare_image_for_agent(path, max_size=_PREVIEW_MAX)
             inference = analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
+            # Before the cache write, as in the CLI pipeline, so what a rerun replays is the
+            # repaired answer and the extra call is paid once.
+            inference = self._repair_one(inference, agent, jpeg, file_name=path.name)
             if not skip_cache:
                 safe_cache_put(cache, content_key, inference, file_name=path.name)
         else:
@@ -899,6 +951,15 @@ class GenerateWorker(QObject):
                 file=path.name,
                 mapped=snapped.mapped,
                 dropped=snapped.dropped,
+            )
+        # Re-checked on a cache hit too: the check is pure, so the flag never has to be stored.
+        finding = find_in_result(inference)
+        if finding is not None:
+            logger.warning(
+                "gui_foreign_script_in_output",
+                file=path.name,
+                dominant=finding.dominant,
+                terms=finding.terms,
             )
         return Proposal(
             path=path,
@@ -918,6 +979,7 @@ class GenerateWorker(QObject):
             seconds=inference.seconds,
             vocabulary_mapped=snapped.mapped,
             vocabulary_dropped=snapped.dropped,
+            foreign_terms=list(finding.terms) if finding is not None else [],
         )
 
 
@@ -1773,6 +1835,7 @@ class MainWindow(QMainWindow):
         self._vocabulary_error = ""
         self._vocabulary_strict = output.vocabulary_strict
         self._session_gap = output.session_gap_minutes
+        self._repair_language = self._defaults.inference.repair_language
         # What the vocabulary did over the run in flight, for its closing summary line.
         self._vocabulary_mapped = 0
         self._vocabulary_dropped: dict[str, int] = {}
@@ -1941,6 +2004,7 @@ class MainWindow(QMainWindow):
             ),
         )
         settings_menu.addAction(self._undo_log_action)
+        self._build_repair_action(settings_menu)
         self._build_notify_actions(settings_menu)
         settings_menu.addSeparator()
         keyword_rules = settings_menu.addAction(
@@ -1975,6 +2039,25 @@ class MainWindow(QMainWindow):
                 "surface (prompt file, sampling, workers, filters, ...). Created if missing.",
             ),
         )
+
+    def _build_repair_action(self, settings_menu: QMenu) -> None:
+        """Add the toggle that lets a run pay a second call to undo a mixed-script answer."""
+        self._repair_action = QAction(_("Rewrite Mixed-Language Output"), self)
+        self._repair_action.setCheckable(True)
+        self._repair_action.setChecked(self._repair_language)
+        self._repair_action.setToolTip(
+            tooltip(
+                "When the model answers in two writing systems, ask it again for the output "
+                "language ('Ocarina' for a stray '陶笛'). Costs one extra call per affected "
+                "photo. Off by default; those photos are marked either way.",
+            ),
+        )
+        self._repair_action.toggled.connect(self._on_repair_toggled)
+        settings_menu.addAction(self._repair_action)
+
+    def _on_repair_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
+        """Record the repair choice so the next generate run and a settings save both see it."""
+        self._repair_language = enabled
 
     def _build_notify_actions(self, settings_menu: QMenu) -> None:
         """Add the two end-of-run alert toggles, the sound one tied to the notification one."""
@@ -2229,6 +2312,7 @@ class MainWindow(QMainWindow):
             undo_log=self._undo_log_action.isChecked(),
             notify=self._notify_action.isChecked(),
             notify_sound=self._notify_sound_action.isChecked(),
+            repair_language=self._repair_language,
         )
 
     def _config_target(self) -> Path:
@@ -3180,6 +3264,7 @@ class MainWindow(QMainWindow):
             (_("Saved"), FILTER_SAVED),
             (_("Failed"), FILTER_FAILED),
             (_("Untagged"), FILTER_UNTAGGED),
+            (_("Mixed writing systems"), FILTER_MIXED_SCRIPT),
         ):
             self._grid_filter_combo.addItem(label, criterion)
         self._grid_filter_combo.setToolTip(tooltip("Show only the photos in the chosen state."))
@@ -3296,7 +3381,21 @@ class MainWindow(QMainWindow):
         existing_header.addWidget(self._existing_source)
         existing_header.addStretch(1)
         grid.addLayout(existing_header, 0, 1)
-        grid.addWidget(self._section_label(_("New (editable)")), 0, 2)
+        # The New header carries the review note the same way, so a warning about the generated
+        # text sits over the fields it is about instead of somewhere else in the pane.
+        new_header = QHBoxLayout()
+        new_header.addWidget(self._section_label(_("New (editable)")))
+        self._review_note = QLabel("")
+        self._review_note.setObjectName("warning")
+        self._review_note.setToolTip(
+            tooltip(
+                "The generated text mixes writing systems. That is right when the photo shows "
+                "that text, and a word the model failed to translate when it does not.",
+            ),
+        )
+        new_header.addWidget(self._review_note)
+        new_header.addStretch(1)
+        grid.addLayout(new_header, 0, 2)
 
         self._existing_title = QLineEdit()
         self._existing_title.setReadOnly(True)
@@ -4406,6 +4505,7 @@ class MainWindow(QMainWindow):
         self._description.setPlainText(item.description)
         self._keywords.setPlainText(keywords_to_text(item.keywords))
         self._hint.setText(item.hint)
+        self._review_note.setText(foreign_terms_note(item.foreign_terms))
         self._show_detail(enabled=True)
         self._update_error_banner(item)
         self._refresh_derived()
@@ -4887,6 +4987,7 @@ class MainWindow(QMainWindow):
             hints={str(item.path): item.hint for item in items if item.hint},
             vocabulary=self._vocabulary,
             vocabulary_strict=self._vocabulary_strict,
+            repair_language=self._repair_language,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -4969,10 +5070,13 @@ class MainWindow(QMainWindow):
         self._after_generation()
 
     def _generation_summary(self) -> str:
-        """Build the closing line of a run: that it finished, plus what the vocabulary did."""
-        finished = _("Generation finished.")
-        summary = vocabulary_summary(self._vocabulary_mapped, self._vocabulary_dropped)
-        return f"{finished} {summary}" if summary else finished
+        """Build the closing line: the run finished, what the vocabulary did, what to re-read."""
+        parts = [
+            _("Generation finished."),
+            vocabulary_summary(self._vocabulary_mapped, self._vocabulary_dropped),
+            review_summary(sum(1 for item in self._items.values() if item.foreign_terms)),
+        ]
+        return " ".join(part for part in parts if part)
 
     def _after_generation(self) -> None:
         """
@@ -6122,7 +6226,7 @@ class MainWindow(QMainWindow):
         label = _(_STATUS_LABEL[item.status]) if _STATUS_LABEL[item.status] else ""
         if item.status == READY and item.from_cache:
             label = _("ready (cached)")
-        leaf.setText(_COL_STATUS, label)
+        leaf.setText(_COL_STATUS, mark_mixed_script(label, item.foreign_terms))
         leaf.setData(_COL_STATUS, _STATUS_RANK_ROLE, status_sort_rank(item.status))
         color = _STATUS_COLOR.get(item.status)
         leaf.setData(
@@ -6130,9 +6234,10 @@ class MainWindow(QMainWindow):
             Qt.ItemDataRole.ForegroundRole,
             QBrush(color) if color is not None else None,
         )
-        # Surface the failure reason on hover so it is discoverable straight from the tree. Model
-        # errors can be a paragraph long, hence the wrap.
-        leaf.setToolTip(_COL_STATUS, wrap_tooltip(item.error) if item.status == FAILED else "")
+        # Surface on hover what the cell only had room to mark: the failure reason, or the words
+        # that made the text mixed. Model errors can be a paragraph long, hence the wrap.
+        hover = item.error if item.status == FAILED else foreign_terms_note(item.foreign_terms)
+        leaf.setToolTip(_COL_STATUS, wrap_tooltip(hover) if hover else "")
         if item.known_fields is not None:
             leaf.setText(_COL_TAGGED, tagged_summary(item.known_fields))
             leaf.setToolTip(_COL_TAGGED, wrap_tooltip(tagged_tooltip(item.known_fields)))
@@ -6280,6 +6385,7 @@ _BADGE_STYLE = {
     BADGE_UNSAVED: ("#6366f1", "•"),  # indigo dot: generated, not saved yet
     BADGE_METADATA: ("#8a8a8a", "M"),  # file already carries metadata
     BADGE_SIDECAR: ("#0e7490", "S"),  # an XMP sidecar exists
+    BADGE_MIXED_SCRIPT: ("#d29922", "!"),  # amber: the text mixes writing systems
 }
 _BADGE_TEXT = {
     BADGE_FAILED: gettext_noop("generation failed"),
@@ -6287,6 +6393,7 @@ _BADGE_TEXT = {
     BADGE_UNSAVED: gettext_noop("generated, not saved yet"),
     BADGE_METADATA: gettext_noop("already has metadata"),
     BADGE_SIDECAR: gettext_noop("has an XMP sidecar"),
+    BADGE_MIXED_SCRIPT: gettext_noop("mixes writing systems"),
 }
 _LIFECYCLE_BADGES = frozenset({BADGE_FAILED, BADGE_SAVED, BADGE_UNSAVED})
 

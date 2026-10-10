@@ -95,6 +95,9 @@ class ReportRow:
     seconds: float = 0.0
     from_cache: bool | None = None
     retry: bool | None = None
+    # Non-empty when the generated text mixes writing systems: the bits in the odd script out. A
+    # column rather than a bare flag, so the cell says what to look at without opening the photo.
+    foreign_terms: list[str] = field(default_factory=list)
     error: str = ""
 
     def as_dict(self) -> dict[str, str]:
@@ -124,6 +127,7 @@ class ReportRow:
             "seconds": f"{self.seconds:.3f}",
             "from_cache": _format_bool(value=self.from_cache),
             "retry": _format_bool(value=self.retry),
+            "foreign_terms": neutralize_formula(_LIST_SEP.join(self.foreign_terms)),
             "error": neutralize_formula(self.error),
         }
 

@@ -536,6 +536,7 @@ class _NDJSONEmitter:
             "output_tokens": outcome.output_tokens,
             "total_tokens": outcome.total_tokens,
             "seconds": outcome.seconds,
+            "foreign_terms": outcome.foreign_terms,
         }
         line = json.dumps(payload, ensure_ascii=False) + "\n"
         with self._lock:
@@ -587,6 +588,7 @@ def _outcome_to_report_row(outcome: ImageOutcome) -> ReportRow:
         seconds=outcome.seconds,
         from_cache=outcome.from_cache,
         retry=outcome.retry,
+        foreign_terms=list(outcome.foreign_terms),
     )
 
 

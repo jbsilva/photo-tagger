@@ -57,6 +57,13 @@ def test_as_dict_joins_lists_with_semicolons() -> None:
     assert rendered["existing_keywords"] == "Old"
 
 
+def test_as_dict_reports_the_mixed_script_terms() -> None:
+    """The review column names what to look at, and is blank for the photos with nothing wrong."""
+    flagged = ReportRow(foreign_terms=["陶笛", "居酒屋"]).as_dict()
+    assert flagged["foreign_terms"] == "陶笛; 居酒屋"
+    assert ReportRow().as_dict()["foreign_terms"] == ""
+
+
 def test_as_dict_renders_tristate_bool_and_numbers() -> None:
     """from_cache/retry are true/false when set and blank when None; numbers stringify."""
     known = ReportRow(from_cache=True, retry=False, input_tokens=5, seconds=1.5).as_dict()

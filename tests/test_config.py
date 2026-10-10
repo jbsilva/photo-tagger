@@ -7,6 +7,7 @@ from photo_tagger.config import (
     DEFAULT_SYSTEM_PROMPT,
     _env_float,
     _env_int,
+    build_repair_prompt,
     build_system_prompt,
     exiftool_executable,
 )
@@ -85,3 +86,32 @@ def test_env_float_warns_and_falls_back_on_garbage(monkeypatch: pytest.MonkeyPat
     with pytest.warns(RuntimeWarning, match="PT_TEST_FLOAT"):
         result = _env_float("PT_TEST_FLOAT", 0.2)
     assert result == pytest.approx(0.2)
+
+
+def test_repair_prompt_quotes_the_answer_and_names_the_terms() -> None:
+    """The follow-up gives the model everything it needs to edit rather than start over."""
+    prompt = build_repair_prompt(
+        title="Decorated陶笛 with Geometric Pattern",
+        description="A陶笛 on a white surface.",
+        keywords=["陶笛<Wind Instrument", "Geometric Pattern"],
+        terms=["陶笛"],
+    )
+    assert "Decorated陶笛 with Geometric Pattern" in prompt
+    assert "陶笛<Wind Instrument, Geometric Pattern" in prompt
+    assert "Not in English: 陶笛" in prompt
+    # The escape hatch survives: text the photo actually shows is kept, not stripped.
+    assert "If the photo actually shows that text" in prompt
+
+
+def test_repair_prompt_asks_for_the_chosen_language() -> None:
+    """A German run is asked for German, in every sentence that names a language."""
+    prompt = build_repair_prompt(
+        title="Decorated陶笛",
+        description="A陶笛.",
+        keywords=[],
+        terms=["陶笛"],
+        output_language="German",
+    )
+    assert "must be written in German" in prompt
+    assert "Not in German" in prompt
+    assert "English" not in prompt

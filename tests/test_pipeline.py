@@ -2197,3 +2197,284 @@ def test_process_photo_journals_nothing_when_the_write_fails(
 
     assert process_photo(image, ctx) is False
     assert journal.entries == 0
+
+
+_MIXED_SCRIPT_RESULT = InferenceResult(
+    title="Decorated陶笛 with Geometric Pattern",
+    description="A陶笛 with a geometric pattern rests on a plain white surface.",
+    keywords=["陶笛<Wind Instrument", "Geometric Pattern"],
+)
+
+
+def test_process_photo_flags_mixed_script_output(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A model that answered in two writing systems marks the photo for review."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    patched_pipeline["analyze"].return_value = _MIXED_SCRIPT_RESULT
+    ctx = _ctx()
+    scratch: _InferenceScratch = {}
+
+    assert process_photo(image, ctx, outcome_sink=scratch) is True
+
+    assert scratch["foreign_terms"] == ["陶笛"]
+    assert ctx.usage.flagged_for_review == {image}
+
+
+def test_process_photo_leaves_clean_output_unflagged(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """The usual case costs nothing and says nothing."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    ctx = _ctx()
+    scratch: _InferenceScratch = {}
+
+    assert process_photo(image, ctx, outcome_sink=scratch) is True
+
+    assert "foreign_terms" not in scratch
+    assert ctx.usage.flagged_for_review == set()
+
+
+def test_a_flagged_photo_is_still_written(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """Mixed script is sometimes right, so the flag reports rather than withholds the metadata."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    patched_pipeline["analyze"].return_value = _MIXED_SCRIPT_RESULT
+
+    assert process_photo(image, _ctx()) is True
+
+    assert patched_pipeline["write"].call_args.kwargs["title"] == _MIXED_SCRIPT_RESULT.title
+
+
+def test_run_batch_lists_the_photos_worth_a_second_look(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """The flagged files reach BatchTotals, so the summary file and the console can name them."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(2)]
+    for path in files:
+        path.write_text("x")
+    patched_pipeline["analyze"].return_value = _MIXED_SCRIPT_RESULT
+    outcomes: list[ImageOutcome] = []
+
+    totals = run_batch(
+        files,
+        agent=_FAKE_AGENT,
+        options=ProcessingOptions(),
+        on_image_result=outcomes.append,
+    )
+
+    assert totals.flagged_files == sorted(str(path) for path in files)
+    assert [outcome.foreign_terms for outcome in outcomes] == [["陶笛"], ["陶笛"]]
+
+
+def test_a_photo_analyzed_twice_is_one_photo_to_review(tmp_path: Path) -> None:
+    """A write failure sends the photo back through the retry pass; the flag must not double."""
+    image = tmp_path / "img.cr3"
+    usage = _UsageAccumulator()
+    usage.add_review(image)
+    usage.add_review(image)
+    assert usage.flagged_for_review == {image}
+
+
+# One first answer plus one repair: the whole point of the option is that it is exactly two.
+_WITH_REPAIR = 2
+
+_REPAIRED_RESULT = InferenceResult(
+    title="Decorated Ocarina with Geometric Pattern",
+    description="An ocarina with a geometric pattern rests on a plain white surface.",
+    keywords=["Ocarina<Wind Instrument", "Geometric Pattern"],
+    input_tokens=7,
+    output_tokens=3,
+    total_tokens=10,
+    seconds=0.2,
+)
+
+
+def test_repair_is_off_by_default(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A mixed-script answer costs one call and is written as it came unless repair is asked for."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    patched_pipeline["analyze"].return_value = _MIXED_SCRIPT_RESULT
+
+    assert process_photo(image, _ctx()) is True
+
+    assert patched_pipeline["analyze"].call_count == 1
+
+
+def test_repair_costs_nothing_on_a_clean_answer(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """Turning the option on must not put a second call on every photo in the batch."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    assert process_photo(image, _ctx(options=ProcessingOptions(repair_language=True))) is True
+
+    assert patched_pipeline["analyze"].call_count == 1
+
+
+def test_repair_asks_the_model_again_with_the_same_image(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+    stub_image_bytes: BinaryContent,
+) -> None:
+    """The follow-up quotes the previous answer, names the terms, and carries the photo."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, _REPAIRED_RESULT]
+    ctx = _ctx(options=ProcessingOptions(repair_language=True))
+    scratch: _InferenceScratch = {}
+
+    assert process_photo(image, ctx, outcome_sink=scratch) is True
+
+    repair_call = patched_pipeline["analyze"].call_args_list[1].kwargs
+    assert repair_call["image_bytes"] is stub_image_bytes
+    assert "陶笛" in repair_call["user_prompt"]
+    assert _MIXED_SCRIPT_RESULT.title in repair_call["user_prompt"]
+    assert "English" in repair_call["user_prompt"]
+    # The repaired text is what lands on the file, and the flag is gone with it.
+    assert patched_pipeline["write"].call_args.kwargs["title"] == _REPAIRED_RESULT.title
+    assert "foreign_terms" not in scratch
+    assert ctx.usage.flagged_for_review == set()
+
+
+def test_repair_rewrites_the_prompt_in_the_chosen_language(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """The follow-up asks for --output-language, not for English."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, _REPAIRED_RESULT]
+    options = ProcessingOptions(repair_language=True, output_language="Brazilian Portuguese")
+
+    process_photo(image, _ctx(options=options))
+
+    assert "Brazilian Portuguese" in patched_pipeline["analyze"].call_args.kwargs["user_prompt"]
+
+
+def test_repair_reports_what_both_calls_cost(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A repaired photo's row must not understate its spend by hiding the first call."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    first = InferenceResult(
+        title=_MIXED_SCRIPT_RESULT.title,
+        description=_MIXED_SCRIPT_RESULT.description,
+        keywords=list(_MIXED_SCRIPT_RESULT.keywords),
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        seconds=0.1,
+    )
+    patched_pipeline["analyze"].side_effect = [first, _REPAIRED_RESULT]
+    ctx = _ctx(options=ProcessingOptions(repair_language=True))
+    scratch: _InferenceScratch = {}
+
+    process_photo(image, ctx, outcome_sink=scratch)
+
+    merged = scratch["inference"]
+    assert merged.total_tokens == first.total_tokens + _REPAIRED_RESULT.total_tokens
+    assert merged.seconds == pytest.approx(0.3)
+    # Both calls were counted once each on the batch, not folded into one.
+    assert ctx.usage.inference_calls == _WITH_REPAIR
+    assert ctx.usage.language_repairs == 1
+
+
+def test_a_repair_that_fails_keeps_the_original_answer(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A photo tagged imperfectly beats a photo not tagged, so the follow-up may fail quietly."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, RuntimeError("boom")]
+    ctx = _ctx(options=ProcessingOptions(repair_language=True))
+    scratch: _InferenceScratch = {}
+
+    assert process_photo(image, ctx, outcome_sink=scratch) is True
+
+    assert patched_pipeline["write"].call_args.kwargs["title"] == _MIXED_SCRIPT_RESULT.title
+    # Still flagged: nothing was fixed, so the photo is still one to go back to.
+    assert scratch["foreign_terms"] == ["陶笛"]
+    assert ctx.usage.language_repairs == 0
+
+
+def test_a_repair_that_does_not_help_leaves_the_photo_flagged(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A model that answers in two scripts twice gets no third try; the flag does the rest."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, _MIXED_SCRIPT_RESULT]
+    ctx = _ctx(options=ProcessingOptions(repair_language=True))
+    scratch: _InferenceScratch = {}
+
+    process_photo(image, ctx, outcome_sink=scratch)
+
+    assert patched_pipeline["analyze"].call_count == _WITH_REPAIR
+    assert scratch["foreign_terms"] == ["陶笛"]
+
+
+def test_the_cache_stores_the_repaired_answer(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A rerun replays the fixed text and never pays for the second call again."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    patched_pipeline["analyze"].side_effect = [_MIXED_SCRIPT_RESULT, _REPAIRED_RESULT]
+    stored: dict[str, InferenceResult] = {}
+    cache = cast(
+        "Any",
+        SimpleNamespace(
+            get=stored.get,
+            put=stored.__setitem__,
+        ),
+    )
+    ctx = _ctx(options=ProcessingOptions(repair_language=True), cache=cache)
+
+    with patch("photo_tagger.pipeline.content_cache_key", return_value="key"):
+        process_photo(image, ctx)
+
+    assert stored["key"].title == _REPAIRED_RESULT.title
+
+
+def test_run_batch_counts_the_repair_calls(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """The extra calls show in the totals, so the cost of the option is visible in the summary."""
+    files = [tmp_path / f"img{i}.cr3" for i in range(2)]
+    for path in files:
+        path.write_text("x")
+    patched_pipeline["analyze"].side_effect = [
+        _MIXED_SCRIPT_RESULT,
+        _REPAIRED_RESULT,
+        _MIXED_SCRIPT_RESULT,
+        _REPAIRED_RESULT,
+    ]
+
+    totals = run_batch(
+        files,
+        agent=_FAKE_AGENT,
+        options=ProcessingOptions(repair_language=True),
+    )
+
+    assert totals.language_repairs == _WITH_REPAIR
+    assert totals.flagged_files == []

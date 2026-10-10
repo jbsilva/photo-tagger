@@ -5415,3 +5415,165 @@ def test_viewer_cache_holds_one_photo_at_a_time(
     # Removing the cached photo drops its pixmap with it.
     window._remove_items([str(b)])  # noqa: SLF001
     assert window._viewer_cache is None  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# Mixed-language output
+# ---------------------------------------------------------------------------
+
+
+_GUI_MIXED = InferenceResult(
+    title="Decorated陶笛",
+    description="A陶笛 on a white surface.",
+    keywords=["陶笛<Wind Instrument"],
+)
+_GUI_REPAIRED = InferenceResult(
+    title="Decorated Ocarina",
+    description="An ocarina on a white surface.",
+    keywords=["Ocarina<Wind Instrument"],
+)
+
+
+def test_worker_marks_a_proposal_that_mixes_writing_systems(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag reaches the window with the proposal, naming the word to look at."""
+    _stub_generation(monkeypatch)
+    monkeypatch.setattr(gui, "analyze_image_with_ai", lambda **_k: _GUI_MIXED)
+    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")])
+    done: list[Proposal] = []
+    worker.file_done.connect(done.append)
+    worker.run()
+
+    assert done[0].foreign_terms == ["陶笛"]
+
+
+def test_worker_repairs_mixed_output_when_the_setting_is_on(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the toggle on, a second call rewrites the answer and clears the flag."""
+    _stub_generation(monkeypatch)
+    answers = iter([_GUI_MIXED, _GUI_REPAIRED])
+    prompts: list[str] = []
+
+    def record(**kwargs: object) -> InferenceResult:
+        prompts.append(str(kwargs["user_prompt"]))
+        return next(answers)
+
+    monkeypatch.setattr(gui, "analyze_image_with_ai", record)
+    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], repair_language=True)
+    done: list[Proposal] = []
+    worker.file_done.connect(done.append)
+    worker.run()
+
+    assert "陶笛" in prompts[1]
+    assert done[0].title == "Decorated Ocarina"
+    assert done[0].foreign_terms == []
+
+
+def test_worker_keeps_the_answer_when_the_repair_call_fails(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dead server on the follow-up costs the fix, never the proposal."""
+    _stub_generation(monkeypatch)
+    answers = iter([_GUI_MIXED])
+
+    def flaky(**_k: object) -> InferenceResult:
+        try:
+            return next(answers)
+        except StopIteration:
+            msg = "the model server died on the follow-up"
+            raise RuntimeError(msg) from None
+
+    monkeypatch.setattr(gui, "analyze_image_with_ai", flaky)
+    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], repair_language=True)
+    done: list[Proposal] = []
+    worker.file_done.connect(done.append)
+    worker.run()
+
+    assert done[0].title == "Decorated陶笛"
+    assert done[0].foreign_terms == ["陶笛"]
+
+
+def test_the_detail_pane_says_when_the_text_mixes_writing_systems(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """The note sits over the editable fields and clears for a photo with nothing wrong."""
+    flagged = _jpeg(tmp_path / "a.jpg")
+    clean = _jpeg(tmp_path / "b.jpg")
+    window._add_inputs([flagged, clean])  # noqa: SLF001 - exercising the window's own state
+    items = window._items  # noqa: SLF001
+    items[str(flagged)].foreign_terms = ["陶笛"]
+
+    window._show_item(items[str(flagged)])  # noqa: SLF001
+    assert "陶笛" in window._review_note.text()  # noqa: SLF001
+
+    window._show_item(items[str(clean)])  # noqa: SLF001
+    assert window._review_note.text() == ""  # noqa: SLF001
+
+
+def test_the_repair_toggle_lands_in_the_saved_settings(window: gui.MainWindow) -> None:
+    """Flipping the Settings entry is what a config save then writes."""
+    window._repair_action.setChecked(True)  # noqa: SLF001
+    assert window._current_config_values().repair_language is True  # noqa: SLF001
+    window._repair_action.setChecked(False)  # noqa: SLF001
+    assert window._current_config_values().repair_language is False  # noqa: SLF001
+
+
+def test_select_by_status_isolates_the_mixed_script_photos(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """The route the run's closing line names: Check Only > Status > Mixed writing systems."""
+    flagged = _jpeg(tmp_path / "a.jpg")
+    clean = _jpeg(tmp_path / "b.jpg")
+    _add_dir(window, {"a": flagged, "b": clean})
+    window._items[str(flagged)].foreign_terms = ["陶笛"]  # noqa: SLF001
+
+    status = _select_submenu(window, "Check Only").actions()[1].menu()
+    entry = next(a for a in status.actions() if a.text() == "Mixed writing systems")
+    entry.trigger()
+
+    assert window._items[str(flagged)].selected is True  # noqa: SLF001
+    assert window._items[str(clean)].selected is False  # noqa: SLF001
+
+
+def test_the_grid_can_show_only_the_mixed_script_photos(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The folder grid offers the same filter, so a visual pass over a shoot works too."""
+    flagged = _jpeg(tmp_path / "a.jpg")
+    clean = _jpeg(tmp_path / "b.jpg")
+    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    _add_dir(window, {"a": flagged, "b": clean})
+    window._items[str(flagged)].foreign_terms = ["陶笛"]  # noqa: SLF001
+    _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
+
+    combo = window._grid_filter_combo  # noqa: SLF001
+    combo.setCurrentIndex(combo.findData(gui.FILTER_MIXED_SCRIPT))
+
+    assert _grid_order(window) == ["a.jpg"]
+
+
+def test_the_status_column_marks_a_mixed_script_photo(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """A flagged row can be found by scrolling, and hovering it names the words."""
+    flagged = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": flagged})
+    item = window._items[str(flagged)]  # noqa: SLF001
+    item.status = gui.READY
+    item.foreign_terms = ["陶笛"]
+    window._refresh_status_cell(item)  # noqa: SLF001
+
+    leaf = window._leaf_for(flagged)  # noqa: SLF001
+    assert leaf is not None
+    assert leaf.text(gui._COL_STATUS) == "ready ⚠"  # noqa: SLF001
+    assert "陶笛" in leaf.toolTip(gui._COL_STATUS)  # noqa: SLF001

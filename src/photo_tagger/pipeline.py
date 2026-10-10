@@ -23,6 +23,7 @@ from photo_tagger.config import (
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_USER_PROMPT,
     SidecarMode,
+    build_repair_prompt,
 )
 from photo_tagger.errors import BatchError
 from photo_tagger.image_io import prepare_image_for_agent
@@ -33,7 +34,8 @@ from photo_tagger.metadata import (
     read_image_context,
     write_metadata_everywhere,
 )
-from photo_tagger.models import KeywordSet
+from photo_tagger.models import InferenceResult, KeywordSet
+from photo_tagger.script_guard import find_in_result
 from photo_tagger.sessions import build_session_vocabulary
 
 
@@ -42,10 +44,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from exiftool import ExifToolHelper  # type: ignore[attr-defined]
-    from pydantic_ai import Agent
+    from pydantic_ai import Agent, BinaryContent
 
     from photo_tagger.metadata import ImageContext
-    from photo_tagger.models import GeneratedMetadata, InferenceResult
+    from photo_tagger.models import GeneratedMetadata
     from photo_tagger.sessions import SessionPlan
     from photo_tagger.undo import UndoJournal
     from photo_tagger.vocabulary import Vocabulary
@@ -66,6 +68,7 @@ if TYPE_CHECKING:
         from_cache: bool
         context: ImageContext
         merged_keywords: KeywordSet
+        foreign_terms: list[str]
 
 
 # Pause between the first pass and the retry pass. First-pass failures often mean the model
@@ -95,6 +98,9 @@ class ImageOutcome:
     and the camera/location EXIF read as context. They default to empty so a photo that fails before
     inference still yields a row with whatever was read. ``keywords`` stays the raw AI list (what
     NDJSON emits); ``written_keywords`` is the merged set that landed on the file.
+
+    A non-empty ``foreign_terms`` marks the photo for review: the generated text mixes writing
+    systems (see :mod:`photo_tagger.script_guard`), and these are the bits in the odd one out.
     """
 
     file: Path
@@ -114,6 +120,7 @@ class ImageOutcome:
     camera_info: dict[str, str] = field(default_factory=dict)
     location_tags: dict[str, str] = field(default_factory=dict)
     gps_position: str | None = None
+    foreign_terms: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -144,8 +151,13 @@ class ProcessingOptions:
     vocabulary: Vocabulary | None = None
     vocabulary_strict: bool = False
     # The language the keywords are in. The pipeline itself does not generate text, but session
-    # harmonization has to know which morphology rules may be applied when matching terms.
+    # harmonization has to know which morphology rules may be applied when matching terms, and the
+    # repair prompt has to name the language to rewrite into.
     output_language: str = DEFAULT_OUTPUT_LANGUAGE
+    # Spend a second model call rewriting an answer that mixed writing systems. Off by default: the
+    # flag alone is free and always right, while a repair costs a call and can strip a foreign term
+    # the photo genuinely showed.
+    repair_language: bool = False
 
 
 @contextlib.contextmanager
@@ -167,6 +179,8 @@ class _UsageAccumulator:
     failure_kinds: dict[str, int] = field(default_factory=dict)
     vocabulary_mapped: int = 0
     vocabulary_dropped: dict[str, int] = field(default_factory=dict)
+    flagged_for_review: set[Path] = field(default_factory=set)
+    language_repairs: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def add(self, result: InferenceResult) -> None:
@@ -202,6 +216,21 @@ class _UsageAccumulator:
         """Count one photo that failed for good, bucketed by coarse *kind*."""
         with self._lock:
             self.failure_kinds[kind] = self.failure_kinds.get(kind, 0) + 1
+
+    def add_review(self, path: Path) -> None:
+        """
+        Mark one photo as worth a second look before its metadata is trusted.
+
+        A set, not a counter: a photo that fails its write and comes back through the retry pass is
+        analyzed twice, and the same flag raised twice is still one photo to review.
+        """
+        with self._lock:
+            self.flagged_for_review.add(path)
+
+    def add_repair(self) -> None:
+        """Count one extra model call spent rewriting an answer into the output language."""
+        with self._lock:
+            self.language_repairs += 1
 
     def add_vocabulary(self, *, mapped: int, dropped: Iterable[str]) -> None:
         """
@@ -321,18 +350,13 @@ class _BatchContext:
     journal: UndoJournal | None = None
 
 
-def _run_model(image_path: Path, ctx: _BatchContext, *, contextual_prompt: str) -> InferenceResult:
-    """Prepare the JPEG bytes, call the model, and fold the usage into the batch totals."""
-    jpeg_bytes = prepare_image_for_agent(
-        image_path,
-        jpg_quality=ctx.options.jpeg_quality,
-        max_size=ctx.options.jpeg_dimensions,
-    )
+def _call_model(ctx: _BatchContext, jpeg_bytes: BinaryContent, prompt: str) -> InferenceResult:
+    """Run one inference on prepared bytes and fold its usage into the batch totals."""
     try:
         inference = analyze_image_with_ai(
             image_bytes=jpeg_bytes,
             agent=ctx.agent,
-            user_prompt=contextual_prompt,
+            user_prompt=prompt,
             temperature=ctx.options.temperature,
             max_tokens=ctx.options.max_tokens,
             timeout_seconds=ctx.options.timeout_seconds,
@@ -348,6 +372,80 @@ def _run_model(image_path: Path, ctx: _BatchContext, *, contextual_prompt: str) 
         raise
     ctx.usage.add(inference)
     return inference
+
+
+def _merge_cost(first: InferenceResult, second: InferenceResult) -> InferenceResult:
+    """
+    Return *second*'s text carrying what both calls cost.
+
+    The accumulator already counted each call on its own. This is for the per-photo row, which would
+    otherwise report a repaired photo as costing only its second call.
+    """
+    return InferenceResult(
+        title=second.title,
+        description=second.description,
+        keywords=second.keywords,
+        input_tokens=first.input_tokens + second.input_tokens,
+        output_tokens=first.output_tokens + second.output_tokens,
+        total_tokens=first.total_tokens + second.total_tokens,
+        seconds=round(first.seconds + second.seconds, 3),
+    )
+
+
+def _repair_foreign_script(
+    inference: InferenceResult,
+    ctx: _BatchContext,
+    jpeg_bytes: BinaryContent,
+    *,
+    file_name: str,
+) -> InferenceResult:
+    """
+    Ask the model once more, in place, when its answer mixed writing systems.
+
+    Only the same agent and the same image: the question that decides the right fix is whether the
+    photo shows that text, which no text-only pass can answer. A failed repair is logged and the
+    original answer kept, because a photo that was tagged imperfectly still beats one not tagged.
+
+    Runs before the cache write in :func:`_resolve_inference`, so what gets stored (and replayed) is
+    the repaired answer and a rerun never pays for the second call again.
+    """
+    if not ctx.options.repair_language:
+        return inference
+    finding = find_in_result(inference)
+    if finding is None:
+        return inference
+    logger.info("foreign_script_repair_started", file=file_name, terms=finding.terms)
+    prompt = build_repair_prompt(
+        title=inference.title,
+        description=inference.description,
+        keywords=inference.keywords,
+        terms=finding.terms,
+        output_language=ctx.options.output_language,
+    )
+    try:
+        repaired = _call_model(ctx, jpeg_bytes, prompt)
+    except Exception as exc:  # noqa: BLE001 - a failed repair must not cost the photo its tags.
+        logger.warning("foreign_script_repair_failed", file=file_name, error=str(exc))
+        return inference
+    ctx.usage.add_repair()
+    logger.info(
+        "foreign_script_repair_finished",
+        file=file_name,
+        title=repaired.title,
+        still_mixed=find_in_result(repaired) is not None,
+    )
+    return _merge_cost(inference, repaired)
+
+
+def _run_model(image_path: Path, ctx: _BatchContext, *, contextual_prompt: str) -> InferenceResult:
+    """Prepare the JPEG bytes, call the model, and repair an answer that mixed writing systems."""
+    jpeg_bytes = prepare_image_for_agent(
+        image_path,
+        jpg_quality=ctx.options.jpeg_quality,
+        max_size=ctx.options.jpeg_dimensions,
+    )
+    inference = _call_model(ctx, jpeg_bytes, contextual_prompt)
+    return _repair_foreign_script(inference, ctx, jpeg_bytes, file_name=image_path.name)
 
 
 def _cache_replay(
@@ -423,13 +521,14 @@ def _resolve_inference(
             our_event.set()
 
 
-def _record_scratch(
+def _record_scratch(  # noqa: PLR0913 - one kwarg per piece the sink collects; a bundle adds nothing.
     sink: _InferenceScratch | None,
     *,
     context: ImageContext | None = None,
     inference: InferenceResult | None = None,
     from_cache: bool = False,
     merged_keywords: KeywordSet | None = None,
+    foreign_terms: list[str] | None = None,
 ) -> None:
     """
     Write the supplied pieces into the per-call *sink*, a no-op when no sink was given.
@@ -446,6 +545,38 @@ def _record_scratch(
         sink["from_cache"] = from_cache
     if merged_keywords is not None:
         sink["merged_keywords"] = merged_keywords
+    if foreign_terms is not None:
+        sink["foreign_terms"] = foreign_terms
+
+
+def _flag_foreign_script(
+    inference: InferenceResult,
+    ctx: _BatchContext,
+    image_path: Path,
+    *,
+    sink: _InferenceScratch | None,
+) -> None:
+    """
+    Mark the photo for review when its generated text mixes writing systems.
+
+    Runs on every photo, cache replays included: the check is pure and costs nothing, so recomputing
+    it beats storing a verdict next to the cached inference and having to version that.
+
+    The photo is still written. Mixed script is sometimes right (the photo shows the text), so this
+    points a human at the result rather than deciding for them; ``--repair-language`` is what tries
+    to fix it.
+    """
+    finding = find_in_result(inference)
+    if finding is None:
+        return
+    logger.warning(
+        "foreign_script_in_output",
+        file=image_path.name,
+        dominant=finding.dominant,
+        terms=finding.terms,
+    )
+    ctx.usage.add_review(image_path)
+    _record_scratch(sink, foreign_terms=finding.terms)
 
 
 def _apply_vocabulary(keywords: list[str], ctx: _BatchContext, *, file_name: str) -> list[str]:
@@ -556,6 +687,7 @@ def process_photo(
             content_key=content_key,
         )
         _record_scratch(outcome_sink, inference=inference, from_cache=from_cache)
+        _flag_foreign_script(inference, ctx, image_path, sink=outcome_sink)
 
         title = inference.title
         description = inference.description
@@ -711,6 +843,7 @@ def _emit_outcome(
         camera_info=dict(context.camera_info) if context is not None else {},
         location_tags=dict(context.location_tags) if context is not None else {},
         gps_position=context.gps_position if context is not None else None,
+        foreign_terms=list(scratch.get("foreign_terms", [])),
     )
     try:
         on_image_result(outcome)
@@ -805,6 +938,11 @@ class BatchTotals:
     # terms strict mode rejected (with how often), so the summary file names the gaps to fill.
     vocabulary_mapped: int = 0
     vocabulary_dropped: dict[str, int] = field(default_factory=dict)
+    # Photos whose generated text mixes writing systems (see photo_tagger.script_guard). They were
+    # written like any other; the list is what to go back and read. Any that --repair-language
+    # rewrote are already gone from it; language_repairs counts the extra calls that took.
+    flagged_files: list[str] = field(default_factory=list)
+    language_repairs: int = 0
 
 
 def _notify_success(ctx: _BatchContext, image_file: Path) -> None:
@@ -1203,6 +1341,49 @@ def _run_retry_phase(
     return retry_successes, still_failing_from_retry + permanent
 
 
+def _log_totals(totals: BatchTotals, *, workers: int) -> None:
+    """
+    Report one finished batch: the tally always, then whatever else the run has to say.
+
+    The three conditional lines exist because a summary file is optional and a console is not: a
+    strict vocabulary that discarded half the keywords, a photo whose text needs a second look, and
+    a photo that never got written are all things a user has to learn without opening a report.
+    """
+    logger.info(
+        "processing_summary",
+        total_files=totals.total_files,
+        successful=totals.success,
+        failed=len(totals.failed_files),
+        initial_failures=totals.initial_failures,
+        retry_successes=totals.retry_successes,
+        input_tokens=totals.input_tokens,
+        output_tokens=totals.output_tokens,
+        total_tokens=totals.total_tokens,
+        inference_calls=totals.inference_calls,
+        inference_seconds=totals.inference_seconds,
+        cache_hits=totals.cache_hits,
+        dry_run=totals.dry_run,
+        workers=workers,
+    )
+    if totals.vocabulary_mapped or totals.vocabulary_dropped:
+        logger.info(
+            "vocabulary_summary",
+            mapped=totals.vocabulary_mapped,
+            dropped_terms=len(totals.vocabulary_dropped),
+            dropped=totals.vocabulary_dropped,
+        )
+    if totals.language_repairs:
+        logger.info("language_repairs", calls=totals.language_repairs)
+    if totals.flagged_files:
+        logger.warning(
+            "files_flagged_for_review",
+            count=len(totals.flagged_files),
+            files=totals.flagged_files,
+        )
+    if totals.failed_files:
+        logger.error("files_failed_after_retry", files=totals.failed_files)
+
+
 def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct caller knob.
     image_files: list[Path],
     agent: Agent[None, GeneratedMetadata],
@@ -1317,35 +1498,11 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
         failure_kinds=dict(usage.failure_kinds),
         vocabulary_mapped=usage.vocabulary_mapped,
         vocabulary_dropped=dict(usage.vocabulary_dropped),
+        flagged_files=sorted(str(path) for path in usage.flagged_for_review),
+        language_repairs=usage.language_repairs,
     )
 
-    logger.info(
-        "processing_summary",
-        total_files=totals.total_files,
-        successful=totals.success,
-        failed=len(still_failing),
-        initial_failures=totals.initial_failures,
-        retry_successes=totals.retry_successes,
-        input_tokens=totals.input_tokens,
-        output_tokens=totals.output_tokens,
-        total_tokens=totals.total_tokens,
-        inference_calls=totals.inference_calls,
-        inference_seconds=totals.inference_seconds,
-        cache_hits=totals.cache_hits,
-        dry_run=options.dry_run,
-        workers=workers,
-    )
-    if totals.vocabulary_mapped or totals.vocabulary_dropped:
-        # Named here, not just in the summary file, because a strict run that quietly discarded
-        # half the model's keywords should say so on the console.
-        logger.info(
-            "vocabulary_summary",
-            mapped=totals.vocabulary_mapped,
-            dropped_terms=len(totals.vocabulary_dropped),
-            dropped=totals.vocabulary_dropped,
-        )
-    if still_failing:
-        logger.error("files_failed_after_retry", files=totals.failed_files)
+    _log_totals(totals, workers=workers)
 
     if on_complete is not None:
         try:
