@@ -83,6 +83,7 @@ from photo_tagger.gui_state import (
     gui_cache_namespace,
     photo_matches_filter,
 )
+from photo_tagger.gui_usage import TRIGGER_BATCH, TRIGGER_WATCH
 from photo_tagger.metadata import (
     FIELD_COPYRIGHT,
     FIELD_DESCRIPTION,
@@ -6326,6 +6327,84 @@ _GUI_REPAIRED = InferenceResult(
     description="An ocarina on a white surface.",
     keywords=["Ocarina<Wind Instrument"],
 )
+
+
+class _SharedPacer:
+    """A pacer a watch hands its batches: it remembers its listener, its pauses, and its rests."""
+
+    def __init__(self) -> None:
+        self.rested_seconds = 30.0
+        self.rests_taken = 1
+        self.listener: object = None
+        self.paused = 0
+
+    def listen(self, on_rest: object) -> None:
+        self.listener = on_rest
+
+    def wait_before_next(self) -> bool:
+        self.rested_seconds += 5.0
+        self.rests_taken += 1
+        return True
+
+    def pause(self) -> None:
+        self.paused += 1
+
+
+def test_a_watch_batch_carries_on_with_the_watch_s_pacer(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The batch reports only its own rests, hears its rests, and stops the clock when done."""
+    _stub_generation(monkeypatch)
+    pacer = _SharedPacer()
+    options = GenerateOptions(pacer=pacer)
+    worker = workers.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg")], options=options)
+    worker.file_done.connect(lambda _p: None)
+    worker.run()
+
+    assert worker.rest_totals() == (5.0, 1)
+    assert pacer.listener is not None
+    assert pacer.paused == 1
+
+
+def test_the_watch_shares_one_pacer_and_renews_a_spent_one(window: gui.MainWindow) -> None:
+    """Every batch of one watch gets the same pacer; a cancelled one is replaced."""
+    window._pacing_dialog._duty_spin.setValue(50)  # noqa: SLF001
+    assert window._pacer_for(TRIGGER_WATCH) is None  # noqa: SLF001 - no watch running
+    window._watch_settings = object()  # noqa: SLF001 - any running watch
+
+    first = window._pacer_for(TRIGGER_WATCH)  # noqa: SLF001
+    assert first is not None
+    assert window._pacer_for(TRIGGER_WATCH) is first  # noqa: SLF001
+    assert window._pacer_for(TRIGGER_BATCH) is None  # noqa: SLF001
+
+    first.cancel()
+    assert window._pacer_for(TRIGGER_WATCH) is not first  # noqa: SLF001
+
+
+def test_a_watch_batch_s_extra_pass_keeps_the_watch_trigger(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry pass after a watch batch rests on the watch's pacer, not a fresh one."""
+    img = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": img})
+    window._items[str(img)].status = FAILED  # noqa: SLF001
+    window._generated_keys = [str(img)]  # noqa: SLF001
+    window._usage.run = SimpleNamespace(trigger=TRIGGER_WATCH)  # noqa: SLF001
+    window._pending_pass = RERUN_FAILED  # noqa: SLF001
+    started: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_run_generation",
+        lambda _items, **kwargs: started.append(kwargs["trigger"]),
+    )
+
+    window._run_pending_pass()  # noqa: SLF001
+    window._usage.run = None  # noqa: SLF001 - the stand-in cannot be closed like a real run
+
+    assert started == [TRIGGER_WATCH]
 
 
 def test_worker_marks_a_proposal_that_mixes_writing_systems(

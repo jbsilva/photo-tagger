@@ -125,7 +125,8 @@ class GenerateWorker(QObject):
         Its *refresh* reads past the cache and stores what comes back, for a run whose whole point
         is that the cached answer is the one it is unhappy with. Its *pacing* is followed per run: a
         window starts with this run and is forgotten when it ends, so a quick Generate on a handful
-        of photos never waits.
+        of photos never waits. A watch batch gets the watch's own *pacer* instead, and pauses it at
+        the end.
         """
         super().__init__()
         options = options or GenerateOptions()
@@ -149,7 +150,10 @@ class GenerateWorker(QObject):
         # starts a fresh slice instead of replaying keywords chosen under the old one.
         self._prompt = prompt_with_vocabulary(DEFAULT_USER_PROMPT, options.vocabulary)
         self._pacing = options.pacing
+        self._shared_pacer = options.pacer
         self._pacer: Pacer | None = None
+        # What a shared pacer had already rested before this run, so the run reports its own share.
+        self._rested_before = (0.0, 0)
         self._rest_announced = False
         self._stop = False
 
@@ -157,7 +161,8 @@ class GenerateWorker(QObject):
         """Return the seconds this run rested and how many rests it took."""
         if self._pacer is None:
             return 0.0, 0
-        return self._pacer.rested_seconds, self._pacer.rests_taken
+        seconds, rests = self._rested_before
+        return self._pacer.rested_seconds - seconds, self._pacer.rests_taken - rests
 
     def stop(self) -> None:
         """
@@ -183,6 +188,15 @@ class GenerateWorker(QObject):
                 resume_percent=plan.resume_percent,
             ),
         )
+
+    def _start_pacer(self) -> None:
+        """Take up the watch's pacer, or build this run's own when it is paced at all."""
+        if self._shared_pacer is not None:
+            self._pacer = self._shared_pacer
+            self._pacer.listen(self._announce_rest)
+            self._rested_before = (self._pacer.rested_seconds, self._pacer.rests_taken)
+        elif self._pacing is not None:
+            self._pacer = build_pacer(self._pacing, on_rest=self._announce_rest)
 
     def _may_start_next(self) -> bool:
         """
@@ -221,8 +235,7 @@ class GenerateWorker(QObject):
             return
 
         cache: InferenceCache | None = None
-        if self._pacing is not None:
-            self._pacer = build_pacer(self._pacing, on_rest=self._announce_rest)
+        self._start_pacer()
         try:
             cache = self._open_cache()
             self.started.emit(len(self._paths))
@@ -247,6 +260,9 @@ class GenerateWorker(QObject):
         finally:
             if cache is not None:
                 cache.close()
+            if self._shared_pacer is not None:
+                # Waiting for the watch's next photos is not work, as in the CLI's watch.
+                self._shared_pacer.pause()
             # Unconditional, for the reason given above: whatever went wrong, the window has to
             # hear that the run is over, or it stays in the "running" state (buttons disabled,
             # photos stuck at "working...") for the rest of the session. Opening the cache and

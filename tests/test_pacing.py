@@ -450,6 +450,30 @@ def test_pacer_cancel_ends_the_rest_and_every_later_wait() -> None:
     assert pacer.rested_seconds == 0
 
 
+def test_pacer_listen_sends_later_rests_to_the_new_listener() -> None:
+    """A watch hands one pacer to a new worker per batch, and each must hear about its rests."""
+    clock = _FakeClock()
+    first: list[str] = []
+    second: list[str] = []
+    plan = PacingPlan(duty_percent=50, work_seconds=600)
+    pacer = Pacer(
+        plan,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+        on_rest=lambda r, _s: first.append(r),
+    )
+    pacer.wait_before_next()
+    pacer.listen(lambda reason, _s: second.append(reason))
+    clock.work(600)
+    pacer.wait_before_next()
+
+    assert first == []
+    assert len(second) == 1
+    assert pacer.cancelled is False
+    pacer.cancel()
+    assert pacer.cancelled is True
+
+
 def test_pacer_cancel_cuts_a_rest_short() -> None:
     """A cancel raised while the run is resting ends the sleep at the next nap."""
     clock = _FakeClock()

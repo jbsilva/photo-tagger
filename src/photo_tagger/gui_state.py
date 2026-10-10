@@ -78,6 +78,7 @@ from photo_tagger.pacing import (
     CAUTION_BATTERY_FLOOR,
     FULL_DUTY,
     SECONDS_PER_MINUTE,
+    Pacer,
     PacingPlan,
 )
 from photo_tagger.pipeline import MAX_TRACKED_DROPPED_TERMS
@@ -405,6 +406,9 @@ class GenerateOptions:
     repair_language: bool = False
     # Rests the run between work windows. None works flat out.
     pacing: PacingPlan | None = None
+    # A pacer to carry on with instead of a fresh one: a watch hands its batches one, as the CLI
+    # does, so a work window spans the batches and short ones still rest.
+    pacer: Pacer | None = None
     # The longest edge of the JPEG the model is shown.
     jpeg_dimensions: int = DEFAULT_DIMENSIONS
     # Read past the cache and store what comes back: the cached answer is the one being replaced.

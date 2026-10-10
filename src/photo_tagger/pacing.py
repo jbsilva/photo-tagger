@@ -345,6 +345,15 @@ class Pacer:
         """End the rest in progress, and let every later call return immediately."""
         self._cancelled.set()
 
+    @property
+    def cancelled(self) -> bool:
+        """Whether :meth:`cancel` ran: a pacer shared across batches is then spent."""
+        return self._cancelled.is_set()
+
+    def listen(self, on_rest: Callable[[str, float], None] | None) -> None:
+        """Report the rests from now on to *on_rest*: a watch hands its pacer to each new worker."""
+        self._on_rest = on_rest
+
     def wait_before_next(self) -> bool:
         """
         Block until the caller may start its next photo; False means the run is stopping.

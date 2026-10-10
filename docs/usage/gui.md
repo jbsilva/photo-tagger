@@ -598,9 +598,11 @@ rests while a charger stays plugged in, because on battery power a rest recharge
 for** and **Rest at most** bound how often a rest happens and how long each one lasts.
 
 A run rests between photos, never in the middle of one. The status bar says why it stopped and for
-how long. Everything here is off by default, and each choice is kept for the session. **Save
-Settings as Defaults...** writes it to the configuration file's
-[`[pacing]`](cli-reference.md#pacing) table, which CLI runs read too.
+how long. The batches of a **Watch Folder** share one work window, as in `photo-tagger watch`, so a
+stream of small imports still rests. The time spent waiting for photos does not count as work.
+Everything here is off by default, and each choice is kept for the session. **Save Settings as
+Defaults...** writes it to the configuration file's [`[pacing]`](cli-reference.md#pacing) table,
+which CLI runs read too.
 
 ### Undo what a save wrote
 

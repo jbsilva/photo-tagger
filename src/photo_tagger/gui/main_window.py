@@ -197,7 +197,7 @@ from photo_tagger.metadata import (
     read_metadata_sources,
     write_metadata_everywhere,
 )
-from photo_tagger.pacing import SECONDS_PER_MINUTE
+from photo_tagger.pacing import SECONDS_PER_MINUTE, Pacer, build_pacer
 from photo_tagger.pipeline import FAILURE_OTHER
 from photo_tagger.providers import get_backend
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
@@ -455,6 +455,8 @@ class MainWindow(QMainWindow):
         self._watch_worker: WatchWorker | None = None
         # What the running watch was started with, and what it has picked up. None while idle.
         self._watch_settings: WatchSettings | None = None
+        # One pacer for every batch of the watch (see _pacer_for), built at its first batch.
+        self._watch_pacer: Pacer | None = None
         self._watch_added = 0
         # Photos the watch added while a run was already in flight, generated when it frees up.
         self._watch_pending: list[str] = []
@@ -2570,6 +2572,7 @@ class MainWindow(QMainWindow):
                 vocabulary_strict=self._keyword_rules_dialog.strict,
                 repair_language=self._settings_menu.repair_language,
                 pacing=self._pacing_dialog.plan,
+                pacer=self._pacer_for(trigger),
                 jpeg_dimensions=self._model_image_size,
                 refresh=refresh,
             ),
@@ -2784,11 +2787,14 @@ class MainWindow(QMainWindow):
         if targets and not self._busy():
             # A mixed-script pass reads past the cache: the answer it is unhappy with is the one
             # stored there, so replaying it would not be asking again at all.
+            run = self._usage.run
             self._run_generation(
                 targets,
                 use_cache=self._batch_uses_cache,
                 extra_pass=name,
                 refresh=name == RERUN_MIXED_SCRIPT,
+                # The batch's own trigger, so a watch batch's passes rest on the watch's pacer.
+                trigger=run.trigger if run is not None else TRIGGER_BATCH,
             )
             return
         # Nothing left to do, or another run claimed the window during the pause. Either way the
@@ -3017,6 +3023,22 @@ class MainWindow(QMainWindow):
             save=settings.save,
         )
 
+    def _pacer_for(self, trigger: str) -> Pacer | None:
+        """
+        Return the watch's pacer for a batch it started, None for any other run.
+
+        A watch shares one across its batches, as the CLI does, so a work window spans them and a
+        stream of short batches still rests. A new plan, or a cancelled run (Stop cancels the pacer
+        too), starts it afresh.
+        """
+        if trigger != TRIGGER_WATCH or self._watch_settings is None:
+            return None
+        plan = self._pacing_dialog.plan
+        pacer = self._watch_pacer
+        if pacer is None or pacer.cancelled or pacer.plan != plan:
+            self._watch_pacer = build_pacer(plan)
+        return self._watch_pacer
+
     def _on_watch_batch(self, paths: list[Path]) -> None:
         """Add the photos a poll found and queue them for generation when asked to."""
         settings = self._watch_settings
@@ -3071,6 +3093,7 @@ class MainWindow(QMainWindow):
             self._watch_worker.stop()
         self._teardown_watch_thread()
         self._watch_settings = None
+        self._watch_pacer = None
         self._watch_pending = []
         if not self._closing:
             self._watch_action.setText(_("Watch Folder..."))
