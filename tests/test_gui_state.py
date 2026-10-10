@@ -722,7 +722,7 @@ def test_chain_to_display_reverses_to_leaf_first() -> None:
 def test_reveal_command_per_platform(tmp_path: Path) -> None:
     """MacOS and Windows get a reveal argv; Linux falls back to opening the folder (None)."""
     photo = tmp_path / "a.jpg"
-    with patch("photo_tagger.gui_state.shutil.which", lambda name: f"/bin/{name}"):
+    with patch("photo_tagger.programs.shutil.which", lambda name, **_kwargs: f"/bin/{name}"):
         assert reveal_command(photo, "darwin") == ["/bin/open", "-R", str(photo)]
         assert reveal_command(photo, "win32") == ["/bin/explorer", f"/select,{photo}"]
         assert reveal_command(photo, "linux") is None
@@ -735,7 +735,7 @@ def test_reveal_command_is_none_when_the_browser_is_not_on_path(tmp_path: Path) 
     Leaving the lookup to the OS is also how the current working directory (whichever folder the
     user last opened photos from) gets searched before PATH on Windows.
     """
-    with patch("photo_tagger.gui_state.shutil.which", return_value=None):
+    with patch("photo_tagger.programs.shutil.which", return_value=None):
         assert reveal_command(tmp_path / "a.jpg", "darwin") is None
 
 

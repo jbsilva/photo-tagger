@@ -94,7 +94,7 @@ def test_run_executes_the_resolved_absolute_path() -> None:
     current working directory before PATH.
     """
     with (
-        patch("photo_tagger.hardware.shutil.which", return_value="/usr/bin/lspci"),
+        patch("photo_tagger.programs.shutil.which", return_value="/usr/bin/lspci"),
         patch("photo_tagger.hardware.subprocess.run") as run,
     ):
         run.return_value.returncode = 0
@@ -106,7 +106,7 @@ def test_run_executes_the_resolved_absolute_path() -> None:
 def test_run_skips_the_spawn_when_the_tool_is_absent() -> None:
     """A tool that is not on PATH costs a lookup, not a failed process spawn."""
     with (
-        patch("photo_tagger.hardware.shutil.which", return_value=None),
+        patch("photo_tagger.programs.shutil.which", return_value=None),
         patch("photo_tagger.hardware.subprocess.run") as run,
     ):
         assert _run(["nvidia-smi"]) == ""

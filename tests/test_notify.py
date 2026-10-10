@@ -29,7 +29,7 @@ from photo_tagger.notify import (
 def _fake_which(available: dict[str, str]) -> Callable[[str], str | None]:
     """Build a shutil.which stand-in that only knows the programs in *available*."""
 
-    def which(program: str) -> str | None:
+    def which(program: str, **_kwargs: object) -> str | None:
         return available.get(program)
 
     return which

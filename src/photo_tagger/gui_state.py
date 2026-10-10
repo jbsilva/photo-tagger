@@ -10,7 +10,6 @@ Qt.
 
 import fnmatch
 import os
-import shutil
 import subprocess  # nosec B404 - only used to read the user's own login-shell PATH (see below)
 import textwrap
 
@@ -69,6 +68,7 @@ from photo_tagger.pacing import (
     PacingPlan,
 )
 from photo_tagger.pipeline import MAX_TRACKED_DROPPED_TERMS
+from photo_tagger.programs import find_program
 from photo_tagger.sessions import build_session_vocabulary, plan_sessions
 from photo_tagger.undo import (
     CHANGED,
@@ -1926,7 +1926,7 @@ def reveal_command(path: Path, platform_name: str) -> list[str] | None:
         argv = ["explorer", f"/select,{path}"]
     else:
         return None
-    program = shutil.which(argv[0])
+    program = find_program(argv[0])
     return [program, *argv[1:]] if program is not None else None
 
 

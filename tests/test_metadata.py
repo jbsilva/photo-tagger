@@ -80,16 +80,36 @@ def test_managed_helper_uses_configured_executable(monkeypatch: pytest.MonkeyPat
     ctor.assert_called_once_with(executable="/opt/et/exiftool")
 
 
-def test_managed_helper_defaults_to_path_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With no override, the helper is built with no executable, so pyexiftool searches PATH."""
+def test_managed_helper_runs_exiftool_by_its_absolute_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    With no override, the helper gets ExifTool's absolute path from PATH, never the bare name.
+
+    A bare name would be looked up in the current directory first on Windows.
+    """
     monkeypatch.delenv("PHOTO_TAGGER_EXIFTOOL", raising=False)
     helper = _fake_helper()
     with (
+        patch("photo_tagger.metadata.find_program", return_value="/usr/bin/exiftool"),
         patch("photo_tagger.metadata.ExifToolHelper", return_value=helper) as ctor,
         managed_helper(None),
     ):
         pass
-    ctor.assert_called_once_with()
+    ctor.assert_called_once_with(executable="/usr/bin/exiftool")
+
+
+def test_managed_helper_refuses_an_exiftool_found_nowhere_on_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Falling back to the bare name would let Windows run an exiftool.exe from the photo folder."""
+    monkeypatch.delenv("PHOTO_TAGGER_EXIFTOOL", raising=False)
+    with (
+        patch("photo_tagger.metadata.find_program", return_value=None),
+        patch("photo_tagger.metadata.ExifToolHelper") as ctor,
+        pytest.raises(FileNotFoundError, match="exiftool is not on PATH"),
+        managed_helper(None),
+    ):
+        pass
+    ctor.assert_not_called()
 
 
 def test_managed_helper_yields_supplied_helper_without_opening() -> None:
@@ -1923,3 +1943,19 @@ def test_plan_writes_notes_a_backup_that_predates_the_write(tmp_path: Path) -> N
     (fresh,) = plan_writes(tmp_path / "other.jpg", "none")
     assert fresh.made_backup(backup=True) is True
     assert fresh.made_backup(backup=False) is False
+
+
+def test_managed_helper_searches_path_for_a_configured_bare_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """exiftool_path = "exiftool" must not pick up a copy in the current folder either."""
+    monkeypatch.setenv("PHOTO_TAGGER_EXIFTOOL", "exiftool")
+    helper = _fake_helper()
+    with (
+        patch("photo_tagger.metadata.find_program", return_value="/usr/bin/exiftool") as found,
+        patch("photo_tagger.metadata.ExifToolHelper", return_value=helper) as ctor,
+        managed_helper(None),
+    ):
+        pass
+    found.assert_called_once_with("exiftool")
+    ctor.assert_called_once_with(executable="/usr/bin/exiftool")

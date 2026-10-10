@@ -29,7 +29,6 @@ cannot read, simply never rests for battery reasons; the duty cycle still applie
 import contextlib
 import platform
 import re
-import shutil
 import subprocess  # nosec B404 - only used to ask macOS for the battery charge
 import threading
 import time
@@ -46,6 +45,7 @@ from photo_tagger.config import (
     DEFAULT_MAX_PAUSE_MINUTES,
     DEFAULT_WORK_MINUTES,
 )
+from photo_tagger.programs import find_program
 
 
 if TYPE_CHECKING:
@@ -149,10 +149,10 @@ def _run_probe(args: list[str]) -> str:
     """
     Run *args* and return stripped stdout, or "" on any failure.
 
-    The program is resolved with ``shutil.which`` so the absolute path is what gets executed, rather
-    than letting the OS search a path that (on Windows) starts with the current directory.
+    The program is resolved with :func:`~photo_tagger.programs.find_program`, so the absolute path
+    is what gets executed and the current directory is never searched.
     """
-    program = shutil.which(args[0])
+    program = find_program(args[0])
     if program is None:
         return ""
     try:

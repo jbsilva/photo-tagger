@@ -18,13 +18,14 @@ import contextlib
 import json
 import os
 import platform
-import shutil
 import subprocess  # nosec B404 - only used to query fixed, well-known hardware probe tools
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+from photo_tagger.programs import find_program
 
 
 # Bumped when probes improve, so stale cached values get re-probed after an upgrade.
@@ -55,14 +56,14 @@ def _run(args: list[str]) -> str:
     """
     Run *args* and return stripped stdout, or "" on any failure or non-zero exit.
 
-    The program is resolved with ``shutil.which`` and the absolute path is what gets executed.
-    Handing a bare name to ``subprocess`` lets the OS do the search, and on Windows that search
-    covers the current working directory before PATH: a ``nvidia-smi.exe`` sitting in the photo
-    folder the GUI was launched from would run instead of the real one. It is also cheaper, since
-    the common case (no ``nvidia-smi`` on a Mac, no ``lspci`` on a container) now costs a PATH
-    lookup rather than a failed process spawn.
+    The program is resolved with :func:`~photo_tagger.programs.find_program`, and the absolute
+    path is what gets executed. Handing a bare name to ``subprocess`` lets the OS do the search,
+    and on Windows that search covers the current working directory before PATH: a
+    ``nvidia-smi.exe`` sitting in the photo folder the GUI was launched from would run instead of
+    the real one. It is also cheaper, since the common case (no ``nvidia-smi`` on a Mac, no
+    ``lspci`` on a container) costs a PATH lookup rather than a failed process spawn.
     """
-    program = shutil.which(args[0])
+    program = find_program(args[0])
     if program is None:
         return ""
     try:

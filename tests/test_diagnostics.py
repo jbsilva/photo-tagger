@@ -48,7 +48,7 @@ def _patch_listing(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> 
 
 def test_check_exiftool_reports_path_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
     """A binary on PATH yields ok=True and the resolved path as detail."""
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/exiftool")
+    monkeypatch.setattr(shutil, "which", lambda _name, **_kwargs: "/usr/bin/exiftool")
     result = check_exiftool()
     assert result.ok is True
     assert result.detail == "/usr/bin/exiftool"
@@ -57,7 +57,7 @@ def test_check_exiftool_reports_path_when_present(monkeypatch: pytest.MonkeyPatc
 def test_check_exiftool_reports_failure_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     """A missing binary yields ok=False with an install hint."""
     monkeypatch.delenv("PHOTO_TAGGER_EXIFTOOL", raising=False)
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name, **_kwargs: None)
     result = check_exiftool()
     assert result.ok is False
     assert "not found" in result.detail
@@ -67,7 +67,11 @@ def test_check_exiftool_reports_failure_when_absent(monkeypatch: pytest.MonkeyPa
 def test_check_exiftool_honors_configured_executable(monkeypatch: pytest.MonkeyPatch) -> None:
     """With PHOTO_TAGGER_EXIFTOOL set, the check resolves and reports that exact binary."""
     monkeypatch.setenv("PHOTO_TAGGER_EXIFTOOL", "/opt/et/exiftool")
-    monkeypatch.setattr(shutil, "which", lambda name: name if name == "/opt/et/exiftool" else None)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, **_kwargs: name if name == "/opt/et/exiftool" else None,
+    )
     result = check_exiftool()
     assert result.ok is True
     assert result.detail == "/opt/et/exiftool"
@@ -133,7 +137,7 @@ def test_check_provider_flags_missing_api_key(monkeypatch: pytest.MonkeyPatch) -
 
 def test_run_checks_returns_exiftool_then_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     """run_checks runs both diagnostics in display order."""
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/exiftool")
+    monkeypatch.setattr(shutil, "which", lambda _name, **_kwargs: "/usr/bin/exiftool")
     _patch_listing(monkeypatch, {"data": [{"id": "m"}]})
     results = run_checks("lmstudio", "m", api_base_url=None, api_key=None)
     assert results[0].name == "ExifTool"

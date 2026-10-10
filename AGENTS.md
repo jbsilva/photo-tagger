@@ -43,8 +43,9 @@ module owns one part of that pipeline:
   paths, stack frames, and the environment to coarse categories for it. A new field needs a line in
   `docs/telemetry.md`.
 - `cache.py`, `locking.py`, `image_io.py`, `discovery.py`, `progress.py`, `logging_setup.py`,
-  `diagnostics.py`: small helpers with one purpose each. `errors.py`: the hierarchy of domain
-  exceptions.
+  `diagnostics.py`, `programs.py`: small helpers with one purpose each. `programs.py` finds every
+  helper program (ExifTool too) by absolute path, never in the current directory. `errors.py`: the
+  hierarchy of domain exceptions.
 - `gui.py`: the optional PySide6 desktop frontend (the `photo-tagger gui` command), a thin shell
   over `run_batch`. `gui_state.py` holds its Qt-free logic, with unit tests. `gui_usage.py` holds
   its Qt-free usage tracking for telemetry (runs, sessions, busy and idle time, edits before a

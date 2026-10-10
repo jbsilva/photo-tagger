@@ -16,7 +16,6 @@ abandoned thread would lose the alert); the GUI does not, so its window never fr
 """
 
 import os
-import shutil
 import subprocess  # nosec B404 - only used to run the OS's own notifier and sound player
 import sys
 import threading
@@ -24,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from loguru import logger
+
+from photo_tagger.programs import find_program
 
 
 # What the notification calls itself. Not translated: it is the application's name.
@@ -125,7 +126,7 @@ def _powershell_alert(script: str, env: dict[str, str], *, plays_sound: bool) ->
     """Wrap *script* as a Windows PowerShell invocation, or None when the host is not installed."""
     # Windows PowerShell, not pwsh: the WinRT type resolution the toast relies on is a 5.1 feature,
     # and 5.1 is on every supported Windows while pwsh is an optional install.
-    powershell = shutil.which("powershell")
+    powershell = find_program("powershell")
     if powershell is None:
         return None
     return Alert(argv=[powershell, *_POWERSHELL_FLAGS, script], env=env, plays_sound=plays_sound)
@@ -133,7 +134,7 @@ def _powershell_alert(script: str, env: dict[str, str], *, plays_sound: bool) ->
 
 def _macos_notification(title: str, message: str, *, sound: bool) -> Alert | None:
     """Build the ``osascript`` alert for macOS, or None when osascript is missing."""
-    osascript = shutil.which("osascript")
+    osascript = find_program("osascript")
     if osascript is None:
         return None
     # The text is passed as arguments to an `on run argv` handler instead of being pasted into the
@@ -160,7 +161,7 @@ def _macos_notification(title: str, message: str, *, sound: bool) -> Alert | Non
 
 def _libnotify_notification(title: str, message: str) -> Alert | None:
     """Build the ``notify-send`` alert used on Linux and the BSDs, or None when it is missing."""
-    notify_send = shutil.which("notify-send")
+    notify_send = find_program("notify-send")
     if notify_send is None:
         return None
     # notify-send has no sound of its own, so plays_sound stays False and the caller adds a chime.
@@ -193,11 +194,11 @@ def notification_command(
 
 def _linux_chime() -> Alert | None:
     """Play the sound theme's completion sample, by name if possible and by path if not."""
-    canberra = shutil.which("canberra-gtk-play")
+    canberra = find_program("canberra-gtk-play")
     if canberra is not None:
         # Asking for the event by name lets the user's chosen sound theme answer.
         return Alert(argv=[canberra, "-i", "complete"], plays_sound=True)
-    paplay = shutil.which("paplay")
+    paplay = find_program("paplay")
     if paplay is not None and _FREEDESKTOP_SOUND_FILE.is_file():
         return Alert(argv=[paplay, str(_FREEDESKTOP_SOUND_FILE)], plays_sound=True)
     return None
@@ -211,7 +212,7 @@ def sound_command(platform_name: str) -> Alert | None:
     notification at all. None leaves the terminal bell as the last resort.
     """
     if platform_name == "darwin":
-        afplay = shutil.which("afplay")
+        afplay = find_program("afplay")
         if afplay is None or not _MACOS_SOUND_FILE.is_file():
             return None
         return Alert(argv=[afplay, str(_MACOS_SOUND_FILE)], plays_sound=True)

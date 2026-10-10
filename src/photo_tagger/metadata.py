@@ -44,6 +44,7 @@ from photo_tagger.config import (
 )
 from photo_tagger.fields import COPYRIGHT_READ_TAGS
 from photo_tagger.models import KeywordSet
+from photo_tagger.programs import find_program
 
 
 # Exception types that pyexiftool raises on bad inputs or subprocess failures.
@@ -66,14 +67,22 @@ def managed_helper(et: ExifToolHelper | None) -> Generator[ExifToolHelper]:
     Yield *et* if supplied, otherwise spin up and tear down a one-shot helper.
 
     Honors an explicit ExifTool binary (``PHOTO_TAGGER_EXIFTOOL`` / config ``exiftool_path``); with
-    none configured, pyexiftool finds ``exiftool`` on PATH as before.
+    none configured, ``exiftool`` is looked up on PATH and run by its absolute path. A bare name
+    would be looked up in the current directory first on Windows (see :mod:`photo_tagger.programs`),
+    so an ExifTool found nowhere else raises FileNotFoundError instead.
     """
     if et is not None:
         yield et
         return
-    executable = exiftool_executable()
-    helper = ExifToolHelper(executable=executable) if executable else ExifToolHelper()
-    with helper as own:  # type: ignore[no-untyped-call]
+    # A configured path with a folder is used as given. A bare name, configured or not, goes through
+    # the search: pyexiftool would look in the current directory for it first.
+    configured = exiftool_executable()
+    has_folder = configured is not None and Path(configured).name != configured
+    executable = configured if has_folder else find_program(configured or "exiftool")
+    if executable is None:
+        msg = "exiftool is not on PATH: install it, or set exiftool_path in the config file"
+        raise FileNotFoundError(msg)
+    with ExifToolHelper(executable=executable) as own:  # type: ignore[no-untyped-call]
         yield own
 
 

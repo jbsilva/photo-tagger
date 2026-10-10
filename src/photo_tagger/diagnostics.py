@@ -6,7 +6,6 @@ each result. The checks are plain functions that return structured :class:`Check
 instead of printing, so they are easy to unit-test; only :func:`render_report` touches the terminal.
 """
 
-import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -15,6 +14,7 @@ from rich.console import Console
 from photo_tagger import __version__
 from photo_tagger.config import exiftool_executable
 from photo_tagger.errors import ProviderError
+from photo_tagger.programs import find_program
 from photo_tagger.providers import PROVIDER_LABELS, get_backend
 
 
@@ -44,11 +44,11 @@ def check_exiftool() -> CheckResult:
     Verify the ExifTool binary is available (pyexiftool shells out to it).
 
     Resolves the same way the pipeline does: an explicit ``PHOTO_TAGGER_EXIFTOOL`` / config
-    ``exiftool_path`` if set, otherwise ``exiftool`` on PATH. ``shutil.which`` handles both - it
-    validates an absolute path and searches PATH for a bare name.
+    ``exiftool_path`` if set, otherwise ``exiftool`` on PATH. ``find_program`` handles both: it
+    checks an absolute path, and searches PATH (never the current folder) for a bare name.
     """
     target = exiftool_executable() or "exiftool"
-    path = shutil.which(target)
+    path = find_program(target)
     if path is None:
         return CheckResult(
             "ExifTool",

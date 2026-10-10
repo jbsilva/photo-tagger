@@ -194,14 +194,14 @@ def test_windows_probe_is_none_off_windows() -> None:
 
 def test_run_probe_returns_empty_without_the_program() -> None:
     """A tool that is not installed yields "", never an exception."""
-    with patch("photo_tagger.pacing.shutil.which", return_value=None):
+    with patch("photo_tagger.programs.shutil.which", return_value=None):
         assert _run_probe(["pmset", "-g", "batt"]) == ""
 
 
 def test_run_probe_returns_empty_on_failure() -> None:
     """A non-zero exit, a timeout, or an OS error all read as "nothing to report"."""
     with (
-        patch("photo_tagger.pacing.shutil.which", return_value="/usr/bin/pmset"),
+        patch("photo_tagger.programs.shutil.which", return_value="/usr/bin/pmset"),
         patch("photo_tagger.pacing.subprocess.run") as run,
     ):
         run.return_value = SimpleNamespace(returncode=1, stdout="whatever")
@@ -215,7 +215,7 @@ def test_run_probe_returns_empty_on_failure() -> None:
 def test_run_probe_returns_stdout() -> None:
     """A clean exit hands back the trimmed output."""
     with (
-        patch("photo_tagger.pacing.shutil.which", return_value="/usr/bin/pmset"),
+        patch("photo_tagger.programs.shutil.which", return_value="/usr/bin/pmset"),
         patch("photo_tagger.pacing.subprocess.run") as run,
     ):
         run.return_value = SimpleNamespace(returncode=0, stdout=" 75%\n")
