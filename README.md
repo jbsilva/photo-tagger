@@ -126,7 +126,8 @@ You can persist CLI defaults in a TOML file so they apply automatically. Search 
 3. `~/.config/photo-tagger/config.toml` (user-wide)
 
 CLI flags override configuration file values, and the configuration file overrides built-in
-defaults.
+defaults. If `$PHOTO_TAGGER_CONFIG` names a file that does not exist, photo-tagger logs a warning
+and reads no configuration file at all.
 
 Example `.photo-tagger.toml`:
 
@@ -155,10 +156,12 @@ cache_file = ".photo-tagger-cache.db"
 enabled = true
 ```
 
-The section names match the internal option groups: `provider`, `inference`, `output`, `log`,
-`display`, `filter`, `artifacts`, and `telemetry`. Top-level keys cover `extensions`, `recursive`,
-`workers`, and `exiftool_path`. If your ExifTool binary lives somewhere unusual, set `exiftool_path`
-to its path. Unknown keys are silently ignored, so the file stays forward-compatible.
+The section names match the internal option groups: `provider`, `inference`, `output`, `copyright`,
+`log`, `display`, `filter`, `artifacts`, `telemetry`, and `pacing`. The `gui` section holds the
+settings of the desktop window. Top-level keys cover `extensions`, `recursive`, `workers`,
+`exiftool_path`, and `language` (the language of the desktop window). If your ExifTool binary lives
+somewhere unusual, set `exiftool_path` to its path. Unknown keys are silently ignored, so the file
+stays forward-compatible.
 
 ## Usage
 
@@ -196,7 +199,7 @@ Key options:
   `dng=photo` writes into each DNG, which is where Lightroom Classic keeps the metadata of a DNG
 - `--dry-run`: run the model and log the proposed metadata without writing XMP
 - `-w/--workers N`: process N photos concurrently using a thread pool (default 1)
-- `--no-progress`: hide the live rich progress bar (auto-disabled on non-interactive stdouts)
+- `--no-progress`: hide the live rich progress bar (auto-disabled when stderr is not a terminal)
 - `--max-keywords N`: cap how many AI-generated keywords are kept per photo before merging
 - `--vocabulary PATH`: restrict generated keywords to the terms in a Lightroom keyword-list export.
   Use either the `.txt` or the `.csv` shape of _Metadata > Export Keywords_, or a plain list of
@@ -469,8 +472,8 @@ A photo that fails turns red and shows why. You can retry it from its right-clic
 Open Logs** opens the run log folder.
 
 The GUI reads the same configuration file and environment variables as the CLI, and **Settings >
-Save Settings as Defaults** writes them back. PySide6 is only pulled in by the `gui` extra, so the
-plain CLI install stays lightweight.
+Save Settings as Defaults...** writes them back. PySide6 is only pulled in by the `gui` extra, so
+the plain CLI install stays lightweight.
 
 **Settings > Copyright...** holds your credit and copyright notice, written by every save next to
 whatever the model produced. `{year}` in a notice becomes the year of that photo, so the same notice
