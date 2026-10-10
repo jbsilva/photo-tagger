@@ -156,6 +156,7 @@ from photo_tagger.gui_state import (
     reveal_label,
     review_summary,
     save_options_for,
+    save_tally,
     search_summary,
     status_summary,
     tooltip,
@@ -2244,22 +2245,9 @@ class MainWindow(QMainWindow):
         # Whatever the generation that chained this save had to report, consumed either way so a
         # later manual save never repeats it.
         note, self._save_note = self._save_note, ""
-        tally = (
-            ngettext(
-                "Cancelled after saving {saved} photo.",
-                "Cancelled after saving {saved} photos.",
-                self._saved_ok,
-            ).format(saved=self._saved_ok)
-            if self._cancelling
-            else ngettext(
-                "Saved {saved} of {n} checked photo.",
-                "Saved {saved} of {n} checked photos.",
-                total,
-            ).format(saved=self._saved_ok, n=total)
-        )
-        # Last, so the tally is not overwritten by the per-file status refresh above.
-        self._status.setText(" ".join(part for part in (tally, note) if part))
         cancelled = self._cancelling
+        # Last, so the tally is not overwritten by the per-file status refresh above.
+        self._status.setText(save_tally(self._saved_ok, total, cancelled=cancelled, note=note))
         self._cancelling = False
         if cancelled:
             # _reset_working just put the photos this batch never reached back to READY, which is

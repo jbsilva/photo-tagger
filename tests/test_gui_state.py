@@ -154,6 +154,7 @@ from photo_tagger.gui_state import (
     reverted_images,
     review_summary,
     save_options_for,
+    save_tally,
     search_summary,
     sidecar_overrides_summary,
     sort_photos,
@@ -2207,6 +2208,25 @@ def test_failure_summary_names_the_button_that_tries_again() -> None:
     assert failure_summary(0) == ""
     assert failure_summary(1) == "1 photo failed (Retry Failed to try again)."
     assert failure_summary(3) == "3 photos failed (Retry Failed to try again)."
+
+
+def test_save_tally_counts_what_a_save_wrote_out_of_what_it_set_out_to() -> None:
+    """A finished save names the checked photos it was given; the plural follows that total."""
+    assert save_tally(1, 1, cancelled=False) == "Saved 1 of 1 checked photo."
+    assert save_tally(2, 3, cancelled=False) == "Saved 2 of 3 checked photos."
+
+
+def test_save_tally_after_cancel_counts_only_what_was_written() -> None:
+    """A cancelled save drops the total, which no longer says what it will do."""
+    assert save_tally(1, 5, cancelled=True) == "Cancelled after saving 1 photo."
+    assert save_tally(0, 5, cancelled=True) == "Cancelled after saving 0 photos."
+
+
+def test_save_tally_keeps_the_chained_generations_note_after_it() -> None:
+    """The note a generation left for its save follows the tally; an empty note adds nothing."""
+    note = "1 photo failed (Retry Failed to try again)."
+    assert save_tally(2, 2, cancelled=False, note=note) == f"Saved 2 of 2 checked photos. {note}"
+    assert not save_tally(2, 2, cancelled=False, note="").endswith(" ")
 
 
 def test_config_toml_text_carries_the_keyword_rules(tmp_path: Path) -> None:

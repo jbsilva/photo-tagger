@@ -127,6 +127,29 @@ def failure_summary(failed: int) -> str:
     ).format(n=failed)
 
 
+def save_tally(saved: int, total: int, *, cancelled: bool, note: str = "") -> str:
+    """
+    One line for the status bar when a save ends: how many photos it wrote, then *note*.
+
+    A cancelled save counts only what it wrote, since *total* is no longer what it set out to do.
+    *note* is what the generation that chained this save still had to report, kept after the tally
+    so neither hides the other.
+    """
+    if cancelled:
+        tally = ngettext(
+            "Cancelled after saving {saved} photo.",
+            "Cancelled after saving {saved} photos.",
+            saved,
+        ).format(saved=saved)
+    else:
+        tally = ngettext(
+            "Saved {saved} of {n} checked photo.",
+            "Saved {saved} of {n} checked photos.",
+            total,
+        ).format(saved=saved, n=total)
+    return " ".join(part for part in (tally, note) if part)
+
+
 @dataclass(frozen=True, slots=True)
 class WatchSettings:
     """
