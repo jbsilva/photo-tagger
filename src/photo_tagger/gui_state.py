@@ -23,7 +23,16 @@ from typing import TYPE_CHECKING
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
 
-from photo_tagger.config import DEFAULT_OUTPUT_LANGUAGE, DEFAULT_SIDECAR_MODE, SidecarMode
+from photo_tagger.config import (
+    DEFAULT_BATTERY_FLOOR,
+    DEFAULT_BATTERY_RESUME,
+    DEFAULT_DUTY_PERCENT,
+    DEFAULT_MAX_PAUSE_MINUTES,
+    DEFAULT_OUTPUT_LANGUAGE,
+    DEFAULT_SIDECAR_MODE,
+    DEFAULT_WORK_MINUTES,
+    SidecarMode,
+)
 from photo_tagger.csv_report import ReportRow
 from photo_tagger.discovery import parse_extensions, resolve_image_files
 from photo_tagger.errors import ConfigFileError, FieldError
@@ -41,6 +50,12 @@ from photo_tagger.metadata import (
     select_location,
 )
 from photo_tagger.models import KeywordSet
+from photo_tagger.pacing import (
+    CAUTION_BATTERY_FLOOR,
+    FULL_DUTY,
+    SECONDS_PER_MINUTE,
+    PacingPlan,
+)
 from photo_tagger.pipeline import MAX_TRACKED_DROPPED_TERMS
 from photo_tagger.sessions import build_session_vocabulary, plan_sessions
 from photo_tagger.undo import (
@@ -1586,6 +1601,88 @@ def progress_timing_text(done: int, total: int, elapsed: float) -> str:
     )
 
 
+def pacing_status_text(
+    reason: str,
+    seconds: float,
+    *,
+    duty_percent: int,
+    resume_percent: int,
+) -> str:
+    """
+    Status line while a paced run rests: why it stopped, and for how long.
+
+    A battery rest ends when the charge comes back, which may be sooner than *seconds*, so that
+    number is worded as the upper bound it is.
+    """
+    duration = format_duration(seconds)
+    if reason == "battery":
+        return _("Resting up to {duration} so the battery charges back to {percent}%.").format(
+            duration=duration,
+            percent=resume_percent,
+        )
+    return _("Resting {duration}: this run works {percent}% of the time.").format(
+        duration=duration,
+        percent=duty_percent,
+    )
+
+
+def _spoken_duration(seconds: float) -> str:
+    """
+    Render *seconds* as whole minutes, or as seconds while it is under a minute.
+
+    Spelled out rather than the ``m:ss`` of :func:`format_duration`, because this one lands mid
+    sentence, where "about 4 minutes of rest" reads and "about 4:00 of rest" does not. Rounding is
+    honest in the direction that matters: a rest of a few seconds should say so, since that is the
+    sign of a duty cycle set too close to 100 to do anything.
+    """
+    if seconds < SECONDS_PER_MINUTE:
+        count = max(1, round(seconds))
+        return ngettext("{n} second", "{n} seconds", count).format(n=count)
+    minutes = max(1, round(seconds / SECONDS_PER_MINUTE))
+    return ngettext("{n} minute", "{n} minutes", minutes).format(n=minutes)
+
+
+def pacing_summary(plan: PacingPlan) -> str:
+    """
+    Describe what a run will actually do under *plan*, for the Pacing dialog to show live.
+
+    The dialog needs this because its own fields do not say it: a duty cycle is a percentage, and
+    what a person wants to know is how long the run stops for and how often.
+    """
+    if not plan.rests:
+        return _("Left as it is, a run works flat out.")
+    lines: list[str] = []
+    if plan.duty_percent < FULL_DUTY:
+        lines.append(
+            _(
+                "Works {percent}% of the time: about {rest} of rest after every {work} of work.",
+            ).format(
+                percent=plan.duty_percent,
+                rest=_spoken_duration(plan.rest_for(plan.work_seconds)),
+                work=_spoken_duration(plan.work_seconds),
+            ),
+        )
+    if plan.battery_floor > 0:
+        lines.append(
+            _(
+                "Whenever the battery falls to {floor}%, rests until it is back to {resume}%, "
+                "for at most {cap}.",
+            ).format(
+                floor=plan.battery_floor,
+                resume=plan.resume_percent,
+                cap=_spoken_duration(plan.max_pause_seconds),
+            ),
+        )
+    if plan.battery_floor > CAUTION_BATTERY_FLOOR:
+        lines.append(
+            _(
+                "{mark} A plugged-in laptop is rarely that full, so the run would rest after "
+                "nearly every window and wait out the cap each time.",
+            ).format(mark=MIXED_SCRIPT_MARK),
+        )
+    return "\n".join(lines)
+
+
 def navigation_shortcuts(platform_name: str) -> tuple[str, str, str]:
     """
     Return the Back, Forward, and enclosing-folder keys to use on *platform_name*.
@@ -1983,6 +2080,13 @@ class GuiConfigValues:
     marked: bool | None = None
     # Window-only, under [gui]: the CLI writes every photo it generates, so it has no flag for it.
     save_after_generating: bool = False
+    # Settings > Pacing, under [pacing]. The built-ins pace nothing, so a config the GUI writes
+    # without touching the dialog leaves every run working flat out.
+    duty: int = DEFAULT_DUTY_PERCENT
+    battery_floor: int = DEFAULT_BATTERY_FLOOR
+    battery_resume: int = DEFAULT_BATTERY_RESUME
+    work_minutes: float = DEFAULT_WORK_MINUTES
+    max_pause_minutes: float = DEFAULT_MAX_PAUSE_MINUTES
 
 
 def _copyright_lines(values: GuiConfigValues) -> list[str]:
@@ -2052,6 +2156,13 @@ def config_toml_text(values: GuiConfigValues) -> str:
         "[display]",
         f"notify = {_toml_bool(values.notify)}",
         f"notify_sound = {_toml_bool(values.notify_sound)}",
+        "",
+        "[pacing]",
+        f"duty = {values.duty}",
+        f"battery_floor = {values.battery_floor}",
+        f"battery_resume = {values.battery_resume}",
+        f"work_minutes = {values.work_minutes}",
+        f"max_pause_minutes = {values.max_pause_minutes}",
         "",
         "[artifacts]",
         f"undo_log = {_toml_bool(values.undo_log)}",
@@ -2183,6 +2294,13 @@ def merged_config_text(existing_text: str, values: GuiConfigValues) -> str:
     display = _config_table(document, "display")
     display["notify"] = values.notify
     display["notify_sound"] = values.notify_sound
+
+    pacing = _config_table(document, "pacing")
+    pacing["duty"] = values.duty
+    pacing["battery_floor"] = values.battery_floor
+    pacing["battery_resume"] = values.battery_resume
+    pacing["work_minutes"] = values.work_minutes
+    pacing["max_pause_minutes"] = values.max_pause_minutes
 
     artifacts = _config_table(document, "artifacts")
     artifacts["undo_log"] = values.undo_log

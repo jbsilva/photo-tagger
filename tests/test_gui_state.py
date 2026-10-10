@@ -34,6 +34,7 @@ from photo_tagger.gui_state import (
     FILTER_UNTAGGED,
     MAX_ZOOM,
     MIN_ZOOM,
+    MIXED_SCRIPT_MARK,
     OUTPUT_LANGUAGE_SUGGESTIONS,
     PENDING,
     READY,
@@ -113,6 +114,8 @@ from photo_tagger.gui_state import (
     navigation_shortcuts,
     new_paths,
     normalize_keyword_lines,
+    pacing_status_text,
+    pacing_summary,
     parse_keyword_lines,
     paths_matching_fields,
     paths_under,
@@ -156,6 +159,7 @@ from photo_tagger.metadata import (
     CaptionValue,
 )
 from photo_tagger.models import KeywordSet
+from photo_tagger.pacing import PacingPlan
 from photo_tagger.pipeline import MAX_TRACKED_DROPPED_TERMS
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES
 from photo_tagger.undo import CHANGED, DELETED, RESTORED, UndoResult
@@ -886,6 +890,20 @@ def test_config_writers_persist_the_end_of_run_alert_choices() -> None:
         assert display.notify_sound is True
 
 
+def test_config_writers_persist_the_pacing_plan() -> None:
+    """A fresh file and a merged one both carry [pacing], which the CLI reads too."""
+    import tomllib  # noqa: PLC0415 - test-local parser.
+
+    from photo_tagger.cli_options import load_defaults, to_pacing_plan  # noqa: PLC0415
+
+    values = _config_values(duty=70, battery_floor=30, work_minutes=5.0)
+    for text in (config_toml_text(values), merged_config_text("[pacing]\n", values)):
+        plan = to_pacing_plan(load_defaults(tomllib.loads(text)).pacing)
+        assert plan.duty_percent == 70  # noqa: PLR2004 - the value under test.
+        assert plan.battery_floor == 30  # noqa: PLR2004 - the value under test.
+        assert plan.work_seconds == 300  # noqa: PLR2004 - five minutes, in seconds.
+
+
 def test_config_writers_persist_save_after_generating() -> None:
     """A fresh file and a merged one both carry it, under the window's own [gui] table."""
     import tomllib  # noqa: PLC0415 - test-local parser.
@@ -1561,6 +1579,14 @@ def test_progress_timing_text_omits_the_estimate_until_something_finishes() -> N
     """The readout starts as bare elapsed time, then gains the remaining estimate."""
     assert progress_timing_text(0, 7, 4.0) == "0:04 elapsed"
     assert progress_timing_text(1, 7, 10.0) == "0:10 elapsed · 1:00 left"
+
+
+def test_pacing_status_text_says_why_the_run_stopped() -> None:
+    """A battery rest names the charge it waits for; a duty rest names the share it works."""
+    battery = pacing_status_text("battery", 900.0, duty_percent=100, resume_percent=45)
+    assert battery == "Resting up to 15:00 so the battery charges back to 45%."
+    duty = pacing_status_text("duty", 257.0, duty_percent=70, resume_percent=0)
+    assert duty == "Resting 4:17: this run works 70% of the time."
 
 
 def _proposed_item() -> PhotoItem:
@@ -2313,3 +2339,54 @@ def test_config_writers_persist_the_write_copyright_toggle() -> None:
     assert tomllib.loads(config_toml_text(values))["output"]["write_copyright"] is False
     merged = merged_config_text("[output]\nwrite_title = true\n", values)
     assert tomllib.loads(merged)["output"]["write_copyright"] is False
+
+
+_BOTH_REASONS = 2  # one line for the duty cycle, one for the battery
+
+
+def test_pacing_summary_describes_a_plan_that_never_rests() -> None:
+    """With nothing asked for, the summary says the run does not stop."""
+    assert pacing_summary(PacingPlan()) == "Left as it is, a run works flat out."
+
+
+def test_pacing_summary_turns_a_duty_cycle_into_minutes() -> None:
+    """A percentage does not say how long a run stops for, so the summary works it out."""
+    summary = pacing_summary(PacingPlan(duty_percent=90, work_seconds=600))
+    assert summary == (
+        "Works 90% of the time: about 1 minute of rest after every 10 minutes of work."
+    )
+
+
+def test_pacing_summary_reports_a_rest_too_short_to_matter() -> None:
+    """A duty cycle set close to 100 earns seconds, and saying so is the point."""
+    summary = pacing_summary(PacingPlan(duty_percent=99, work_seconds=600))
+    assert "about 6 seconds of rest" in summary
+
+
+def test_pacing_summary_describes_the_battery_floor() -> None:
+    """The battery half names the charge it waits for and the cap on the wait."""
+    plan = PacingPlan(battery_floor=30, battery_resume=60, max_pause_seconds=900)
+    assert pacing_summary(plan) == (
+        "Whenever the battery falls to 30%, rests until it is back to 60%, for at most 15 minutes."
+    )
+
+
+def test_pacing_summary_covers_both_reasons_at_once() -> None:
+    """A plan that rests for both reasons describes both, one per line."""
+    plan = PacingPlan(duty_percent=70, battery_floor=30, work_seconds=600)
+    lines = pacing_summary(plan).split("\n")
+    assert len(lines) == _BOTH_REASONS
+    assert lines[0].startswith("Works 70% of the time")
+    assert lines[1].startswith("Whenever the battery falls to 30%")
+
+
+def test_pacing_summary_flags_a_floor_near_full() -> None:
+    """A floor up in the nineties is kept and flagged, since it rests after nearly every window."""
+    summary = pacing_summary(PacingPlan(battery_floor=95))
+    assert "falls to 95%" in summary
+    assert summary.splitlines()[-1].startswith(MIXED_SCRIPT_MARK)
+
+
+def test_pacing_summary_leaves_an_ordinary_floor_unflagged() -> None:
+    """A floor anyone would use carries no warning at all."""
+    assert MIXED_SCRIPT_MARK not in pacing_summary(PacingPlan(battery_floor=30))

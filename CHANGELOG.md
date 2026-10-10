@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format is based on
   the machine at full tilt for days. Rests happen at photo boundaries, are capped by
   `--max-pause-minutes`, and the summary reports what they cost. Also a `[pacing]` config table.
 
+- GUI: **Settings > Pacing...** sets the same thing for the window's own runs, and the status bar
+  says why a run is resting and for how long.
+
 - `--artist` and `--copyright` write your credit and copyright notice alongside the AI fields, into
   EXIF, XMP, and IPTC, with `{year}` taken from each photo's own capture date. Also `--rights`,
   `--marked`, `--set TAG=VALUE`, `--no-write-copyright`, and a `[copyright]` config table.

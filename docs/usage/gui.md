@@ -466,6 +466,25 @@ A run you cancelled yourself raises no alert: you are already at the keyboard. T
 whatever your system already provides, so nothing appears (and nothing breaks) on a machine without
 one, and it pairs naturally with an unattended **Watch Folder** import.
 
+### Rest a long run
+
+A model at full tilt can draw more power than a laptop charger supplies, so an overnight batch
+discharges the battery even while plugged in, runs the machine hot, and leaves little of it for
+anything else. **Settings > Pacing...** spends part of the time not working instead: the battery
+catches up, the fans wind down, and the average draw lands under what the charger gives.
+
+**Work only** is the share of the time a run may work; `70` rests about three minutes of every ten.
+**Rest below** rests until the charge comes back whenever the battery falls that low, which is the
+one to reach for on a laptop because it needs no wattage numbers and follows your screen brightness
+and whatever else is running. It only ever rests while a charger is plugged in, since on battery
+power a rest recharges nothing. **Work for** and **Rest at most** bound how often a rest happens and
+how long it lasts.
+
+A run rests between photos, never in the middle of one, and the status bar says why it stopped and
+for how long. Everything here is off by default, is kept for the session, and **Save Settings as
+Defaults...** writes it to the config file's [`[pacing]`](cli-reference.md#pacing) table, which CLI
+runs read too.
+
 ### Undo what a save wrote
 
 Every save records what it wrote to a small journal (**Settings > Record Saves for Undo**, on by

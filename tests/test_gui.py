@@ -45,6 +45,7 @@ from photo_tagger.errors import ProviderError
 from photo_tagger.gui_state import (
     FAILED,
     MAX_ZOOM,
+    MIXED_SCRIPT_MARK,
     PENDING,
     READY,
     SAVED,
@@ -67,6 +68,7 @@ from photo_tagger.metadata import (
     ImageContext,
 )
 from photo_tagger.models import InferenceResult, KeywordSet
+from photo_tagger.pacing import MAX_BATTERY_FLOOR, PacingPlan
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES
 from photo_tagger.undo import list_journals, open_journal, read_journal
 from photo_tagger.vocabulary import Vocabulary
@@ -6270,3 +6272,235 @@ def test_a_copyright_alone_needs_its_toggle_on(window: gui.MainWindow) -> None:
     window._write_copyright.setChecked(False)  # noqa: SLF001
 
     assert not window._write_fields_chosen()  # noqa: SLF001
+
+
+_PACED_PHOTOS = 3
+
+
+def test_worker_rests_between_photos_when_paced(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A paced run rests at photo boundaries and tells the window each time."""
+    _stub_generation(monkeypatch)
+    rests: list[str] = []
+    paths = [Path(f"/photo{i}.jpg") for i in range(_PACED_PHOTOS)]
+    # Every window is over as soon as it starts, so each photo boundary earns a rest. The rests
+    # themselves are near-instant: half of nothing worked is nothing owed.
+    worker = gui.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        paths,
+        pacing=PacingPlan(duty_percent=50, work_seconds=0.0),
+    )
+    proposals: list[Proposal] = []
+    worker.file_done.connect(proposals.append)
+    worker.resting.connect(rests.append)
+
+    worker.run()
+
+    assert len(proposals) == _PACED_PHOTOS
+    # One announcement per rest, each followed by the blank that hands the status line back.
+    assert rests.count("") == _PACED_PHOTOS - 1
+    assert any("works 50%" in text for text in rests)
+
+
+def test_worker_stop_wakes_a_run_that_is_resting(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stop ends the rest at once instead of leaving the user to wait it out."""
+    _stub_generation(monkeypatch)
+    paths = [Path("/a.jpg"), Path("/b.jpg")]
+    worker = gui.GenerateWorker(
+        "lmstudio",
+        "m",
+        None,
+        paths,
+        # An hour of rest owed after the first photo, which Stop must cut short.
+        pacing=PacingPlan(duty_percent=1, work_seconds=0.0, max_pause_seconds=3600),
+    )
+    proposals: list[Proposal] = []
+    worker.file_done.connect(proposals.append)
+    worker.resting.connect(lambda _text: worker.stop())
+
+    worker.run()
+
+    # The first photo went through; the rest that followed was cancelled, so the second never ran.
+    assert len(proposals) == 1
+
+
+def test_worker_without_pacing_never_rests(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run with no plan never rests, so nothing new sits between two photos."""
+    _stub_generation(monkeypatch)
+    rests: list[str] = []
+    worker = gui.GenerateWorker("lmstudio", "m", None, [Path("/a.jpg"), Path("/b.jpg")])
+    worker.resting.connect(rests.append)
+
+    worker.run()
+
+    assert rests == []
+
+
+def test_window_paces_a_run_from_the_config_file(
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A [pacing] table paces the window's runs, exactly as it paces the CLI's."""
+    config = tmp_path / "config.toml"
+    config.write_text("[pacing]\nduty = 70\nbattery_floor = 30\n", encoding="utf-8")
+    monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(config))
+
+    window = gui.MainWindow()
+    try:
+        assert window._pacing_plan.duty_percent == 70  # noqa: SLF001, PLR2004 - window state.
+        assert window._pacing_plan.battery_floor == 30  # noqa: SLF001, PLR2004 - window state.
+    finally:
+        window.close()
+
+
+def test_pacing_dialog_edits_the_plan_the_next_run_follows(window: gui.MainWindow) -> None:
+    """Editing a spin box changes the plan, so the next Generate rests by it."""
+    window._duty_spin.setValue(70)  # noqa: SLF001 - the dialog's own widget.
+    window._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's own widget.
+    window._work_minutes_spin.setValue(5.0)  # noqa: SLF001 - the dialog's own widget.
+
+    plan = window._pacing_plan  # noqa: SLF001 - window state.
+    assert plan.duty_percent == 70  # noqa: PLR2004 - the value under test.
+    assert plan.battery_floor == 30  # noqa: PLR2004 - the value under test.
+    assert plan.work_seconds == 300  # noqa: PLR2004 - five minutes, in seconds.
+    assert plan.rests is True
+
+
+def test_pacing_dialog_starts_from_the_config_file(
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The spin boxes open on what the config file says, not on the built-in defaults."""
+    config = tmp_path / "config.toml"
+    config.write_text("[pacing]\nduty = 80\nwork_minutes = 2.5\n", encoding="utf-8")
+    monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(config))
+
+    paced = gui.MainWindow()
+    try:
+        assert paced._duty_spin.value() == 80  # noqa: SLF001, PLR2004 - the dialog's widget.
+        assert paced._work_minutes_spin.value() == 2.5  # noqa: SLF001, PLR2004 - ditto.
+    finally:
+        paced.close()
+
+
+def test_pacing_dialog_greys_out_the_windows_until_something_rests(
+    window: gui.MainWindow,
+) -> None:
+    """
+    An unconfigured window shows the rest fields as inert, because nothing rests.
+
+    The two windows describe the shape of a rest, so with a full duty cycle and no battery floor
+    they have nothing to shape, and a dialog that let them be edited would imply a run pauses when
+    it does not.
+    """
+    assert window._work_minutes_spin.isEnabled() is False  # noqa: SLF001 - the dialog's widget.
+    assert window._max_pause_spin.isEnabled() is False  # noqa: SLF001 - the dialog's widget.
+
+    window._duty_spin.setValue(70)  # noqa: SLF001 - the dialog's widget.
+
+    assert window._work_minutes_spin.isEnabled() is True  # noqa: SLF001 - the dialog's widget.
+    assert window._max_pause_spin.isEnabled() is True  # noqa: SLF001 - the dialog's widget.
+
+
+def test_pacing_dialog_battery_floor_alone_enables_the_windows(window: gui.MainWindow) -> None:
+    """Watching the battery is a reason to rest too, so the windows come alive for it."""
+    window._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
+
+    assert window._work_minutes_spin.isEnabled() is True  # noqa: SLF001 - the dialog's widget.
+
+
+def test_pacing_dialog_summary_follows_the_settings(window: gui.MainWindow) -> None:
+    """
+    The line under the fields describes the plan as it stands, not as it shipped.
+
+    Regression test: it was a fixed sentence saying a run works flat out, which stayed on screen
+    after the duty cycle had been turned down and flatly contradicted the fields above it.
+    """
+    assert "works flat out" in window._pacing_preview.text()  # noqa: SLF001 - the dialog's widget.
+
+    window._duty_spin.setValue(90)  # noqa: SLF001 - the dialog's widget.
+
+    summary = window._pacing_preview.text()  # noqa: SLF001 - the dialog's widget.
+    assert "works flat out" not in summary
+    assert "Works 90% of the time" in summary
+
+
+def test_pacing_dialog_keeps_the_resume_level_above_the_floor(window: gui.MainWindow) -> None:
+    """
+    A resume level at or below the floor cannot be expressed, so it cannot surprise anyone.
+
+    Regression test: both fields accepted 10, and the run then resumed at 25 because the plan
+    substitutes a level above the floor. The dialog said one thing and the run did another.
+    """
+    floor = window._battery_floor_spin  # noqa: SLF001 - the dialog's widget.
+    resume = window._battery_resume_spin  # noqa: SLF001 - the dialog's widget.
+    assert resume.isEnabled() is False  # nothing to resume from yet
+
+    floor.setValue(10)
+
+    assert resume.isEnabled() is True
+    assert resume.minimum() == 11  # noqa: PLR2004 - one above the floor.
+    assert resume.value() == 25  # noqa: PLR2004 - the margin the CLI would have picked.
+    assert window._pacing_plan.resume_percent == 25  # noqa: SLF001, PLR2004 - what the run does.
+
+    # Typing something too low is not possible: the spin box floor holds it up.
+    resume.setValue(5)
+    assert resume.value() == 11  # noqa: PLR2004 - clamped, not silently reinterpreted.
+
+
+def test_pacing_dialog_carries_the_resume_level_up_with_the_floor(window: gui.MainWindow) -> None:
+    """Raising the floor past the resume level takes the resume level with it."""
+    window._battery_floor_spin.setValue(10)  # noqa: SLF001 - the dialog's widget.
+    window._battery_resume_spin.setValue(20)  # noqa: SLF001 - the dialog's widget.
+
+    window._battery_floor_spin.setValue(50)  # noqa: SLF001 - the dialog's widget.
+
+    assert window._battery_resume_spin.value() == 65  # noqa: SLF001, PLR2004 - floor plus margin.
+
+
+def test_pacing_dialog_clears_the_resume_level_when_the_floor_goes(window: gui.MainWindow) -> None:
+    """Dropping the floor back to zero puts the resume field back to its inert state."""
+    window._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
+
+    window._battery_floor_spin.setValue(0)  # noqa: SLF001 - the dialog's widget.
+
+    assert window._battery_resume_spin.value() == 0  # noqa: SLF001 - nothing to resume from.
+    assert window._battery_resume_spin.isEnabled() is False  # noqa: SLF001 - the dialog's widget.
+
+
+def test_pacing_dialog_warns_about_a_floor_near_full_instead_of_moving_it(
+    window: gui.MainWindow,
+) -> None:
+    """
+    A floor in the nineties is kept as typed and flagged, not quietly replaced.
+
+    A plugged-in laptop is rarely brim full (optimized charging parks it around 80), so "rest below
+    99%" means resting after almost every window. That is worth saying and not worth overruling:
+    silently returning a different number is the same trick the resume level used to play.
+    """
+    floor = window._battery_floor_spin  # noqa: SLF001 - the dialog's widget.
+    assert floor.maximum() == MAX_BATTERY_FLOOR
+
+    floor.setValue(99)
+
+    assert floor.value() == 99  # noqa: PLR2004 - exactly what was typed.
+    assert MIXED_SCRIPT_MARK in window._pacing_preview.text()  # noqa: SLF001 - the dialog's widget.
+
+
+def test_pacing_dialog_does_not_warn_about_an_ordinary_floor(window: gui.MainWindow) -> None:
+    """A floor anyone would actually use carries no warning."""
+    window._battery_floor_spin.setValue(30)  # noqa: SLF001 - the dialog's widget.
+
+    assert MIXED_SCRIPT_MARK not in window._pacing_preview.text()  # noqa: SLF001 - the widget.
