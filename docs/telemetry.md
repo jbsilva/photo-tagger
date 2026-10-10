@@ -5,9 +5,9 @@ icon: lucide/radio
 # Telemetry
 
 photo-tagger sends small anonymous beacons that show how the tool is used. They show which models,
-settings, and features people use, how runs go, and on what machines. Development follows what the
-beacons show. Telemetry is **opt-out**. It is on by default, you see a notice once on the first run,
-and you can turn it off at any time.
+configuration values, and features people use, how runs go, and on what machines. Development
+follows what the beacons show. Telemetry is **opt-out**. It is on by default, you see a notice once
+on the first run, and you can turn it off at any time.
 
 This page is the full disclosure. It lists what is sent, when, where it goes, and every way to turn
 it off.
@@ -52,9 +52,9 @@ In the example, the session lasts about 10 hours: 2 hours busy, a few minutes en
 ## What is collected
 
 Every value is a switch, a number, a mode name, a hardware model name, or one of two random ids.
-Settings are sent as switches, counts, and mode names, never as the text or the path that they hold.
-For example, a vocabulary file becomes `vocabulary` (set or not) and `vocabulary_terms` (a count). A
-hint becomes `hint` and `hint_chars`. The dataclasses in
+Configuration values are sent as switches, counts, and mode names, never as the text or the path
+that they hold. For example, a vocabulary file becomes `vocabulary` (set or not) and
+`vocabulary_terms` (a count). A hint becomes `hint` and `hint_chars`. The dataclasses in
 [`telemetry.py`](https://github.com/jbsilva/photo-tagger/blob/main/src/photo_tagger/telemetry.py)
 are the closed list of what leaves the machine.
 
@@ -114,7 +114,7 @@ are the closed list of what leaves the machine.
 | `photo_seconds_median`, `photo_seconds_p90`                   | `3.1`, `5.4`            | The model time per photo.                                                                                                                                    |
 | `keywords_mean`, `title_chars_mean`, `description_chars_mean` | `18.2`                  | The size of the generated text, never the text.                                                                                                              |
 | `power`, `battery_percent`                                    | `ac`, `80`              | At the end of the run: charger or battery, and the charge.                                                                                                   |
-| `settings`, `setup`                                           |                         | See [Settings](#settings) and [Setup](#setup).                                                                                                               |
+| `settings`, `setup`                                           |                         | See [`settings`](#settings) and [`setup`](#setup).                                                                                                           |
 | `gui`, `review`                                               |                         | GUI runs only. See [GUI runs](#gui-runs) and [Review](#review).                                                                                              |
 
 ### Session
@@ -197,8 +197,8 @@ network), `tailnet`, `public`, or the name of a known service, such as `api.open
 
 | Field                 | What it is                                                                                                             |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `config_file`         | `none`, `env`, `cwd`, or `user`: which config file was used, never its path.                                           |
-| `config_keys`         | The `table.key` names that the config file sets.                                                                       |
+| `config_file`         | `none`, `env`, `cwd`, or `user`: which configuration file was used, never its path.                                    |
+| `config_keys`         | The `table.key` names that the configuration file sets.                                                                |
 | `unknown_config_keys` | The number of keys photo-tagger does not read. Their names are not sent.                                               |
 | `cli_flags`           | The options typed on the command line, never their values.                                                             |
 | `env_vars`            | The photo-tagger environment variables that are set, never their values.                                               |
@@ -281,7 +281,8 @@ Any one of these turns telemetry off:
 
 - Pass `--no-telemetry` on the command line.
 - Set `PHOTO_TAGGER_TELEMETRY=0` (or the cross-tool `DO_NOT_TRACK=1`) in your environment.
-- Put `enabled = false` under `[telemetry]` in your [config file](getting-started/configuration.md).
+- Put `enabled = false` under `[telemetry]` in your
+    [configuration file](getting-started/configuration.md).
 - In the desktop GUI, clear **Settings > Send Anonymous Telemetry**. The GUI keeps the choice for
     the next launch.
 
@@ -300,14 +301,15 @@ It speaks for every tool at once, so a choice made for photo-tagger alone overru
     choice for the next launch.
 
 While `DO_NOT_TRACK` stops the beacons, the GUI toggle shows unchecked, and its tooltip tells why.
-The config file's `enabled = true` does not overrule `DO_NOT_TRACK`. It is the default value, and
-the GUI writes it each time you save your settings, so it is not a deliberate choice.
+The `enabled = true` of the configuration file does not overrule `DO_NOT_TRACK`. It is the default
+value, and the GUI writes it each time you save your configuration, so it is not a deliberate
+choice.
 
 The full order, first match wins:
 
 1. `PHOTO_TAGGER_TELEMETRY` set to anything but a "yes", or `PHOTO_TAGGER_NO_TELEMETRY=1`: off.
-2. `--no-telemetry`, `enabled = false` in the config file, or the GUI toggle cleared: off. In the
-    GUI, a toggle checked by hand overrules `enabled = false`, because the GUI writes that key
+2. `--no-telemetry`, `enabled = false` in the configuration file, or the GUI toggle cleared: off. In
+    the GUI, a toggle checked by hand overrules `enabled = false`, because the GUI writes that key
     itself when it saves your settings.
 3. `PHOTO_TAGGER_TELEMETRY=1`: on.
 4. The GUI toggle checked by hand: on.
