@@ -22,6 +22,8 @@ module owns one part of that pipeline:
   name to the `ProviderName` Literal. A test makes sure that the two stay in sync.
 - `ai.py`: builds the pydantic-ai `Agent` from a backend and runs inference.
 - `pipeline.py`: the batch runner (serial and thread-pool passes, the retry pass, usage accounting).
+  `failures.py` names why a photo failed (a coarse bucket and the exception), for the CLI, the GUI,
+  and telemetry alike.
 - `metadata.py`: all ExifTool reads and writes. `write_plan.py` decides which files a save writes
   (the photo, its sidecar, or both) and records what undo needs about each. `prompt_context.py`
   turns what a photo already carries into the prompt's metadata section. `keywords.py`: the merge

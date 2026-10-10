@@ -26,6 +26,7 @@ from photo_tagger.cache import (
 )
 from photo_tagger.config import DEFAULT_USER_PROMPT
 from photo_tagger.errors import PhotoTaggerError
+from photo_tagger.failures import classify_failure, failure_type
 from photo_tagger.gui_state import (
     GenerateOptions,
     HarmonizeResult,
@@ -53,7 +54,6 @@ from photo_tagger.metadata import (
     write_metadata_everywhere,
 )
 from photo_tagger.pacing import Pacer, PacingPlan, build_pacer
-from photo_tagger.pipeline import classify_failure, failure_type
 from photo_tagger.prompt_context import build_contextual_prompt, prompt_with_hint
 from photo_tagger.script_guard import find_in_result
 from photo_tagger.vocabulary import prompt_with_vocabulary

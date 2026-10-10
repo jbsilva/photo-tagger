@@ -67,6 +67,7 @@ from photo_tagger.config_file import (
 from photo_tagger.csv_report import write_report
 from photo_tagger.discovery import load_skip_list, skip_list_matches
 from photo_tagger.errors import ConfigFileError, DiscoveryError
+from photo_tagger.failures import FAILURE_OTHER
 from photo_tagger.gui.common import (
     CONFIG_SAVE_ERROR_TITLE,
     DEFAULT_CACHE_FILE,
@@ -196,7 +197,6 @@ from photo_tagger.metadata import (
     write_metadata_everywhere,
 )
 from photo_tagger.pacing import SECONDS_PER_MINUTE, Pacer, build_pacer
-from photo_tagger.pipeline import FAILURE_OTHER
 from photo_tagger.providers import get_backend
 from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
 from photo_tagger.undo import open_journal

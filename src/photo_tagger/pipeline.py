@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from loguru import logger
-from pydantic_ai.exceptions import ModelHTTPError
 
 from photo_tagger.ai import analyze_image_with_ai, partial_usage_from, requests_per_photo
 from photo_tagger.cache import InferenceCache, content_cache_key, safe_cache_get, safe_cache_put
@@ -27,6 +26,12 @@ from photo_tagger.config import (
     SidecarOverrides,
 )
 from photo_tagger.errors import BatchError
+from photo_tagger.failures import (
+    FAILURE_METADATA_WRITE,
+    classify_failure,
+    failure_type,
+    is_permanent_failure,
+)
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
 from photo_tagger.language_repair import RepairStatus, repair_mixed_script, repair_replay
@@ -263,77 +268,6 @@ class _UsageAccumulator:
                     self.vocabulary_dropped[term] = 1
 
 
-# The coarse failure buckets. Classification is heuristic by exception class name/module so no
-# provider SDK needs importing here; the buckets answer "why do photos fail" without carrying
-# any message text.
-FAILURE_TIMEOUT = "timeout"
-FAILURE_CONNECTION = "connection"
-FAILURE_MODEL_VALIDATION = "model-validation"
-FAILURE_MODEL_API = "model-api"
-FAILURE_IMAGE_READ = "image-read"
-FAILURE_METADATA_WRITE = "metadata-write"
-FAILURE_OTHER = "other"
-
-
-def classify_failure(exc: BaseException) -> str:
-    """Map an exception from one photo's processing to a coarse failure bucket."""
-    name = type(exc).__name__
-    module = type(exc).__module__ or ""
-    if isinstance(exc, TimeoutError) or "Timeout" in name:
-        return FAILURE_TIMEOUT
-    if "Connect" in name or "Network" in name or "Pool" in name:
-        return FAILURE_CONNECTION
-    if "UnexpectedModelBehavior" in name or "Validation" in name:
-        return FAILURE_MODEL_VALIDATION
-    if module.startswith(("rawpy", "PIL")) or "Image" in name:
-        return FAILURE_IMAGE_READ
-    if "Status" in name or "HTTP" in name or "API" in name:
-        return FAILURE_MODEL_API
-    return FAILURE_OTHER
-
-
-def failure_type(exc: BaseException) -> str:
-    """
-    Name the exception behind a failed photo, with the HTTP status if it has one.
-
-    ``ModelHTTPError(404)`` tells a missing model from a rejected key, where the bucket only says
-    "model-api". A class name and a status code are facts about the code and the server, never text
-    from the photo or the server's reply.
-    """
-    name = type(exc).__name__
-    status = _status_code(exc)
-    return f"{name}({status})" if status is not None else name
-
-
-def _status_code(exc: BaseException) -> int | None:
-    """Return the HTTP status an SDK exception carries, on itself or on its response."""
-    for holder in (exc, _attribute(exc, "response")):
-        status = _attribute(holder, "status_code")
-        if isinstance(status, int) and not isinstance(status, bool):
-            return status
-    return None
-
-
-def _attribute(value: object, name: str) -> object:
-    """Read an attribute that an SDK may implement as a property that raises."""
-    try:
-        return getattr(value, name, None)
-    except Exception:  # noqa: BLE001 - an SDK property may raise anything; there is no status then.
-        return None
-
-
-# HTTP status codes that retrying cannot fix: the request itself is rejected, not the server
-# having a bad moment. Deliberately narrow (contrast 429/500/502/503, which a 5s pause and a
-# second attempt can plausibly clear): a wrong or revoked credential does not become right by
-# waiting, but almost every other status code pydantic-ai's ModelHTTPError can carry might.
-_NON_RETRYABLE_STATUS_CODES = frozenset({401, 403})
-
-
-def _is_permanent_failure(exc: BaseException) -> bool:
-    """Report whether *exc* is one no retry pass could ever recover from."""
-    return isinstance(exc, ModelHTTPError) and exc.status_code in _NON_RETRYABLE_STATUS_CODES
-
-
 @dataclass(slots=True)
 class _PendingWrite:
     """
@@ -380,8 +314,8 @@ class _BatchContext:
     # pixels wait on it and replay the cache instead of paying a duplicate model call.
     inflight: dict[str, threading.Event] = field(default_factory=dict)
     inflight_lock: threading.Lock = field(default_factory=threading.Lock)
-    # First-pass failures classified as permanent (see _is_permanent_failure), keyed by path so
-    # run_batch can route them straight to the final tally instead of a doomed retry pass.
+    # First-pass failures classified as permanent (see failures.is_permanent_failure), keyed by
+    # path so run_batch can route them straight to the final tally instead of a doomed retry pass.
     permanently_failed: dict[Path, str] = field(default_factory=dict)
     permanently_failed_lock: threading.Lock = field(default_factory=threading.Lock)
     # Set when --session-gap groups the batch into shoots. Photos are then analyzed a session at a
@@ -976,7 +910,7 @@ def execute_process(
             if retry:
                 # Only the retry pass records a kind: it is the photo's final failure.
                 ctx.usage.add_failure(classify_failure(exc), exc)
-            elif _is_permanent_failure(exc):
+            elif is_permanent_failure(exc):
                 # No retry pass could recover this one (e.g. a rejected credential). This is
                 # its final failure too, so classify it now, and flag it so run_batch routes
                 # it straight to the tally instead of into a pass doomed to repeat it.
@@ -1417,9 +1351,9 @@ def _run_retry_phase(
     Returns ``(retry_successes, still_failing, interrupted)``. A Ctrl-C in the pause or the pass
     reports itself, so a watch stops on it as it would on one in the first pass.
 
-    Failures classify_failure/execute_process already flagged as permanent (see
-    _is_permanent_failure) skip the pass entirely, and the delay before it: nothing about waiting
-    and asking again fixes a rejected credential, and doing so anyway would double the batch's
+    Failures execute_process already flagged as permanent (see failures.is_permanent_failure) skip
+    the pass entirely, and the delay before it: nothing about waiting and asking again fixes a
+    rejected credential, and doing so anyway would double the batch's
     wall-clock time and outbound requests for a photo that cannot succeed. A Ctrl-C during the
     pre-retry pause is treated the same as one mid-pass: nothing in the retryable set was
     attempted, so it all stays pending for the summary.
