@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from PySide6 import __version__ as pyside_version
-from PySide6.QtCore import QRect, QSignalBlocker, QSize, Qt, QThread, QTimer, QUrl, qVersion
+from PySide6.QtCore import QPoint, QSignalBlocker, QSize, Qt, QThread, QTimer, QUrl, qVersion
 
 # QCloseEvent, QDragEnterEvent and QDropEvent are used only in annotations, but they are imported
 # here at runtime on purpose: see the note above closeEvent. Moving them into the TYPE_CHECKING
@@ -30,9 +30,7 @@ from PySide6.QtGui import (
     QDesktopServices,
     QDragEnterEvent,
     QDropEvent,
-    QIcon,
     QKeySequence,
-    QPainter,
     QPixmap,
     QShortcut,
 )
@@ -40,7 +38,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -49,9 +46,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListView,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -105,6 +99,7 @@ from photo_tagger.gui.common import (
 )
 from photo_tagger.gui.connection import ConnectionBar
 from photo_tagger.gui.copyright import CopyrightDialog
+from photo_tagger.gui.folder_grid import FolderGrid
 from photo_tagger.gui.keyword_rules import KeywordRulesDialog
 from photo_tagger.gui.pacing import PacingDialog
 from photo_tagger.gui.save_options import SaveOptionsMenu
@@ -119,39 +114,27 @@ from photo_tagger.gui.widgets import (
     InputWatcher,
     SortableTreeItem,
     check_state,
-    fit_combo,
     fit_text_height,
     readonly_box,
-    selection_modifiers_active,
 )
 from photo_tagger.gui.workers import (
     GenerateWorker,
     HarmonizeWorker,
     MetadataScanWorker,
     SaveWorker,
-    ThumbnailWorker,
     WatchWorker,
 )
 from photo_tagger.gui_state import (
     ADDED,
-    BADGE_COPYRIGHT,
-    BADGE_FAILED,
-    BADGE_METADATA,
-    BADGE_MIXED_SCRIPT,
-    BADGE_SAVED,
-    BADGE_SIDECAR,
-    BADGE_UNSAVED,
     DEFAULT_GUI_EXTENSIONS,
     EXTRA_PASSES,
     FAILED,
-    FILTER_ALL,
     FILTER_FAILED,
     FILTER_GENERATED,
     FILTER_MIXED_SCRIPT,
     FILTER_NO_COPYRIGHT,
     FILTER_PENDING,
     FILTER_SAVED,
-    FILTER_SELECTED,
     FILTER_UNTAGGED,
     OUTPUT_LANGUAGE_SUGGESTIONS,
     PENDING,
@@ -164,10 +147,6 @@ from photo_tagger.gui_state import (
     SELECT_CHECK,
     SELECT_ONLY,
     SELECT_UNCHECK,
-    SORT_NAME,
-    SORT_STATUS,
-    SORT_TAGGED,
-    SORT_TYPE,
     WORKING,
     FolderNode,
     GenerateOptions,
@@ -200,7 +179,6 @@ from photo_tagger.gui_state import (
     field_tags_to_read,
     file_dialog_name_filters,
     file_type_label,
-    filter_photos,
     flat_labels,
     foreign_terms_note,
     format_existing_keywords,
@@ -238,7 +216,6 @@ from photo_tagger.gui_state import (
     save_options_for,
     save_targets,
     search_summary,
-    sort_photos,
     source_label,
     status_sort_rank,
     status_summary,
@@ -246,7 +223,6 @@ from photo_tagger.gui_state import (
     tagged_summary,
     tagged_tooltip,
     telemetry_toggle_note,
-    thumb_badges,
     tooltip,
     vocabulary_summary,
     watch_status_text,
@@ -304,7 +280,6 @@ _PREVIEW_MAX = 640
 # What the full-size viewer decodes to. Large enough that zooming in shows real detail (more than
 # a 5K display can put up at once), small enough that a RAW file still opens in about a second.
 _VIEWER_MAX = 3200
-_THUMB_SIZE = 160  # icon box in the grid
 
 # How long a run that writes by itself waits before re-running the photos it failed on. The CLI
 # pauses before its own retry pass for the same reason (`_RETRY_PASS_DELAY_SECONDS` in pipeline):
@@ -466,10 +441,6 @@ _SCAN_PROGRESS_DELAY_MS = 700
 _WATCH_STOP_TIMEOUT_MS = 3000
 # And for shoot harmonization, whose batched capture-time read has no stop hook either.
 _HARMONIZE_STOP_TIMEOUT_MS = 3000
-# Shorter for the grid thumbnails: _stop_thumbs runs on every navigation, so this is the longest
-# the window may sit still when the user clicks away from a folder that is still loading. One
-# decode is uninterruptible, and a big RAW takes seconds, so the wait usually times out.
-_THUMB_STOP_TIMEOUT_MS = 250
 
 
 class MainWindow(QMainWindow):
@@ -489,14 +460,13 @@ class MainWindow(QMainWindow):
         self._raw_config = load_config()
         self._defaults = load_defaults(self._raw_config)
         self._items: dict[str, PhotoItem] = {}
-        self._grid_items: dict[str, QListWidgetItem] = {}
         self._init_pixmap_caches()
         self._init_tree_row_index()
-        self._init_grid_view_state()
+        # The Select menu's last name pattern, so refining one is a small edit, not a retype.
+        self._last_name_pattern = ""
         self._init_navigation()
         self._init_worker_state()
         self._syncing = False
-        self._grid_check_toggled = False
         self._closing = False
         # The persisted UI language choice; "auto" means follow the OS locale. Changing it in the
         # Settings menu rewrites this key and takes effect on the next launch.
@@ -528,7 +498,6 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(app_icon())
         self.resize(1180, 760)
         self.setAcceptDrops(True)
-        self._placeholder_pixmap = _make_placeholder()
         # Built before the panes: both Save buttons (detail pane and bottom bar) attach it.
         self._save_options_menu = SaveOptionsMenu(
             self,
@@ -565,6 +534,7 @@ class MainWindow(QMainWindow):
         # Connected once the bottom bar exists, since the status line lives there.
         self._connection_bar.status.connect(self._status.setText)
         self._connection_bar.used.connect(self._count)
+        self._folder_grid.status.connect(self._status.setText)
 
     def _build_dialogs(self) -> None:
         """
@@ -636,8 +606,6 @@ class MainWindow(QMainWindow):
         self._session_journal: UndoJournal | None = None
         # When the run in flight started, for the elapsed/remaining readout. None while idle.
         self._run_started: float | None = None
-        self._thumb_thread: QThread | None = None
-        self._thumb_worker: ThumbnailWorker | None = None
         self._scan_thread: QThread | None = None
         self._scan_worker: MetadataScanWorker | None = None
         # The "Uncheck Already Tagged" pick waiting for the scan to cover every photo, and whether
@@ -679,15 +647,15 @@ class MainWindow(QMainWindow):
 
     def _init_pixmap_caches(self) -> None:
         """
-        Seed the decoded-image caches, one per size the window draws photos at.
+        Seed the decoded-image caches the detail pane draws from.
 
-        The preview and thumbnail caches are keyed by path and live for the session: both hold small
-        pixmaps, and a folder of them is cheap. The viewer's is deliberately a single entry, because
-        at ``_VIEWER_MAX`` one pixmap is tens of megabytes; keeping the last one is enough to reopen
-        the photo just looked at instantly, without growing over a long session.
+        The grid keeps its own thumbnails. The preview cache is keyed by path and lives for the
+        session: it holds small pixmaps, and a folder of them is cheap. The viewer's is deliberately
+        a single entry, because at ``_VIEWER_MAX`` one pixmap is tens of megabytes; keeping the last
+        one is enough to reopen the photo just looked at instantly, without growing over a long
+        session.
         """
         self._preview_cache: dict[str, QPixmap] = {}
-        self._thumb_cache: dict[str, QPixmap] = {}
         self._viewer_cache: tuple[str, QPixmap] | None = None
 
     def _init_tree_row_index(self) -> None:
@@ -729,20 +697,6 @@ class MainWindow(QMainWindow):
         action.setShortcut(QKeySequence(shortcut))
         action.triggered.connect(handler)
         return action
-
-    def _init_grid_view_state(self) -> None:
-        """
-        Seed the folder grid's view state: which folder is shown and how it is filtered and sorted.
-
-        Kept as session state (never written to disk), so the choices carry across folders but reset
-        on relaunch. ``_grid_folder`` is what lets the filter/sort controls rebuild the grid.
-        """
-        self._grid_folder: Path | None = None
-        self._grid_sort = SORT_NAME
-        self._grid_sort_desc = False
-        self._grid_filter = FILTER_ALL
-        # The Select menu's last name pattern, so refining one is a small edit, not a retype.
-        self._last_name_pattern = ""
 
     # --- construction ----------------------------------------------------------------------
 
@@ -1802,31 +1756,15 @@ class MainWindow(QMainWindow):
         # Folder tristates re-derive after every leaf is set, walking each chain upward.
         for leaf in leaves:
             self._sync_ancestors(leaf)
-        self._sync_grid_checks()
+        self._folder_grid.sync_checks()
         self._syncing = False
         self._update_status()
 
-    def _on_grid_item_changed(self, grid_item: QListWidgetItem) -> None:
-        """Mirror a thumbnail checkbox change onto the photo and its tree row."""
-        if self._syncing:
-            return
-        key = grid_item.data(PATH_ROLE)
+    def _on_grid_check_toggled(self, key: str) -> None:
+        """Mirror a thumbnail checkbox the user changed onto the photo's tree row."""
         item = self._items.get(key)
         if item is None:
             return
-        checked = grid_item.checkState() == Qt.CheckState.Checked
-        if checked == item.selected:
-            # Icon and tooltip updates also emit itemChanged; only a real check-state change
-            # counts as a toggle.
-            return
-        # Remember that this was a checkbox click so the itemClicked that follows the same
-        # mouse release does not also open the photo. The itemClicked (when there is one)
-        # arrives within the same event dispatch, so clear the flag once the loop settles;
-        # otherwise a keyboard (space key) toggle would leave it stale and swallow the user's
-        # next real click on a thumbnail.
-        self._grid_check_toggled = True
-        QTimer.singleShot(0, self._clear_grid_check_toggled)
-        item.selected = checked
         self._syncing = True
         leaf = self._leaf_for(Path(key))
         if leaf is not None:
@@ -1835,30 +1773,15 @@ class MainWindow(QMainWindow):
         self._syncing = False
         self._update_status()
 
-    def _clear_grid_check_toggled(self) -> None:
-        """Reset the checkbox-click marker once the current event dispatch has finished."""
-        self._grid_check_toggled = False
-
-    def _sync_grid_checks(self) -> None:
-        """Repaint every visible thumbnail checkbox from the model (callers hold _syncing)."""
-        for key, grid_item in self._grid_items.items():
-            item = self._items.get(key)
-            if item is not None:
-                grid_item.setCheckState(check_state(item.selected))
-
-    def _on_grid_context_menu(self, pos: object) -> None:
+    def _on_grid_context_menu(self, where: QPoint, key: str, selected: list[str]) -> None:
         """Offer a thumbnail the same right-click actions as its row in the tree."""
-        grid_item = self._grid.itemAt(pos)
-        if grid_item is None:
-            return
-        selected_keys = [gi.data(PATH_ROLE) for gi in self._grid.selectedItems()]
-        if len(selected_keys) > 1 and grid_item.data(PATH_ROLE) in selected_keys:
-            items = [self._items[key] for key in selected_keys if key in self._items]
+        if len(selected) > 1 and key in selected:
+            items = [self._items[chosen] for chosen in selected if chosen in self._items]
             menu: QMenu | None = self._build_bulk_context_menu(items)
         else:
-            menu = self._build_tree_context_menu(self._leaf_for(Path(grid_item.data(PATH_ROLE))))
+            menu = self._build_tree_context_menu(self._leaf_for(Path(key)))
         if menu is not None:
-            menu.exec(self._grid.viewport().mapToGlobal(pos))
+            menu.exec(where)
 
     def _reveal(self, path: Path) -> None:
         """Show *path* selected in the OS file browser, or open its folder where unsupported."""
@@ -1935,7 +1858,7 @@ class MainWindow(QMainWindow):
                 self._refresh_status_cell(item)
         # The Untagged and No copyright filters depend on this scan, so a grid showing one must
         # re-evaluate once the results land; the rest read state the scan does not change.
-        if self._grid_filter in SCAN_FILTERS:
+        if self._folder_grid.filter in SCAN_FILTERS:
             self._resort_grid()
 
     def _on_scan_finished(self) -> None:
@@ -1998,7 +1921,7 @@ class MainWindow(QMainWindow):
         self._right = QStackedWidget()
         self._right.addWidget(self._build_empty_state())  # _PAGE_EMPTY
         self._right.addWidget(self._build_detail_panel())  # _PAGE_DETAIL
-        self._right.addWidget(self._build_grid())  # _PAGE_GRID
+        self._right.addWidget(self._build_folder_grid())  # _PAGE_GRID
         pane = QWidget()
         box = QVBoxLayout(pane)
         box.setContentsMargins(0, 0, 0, 0)
@@ -2053,117 +1976,21 @@ class MainWindow(QMainWindow):
         box.addStretch(1)
         return page
 
-    def _build_grid(self) -> QWidget:
-        """Build the folder grid page: a filter/sort toolbar above the thumbnail list."""
-        page = QWidget()
-        box = QVBoxLayout(page)
-        box.setContentsMargins(0, 0, 0, 0)
-        box.addLayout(self._build_grid_toolbar())
-
-        grid = QListWidget()
-        grid.setViewMode(QListView.ViewMode.IconMode)
-        grid.setResizeMode(QListView.ResizeMode.Adjust)
-        grid.setMovement(QListView.Movement.Static)
-        grid.setIconSize(QSize(_THUMB_SIZE, _THUMB_SIZE))
-        grid.setGridSize(QSize(_THUMB_SIZE + 24, _THUMB_SIZE + 40))
-        grid.setSpacing(8)
-        grid.setUniformItemSizes(True)
-        grid.setWordWrap(True)
-        grid.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        grid.itemClicked.connect(self._on_thumb_activated)
-        grid.itemChanged.connect(self._on_grid_item_changed)
-        # Thumbnails answer to the same right-click menu as their row in the tree.
-        grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        grid.customContextMenuRequested.connect(self._on_grid_context_menu)
-        self._grid = grid
-        box.addWidget(grid, stretch=1)
-        return page
-
-    def _build_grid_toolbar(self) -> QHBoxLayout:
-        """
-        Filter and sort controls for the folder grid, standing in for the tree's column headers.
-
-        The grid has no headers to click, so a Show filter narrows which photos appear and a Sort by
-        field picker plus an ascending/descending toggle order what remains. Each combo is sized to
-        its widest entry so no label is clipped. Signals are wired only after the widgets are
-        populated, so building them fires no spurious rebuild.
-        """
-        row = QHBoxLayout()
-        row.addWidget(QLabel(_("Show")))
-        self._grid_filter_combo = QComboBox()
-        for label, criterion in (
-            (_("All"), FILTER_ALL),
-            (_("Selected"), FILTER_SELECTED),
-            (_("Not generated"), FILTER_PENDING),
-            (_("Generated"), FILTER_GENERATED),
-            (_("Saved"), FILTER_SAVED),
-            (_("Failed"), FILTER_FAILED),
-            (_("Untagged"), FILTER_UNTAGGED),
-            (_("No copyright"), FILTER_NO_COPYRIGHT),
-            (_("Mixed writing systems"), FILTER_MIXED_SCRIPT),
-        ):
-            self._grid_filter_combo.addItem(label, criterion)
-        self._grid_filter_combo.setToolTip(tooltip("Show only the photos in the chosen state."))
-        fit_combo(self._grid_filter_combo)
-        row.addWidget(self._grid_filter_combo)
-        row.addSpacing(16)
-
-        row.addWidget(QLabel(_("Sort by")))
-        self._grid_sort_combo = QComboBox()
-        for label, criterion in (
-            (_("Name"), SORT_NAME),
-            (_("Type"), SORT_TYPE),
-            (_("Status"), SORT_STATUS),
-            (_("Tagged"), SORT_TAGGED),
-        ):
-            self._grid_sort_combo.addItem(label, criterion)
-        self._grid_sort_combo.setToolTip(
-            tooltip("Order the thumbnails by name, file type, status, or existing metadata."),
-        )
-        fit_combo(self._grid_sort_combo)
-        row.addWidget(self._grid_sort_combo)
-
-        self._grid_sort_dir = QToolButton()
-        self._grid_sort_dir.setObjectName("sortdir")
-        self._grid_sort_dir.setCheckable(True)
-        self._grid_sort_dir.setText("↑")
-        self._grid_sort_dir.setToolTip(tooltip("Ascending. Click to sort descending."))
-        row.addWidget(self._grid_sort_dir)
-        row.addStretch(1)
-
-        self._grid_filter_combo.currentIndexChanged.connect(self._on_grid_filter_changed)
-        self._grid_sort_combo.currentIndexChanged.connect(self._on_grid_sort_changed)
-        self._grid_sort_dir.toggled.connect(self._on_grid_sort_dir_toggled)
-        return row
-
-    def _on_grid_filter_changed(self) -> None:
-        """Re-filter the visible grid when the Show choice changes."""
-        self._count("grid_filter")
-        self._grid_filter = self._grid_filter_combo.currentData()
-        self._resort_grid()
-
-    def _on_grid_sort_changed(self) -> None:
-        """Re-sort the visible grid when the sort field changes."""
-        self._count("grid_sort")
-        self._grid_sort = self._grid_sort_combo.currentData()
-        self._resort_grid()
-
-    def _on_grid_sort_dir_toggled(self, descending: bool) -> None:  # noqa: FBT001 - Qt toggled slot
-        """Flip the grid between ascending and descending, updating the toggle's arrow."""
-        self._count("grid_sort")
-        self._grid_sort_desc = descending
-        self._grid_sort_dir.setText("↓" if descending else "↑")
-        self._grid_sort_dir.setToolTip(
-            tooltip("Descending. Click to sort ascending.")
-            if descending
-            else _("Ascending. Click to sort descending."),
-        )
-        self._resort_grid()
+    def _build_folder_grid(self) -> FolderGrid:
+        """Build the folder grid page and wire it to the list, the menus, and the review pane."""
+        grid = self._folder_grid = FolderGrid(self, self._items)
+        grid.check_toggled.connect(self._on_grid_check_toggled)
+        grid.photo_activated.connect(self._on_grid_photo_activated)
+        grid.context_menu_requested.connect(self._on_grid_context_menu)
+        grid.view_changed.connect(self._resort_grid)
+        grid.used.connect(self._count)
+        return grid
 
     def _resort_grid(self) -> None:
         """Rebuild the grid with the current filter and order; cached thumbnails are reused."""
-        if self._grid_folder is not None and self._right.currentIndex() == _PAGE_GRID:
-            self._show_grid(self._grid_folder)
+        folder = self._folder_grid.folder
+        if folder is not None and self._right.currentIndex() == _PAGE_GRID:
+            self._show_grid(folder)
 
     def _build_detail_panel(self) -> QWidget:
         content = QWidget()
@@ -2700,7 +2527,7 @@ class MainWindow(QMainWindow):
             self._items.pop(key, None)
             self._scan_tried.discard(key)  # added again later, it deserves a fresh read
             self._preview_cache.pop(key, None)
-            self._thumb_cache.pop(key, None)
+            self._folder_grid.forget(key)
             if self._viewer_cache is not None and self._viewer_cache[0] == key:
                 self._viewer_cache = None
             if self._current is not None and str(self._current.path) == key:
@@ -2713,12 +2540,13 @@ class MainWindow(QMainWindow):
         Left alone, the grid still holds the removed thumbnails: dead items whose clicks and
         checkboxes map to nothing.
         """
-        if self._grid_folder is None or self._right.currentIndex() != _PAGE_GRID:
+        folder = self._folder_grid.folder
+        if folder is None or self._right.currentIndex() != _PAGE_GRID:
             return
-        if paths_under(self._item_paths(), self._grid_folder):
-            self._show_grid(self._grid_folder)
+        if paths_under(self._item_paths(), folder):
+            self._show_grid(folder)
         else:
-            self._grid_folder = None
+            self._folder_grid.close_folder()
             self._show_empty()
 
     def _clear(self) -> None:
@@ -2729,17 +2557,13 @@ class MainWindow(QMainWindow):
             # the window no longer knows about and then report every one of them as unsaved.
             self._status.setText(_("Cancel the run in flight before clearing the list."))
             return
-        self._stop_thumbs()
+        self._folder_grid.clear()
         self._stop_scan()
         self._end_scan(stopped=True)  # the list is gone, so nothing is left to uncheck in it
         self._items.clear()
         self._scan_tried.clear()
         self._preview_cache.clear()
-        self._thumb_cache.clear()
         self._viewer_cache = None
-        self._grid.clear()
-        self._grid_items = {}
-        self._grid_folder = None
         self._current = None
         self._rebuild_tree()
         self._show_empty()
@@ -2910,7 +2734,7 @@ class MainWindow(QMainWindow):
             for node in build_tree(paths):
                 self._add_folder_node(self._tree, node)
         self._tree.setSortingEnabled(True)
-        self._sync_grid_checks()
+        self._folder_grid.sync_checks()
         # Photos that just left the list have to leave the history with them, or Back would try to
         # open a row that no longer exists. Folders go too when their last photo did.
         self._history.prune(self._location_exists)
@@ -2921,8 +2745,8 @@ class MainWindow(QMainWindow):
         # the photo or folder they are reviewing.
         if self._current is not None:
             self._select_tree_entry(str(self._current.path), is_dir=False)
-        elif self._grid_folder is not None and self._right.currentIndex() == _PAGE_GRID:
-            self._select_tree_entry(str(self._grid_folder), is_dir=True)
+        elif self._folder_grid.folder is not None and self._right.currentIndex() == _PAGE_GRID:
+            self._select_tree_entry(str(self._folder_grid.folder), is_dir=True)
         self._syncing = False
 
     def _select_tree_entry(self, path: str, *, is_dir: bool) -> None:
@@ -2980,7 +2804,7 @@ class MainWindow(QMainWindow):
                 self._items[path].selected = item.checkState(0) == Qt.CheckState.Checked
         # Whichever kind of row was toggled, every folder above it may have gone mixed.
         self._sync_ancestors(item)
-        self._sync_grid_checks()
+        self._folder_grid.sync_checks()
         self._syncing = False
         self._update_status()
 
@@ -3019,7 +2843,7 @@ class MainWindow(QMainWindow):
         path = current.data(0, PATH_ROLE) if current is not None else None
         if current is None or path is None:
             self._commit_current()
-            self._stop_thumbs()
+            self._folder_grid.stop_thumbs()
             self._show_empty()
             return
         self._open_location(Location(path=Path(path), is_dir=bool(current.data(0, IS_DIR_ROLE))))
@@ -3044,7 +2868,7 @@ class MainWindow(QMainWindow):
             self._show_detail(enabled=False)
             self._show_grid(location.path)
         else:
-            self._stop_thumbs()
+            self._folder_grid.stop_thumbs()
             self._right.setCurrentIndex(_PAGE_DETAIL)
             self._current = self._items[str(location.path)]
             self._show_item(self._current)
@@ -3179,139 +3003,19 @@ class MainWindow(QMainWindow):
     # --- folder thumbnail grid -------------------------------------------------------------
 
     def _show_grid(self, folder: Path) -> None:
-        if folder != self._grid_folder:  # a refresh of the grid on show is not a new visit
-            self._count("grid")
-        self._stop_thumbs()
-        self._grid_folder = folder
-        self._grid.clear()
-        self._grid_items = {}
-        under = [self._items[str(path)] for path in paths_under(self._item_paths(), folder)]
-        items = sort_photos(
-            filter_photos(under, self._grid_filter),
-            self._grid_sort,
-            descending=self._grid_sort_desc,
-        )
-        pending: list[Path] = []
-        self._syncing = True
-        for item in items:
-            key = str(item.path)
-            grid_item = QListWidgetItem(item.path.name)
-            grid_item.setData(PATH_ROLE, key)
-            grid_item.setFlags(grid_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            self._grid.addItem(grid_item)
-            self._grid_items[key] = grid_item
-            self._update_grid_item(item, grid_item)
-            if key not in self._thumb_cache:
-                pending.append(item.path)
-        self._syncing = False
+        """Show *folder*'s thumbnail grid in the right-hand pane."""
+        self._folder_grid.show_folder(folder)
         self._right.setCurrentIndex(_PAGE_GRID)
-        self._status.setText(self._grid_status_text(folder, shown=len(items), total=len(under)))
-        if pending:
-            self._start_thumbs(pending)
 
     def _item_paths(self) -> list[Path]:
         """Return the path of every photo currently in the list."""
         return [item.path for item in self._items.values()]
 
-    def _grid_status_text(self, folder: Path, *, shown: int, total: int) -> str:
-        """Describe the grid's contents, noting when a filter is hiding some of the folder."""
-        name = folder.name or folder
-        if shown == total:
-            return ngettext("{n} photo in {folder}.", "{n} photos in {folder}.", total).format(
-                n=total,
-                folder=name,
-            )
-        return _("Showing {shown} of {total} in {folder}.").format(
-            shown=shown,
-            total=total,
-            folder=name,
-        )
-
-    def _update_grid_item(self, item: PhotoItem, grid_item: QListWidgetItem) -> None:
-        """Refresh a grid thumbnail: image (or placeholder), state badges, and checkbox."""
-        # Hold _syncing across the whole refresh: setIcon and setToolTip emit itemChanged just
-        # like setCheckState, and an unguarded emission flips _grid_check_toggled, which then
-        # swallows the user's next real click on a thumbnail (plus an O(n) tree walk per
-        # streamed-in thumbnail).
-        was_syncing = self._syncing
-        self._syncing = True
-        try:
-            grid_item.setCheckState(check_state(item.selected))
-            key = str(item.path)
-            base = self._thumb_cache.get(key, self._placeholder_pixmap)
-            badges = thumb_badges(item, has_sidecar=item.path.with_suffix(".xmp").exists())
-            grid_item.setIcon(QIcon(_badged_pixmap(base, badges)))
-            notes = [_(_BADGE_TEXT[name]) for name in badges]
-            if item.status == FAILED and item.error:
-                notes.append(item.error)
-            grid_item.setToolTip("\n".join([item.path.name, *notes]))
-        finally:
-            self._syncing = was_syncing
-
-    def _on_thumb_activated(self, item: QListWidgetItem) -> None:
-        if self._grid_check_toggled:
-            # This click landed on the checkbox: the toggle already happened, and jumping to
-            # the detail page would yank the user out of the grid they are working in.
-            self._grid_check_toggled = False
-            return
-        if selection_modifiers_active():
-            # Shift/Cmd clicks are building a multi-selection; navigating away would kill it.
-            return
-        key = item.data(PATH_ROLE)
+    def _on_grid_photo_activated(self, key: str) -> None:
+        """Open the photo whose thumbnail was clicked, the way picking its tree row would."""
         leaf = self._leaf_for(Path(key))
         if leaf is not None:
             self._tree.setCurrentItem(leaf)  # routes to the detail page
-
-    def _on_thumb_ready(self, path: str, data: bytes) -> None:
-        item = self._items.get(path)
-        if item is None:
-            # Removed from the list while it was decoding, which a detached job makes likelier.
-            # Caching it would strand a pixmap that nothing prunes.
-            return
-        pixmap = QPixmap()
-        pixmap.loadFromData(data)
-        if pixmap.isNull():
-            return
-        self._thumb_cache[path] = pixmap
-        grid_item = self._grid_items.get(path)
-        if grid_item is not None:
-            self._update_grid_item(item, grid_item)
-
-    def _start_thumbs(self, paths: list[Path]) -> None:
-        self._thumb_worker = ThumbnailWorker(paths)
-        self._thumb_worker.ready.connect(self._on_thumb_ready)
-        # Stop the thread's event loop once every thumbnail is decoded; without this the idle
-        # thread would keep running until the next navigation or the window closed.
-        self._thumb_thread = start_in_thread(self, self._thumb_worker, quit_when_done=True)
-
-    def _stop_thumbs(self, *, blocking: bool = False) -> None:
-        """
-        Ask the thumbnail job to stop, waiting only briefly for it.
-
-        The worker checks the stop flag between photos, so a decode already under way has to finish
-        first: seconds, for a big RAW. Waiting that out froze the window on every click that leaves
-        a loading folder, and with the Untagged filter on, every metadata scan batch re-enters here.
-        Detach instead, the way _stop_scan does. A detached job only feeds _on_thumb_ready, which
-        keys everything by path, so a late thumbnail is still the right thumbnail.
-
-        closeEvent passes ``blocking``: the window owns the QThread, so leaving one running past the
-        teardown would destroy it mid-run.
-        """
-        if self._thumb_worker is not None:
-            self._thumb_worker.stop()
-            self._thumb_worker.deleteLater()
-        if self._thumb_thread is not None:
-            if blocking:
-                join_thread(self._thumb_thread)
-            else:
-                release_thread(
-                    self._thumb_thread,
-                    timeout_ms=_THUMB_STOP_TIMEOUT_MS,
-                    detached_event="gui_thumbnail_stop_detached",
-                    level="DEBUG",
-                )
-            self._thumb_thread = None
-        self._thumb_worker = None
 
     # --- detail pane -----------------------------------------------------------------------
 
@@ -4551,9 +4255,7 @@ class MainWindow(QMainWindow):
         if leaf is not None:
             self._render_status_cells(leaf, item)
         # Keep the folder grid's badge overlay in step with the tree.
-        grid_item = self._grid_items.get(str(item.path))
-        if grid_item is not None:
-            self._update_grid_item(item, grid_item)
+        self._folder_grid.refresh(item)
 
     def _render_status_cells(self, leaf: QTreeWidgetItem, item: PhotoItem) -> None:
         """Paint the Status and Tagged columns for *item*'s row."""
@@ -4639,7 +4341,7 @@ class MainWindow(QMainWindow):
             self._save_worker.stop()
         if self._watch_worker is not None:
             self._watch_worker.stop()
-        self._stop_thumbs(blocking=True)
+        self._folder_grid.stop_thumbs(blocking=True)
         self._stop_scan()
         self._teardown_thread()
         self._teardown_save_thread()
@@ -4701,7 +4403,7 @@ class MainWindow(QMainWindow):
         self._input_watcher = InputWatcher(self._touch, self)
         for widget in (
             self._tree,
-            self._grid,
+            self._folder_grid.view,
             self._title,
             self._description,
             self._keywords,
@@ -4888,61 +4590,3 @@ class MainWindow(QMainWindow):
 
 # How the OS color scheme reads in the launch and session beacons.
 _COLOR_SCHEMES = {Qt.ColorScheme.Dark: "dark", Qt.ColorScheme.Light: "light"}
-
-
-def _make_placeholder() -> QPixmap:
-    """Build a neutral grey tile shown in the grid until a thumbnail loads."""
-    pixmap = QPixmap(_THUMB_SIZE, _THUMB_SIZE)
-    pixmap.fill(QColor(50, 50, 56))
-    return pixmap
-
-
-# Thumbnail badge rendering: fill color and glyph per badge name. The lifecycle badge (first
-# three) draws top-right; the informational ones stack top-left.
-_BADGE_STYLE = {
-    BADGE_FAILED: ("#f85149", "✗"),  # red cross
-    BADGE_SAVED: ("#3fb950", "✓"),  # green check
-    BADGE_UNSAVED: ("#6366f1", "•"),  # indigo dot: generated, not saved yet
-    BADGE_METADATA: ("#8a8a8a", "M"),  # file already carries metadata
-    BADGE_COPYRIGHT: ("#8957e5", "C"),  # purple: the file carries a copyright notice
-    BADGE_SIDECAR: ("#0e7490", "S"),  # an XMP sidecar exists
-    BADGE_MIXED_SCRIPT: ("#d29922", "!"),  # amber: the text mixes writing systems
-}
-_BADGE_TEXT = {
-    BADGE_FAILED: gettext_noop("generation failed"),
-    BADGE_SAVED: gettext_noop("saved"),
-    BADGE_UNSAVED: gettext_noop("generated, not saved yet"),
-    BADGE_METADATA: gettext_noop("already has metadata"),
-    BADGE_COPYRIGHT: gettext_noop("has a copyright notice"),
-    BADGE_SIDECAR: gettext_noop("has an XMP sidecar"),
-    BADGE_MIXED_SCRIPT: gettext_noop("mixes writing systems"),
-}
-_LIFECYCLE_BADGES = frozenset({BADGE_FAILED, BADGE_SAVED, BADGE_UNSAVED})
-
-
-def _badged_pixmap(base: QPixmap, badges: list[str]) -> QPixmap:
-    """Overlay the badge dots for *badges* onto a copy of *base*."""
-    if not badges or base.isNull():
-        return base
-    pixmap = QPixmap(base)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    radius = max(12, pixmap.width() // 8)
-    margin = max(3, radius // 4)
-    left = margin
-    font = painter.font()
-    font.setPixelSize(int(radius * 0.7))
-    font.setBold(True)
-    painter.setFont(font)
-    for name in badges:
-        color, glyph = _BADGE_STYLE[name]
-        x = pixmap.width() - radius - margin if name in _LIFECYCLE_BADGES else left
-        if name not in _LIFECYCLE_BADGES:
-            left += radius + margin
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(color))
-        painter.drawEllipse(x, margin, radius, radius)
-        painter.setPen(QColor("white"))
-        painter.drawText(QRect(x, margin, radius, radius), Qt.AlignmentFlag.AlignCenter, glyph)
-    painter.end()
-    return pixmap

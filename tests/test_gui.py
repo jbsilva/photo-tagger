@@ -1152,7 +1152,7 @@ def test_flat_list_still_opens_the_enclosing_folder(window: gui.MainWindow, tmp_
 
     window._go_up()  # noqa: SLF001
 
-    assert window._grid_folder == first.parent  # noqa: SLF001
+    assert window._folder_grid.folder == first.parent  # noqa: SLF001
     assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
 
 
@@ -1168,7 +1168,7 @@ def test_history_survives_the_switch_to_the_flat_list(
     window._view_actions[main_window.VIEW_LIST].setChecked(True)  # noqa: SLF001
     window._go_back()  # noqa: SLF001
 
-    assert window._grid_folder == first.parent  # noqa: SLF001
+    assert window._folder_grid.folder == first.parent  # noqa: SLF001
     assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
     # Nothing in the flat list stands for a folder, so no row is left highlighted.
     assert window._tree.currentItem() is None  # noqa: SLF001
@@ -2399,12 +2399,13 @@ def test_selecting_a_folder_shows_the_thumbnail_grid(
     """Selecting a folder switches the right pane to a grid of its photos."""
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)  # no background thread
+    grid = window._folder_grid  # noqa: SLF001
+    monkeypatch.setattr(grid, "_start_thumbs", lambda _paths: None)  # no background thread
     _add_dir(window, {"a": a, "b": b})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - the folder node
 
     assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
-    assert window._grid.count() == 2  # noqa: SLF001, PLR2004 - two photos in the folder
+    assert window._folder_grid._list.count() == 2  # noqa: SLF001, PLR2004 - two photos in the folder
 
 
 def test_clicking_a_thumbnail_opens_the_detail(
@@ -2415,12 +2416,12 @@ def test_clicking_a_thumbnail_opens_the_detail(
     """Activating a grid item selects that photo and shows its detail page."""
     a = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=["Beach"])
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
-    grid_item = window._grid.item(0)  # noqa: SLF001
+    grid_item = window._folder_grid._list.item(0)  # noqa: SLF001
 
-    window._on_thumb_activated(grid_item)  # noqa: SLF001
+    window._folder_grid._on_thumb_activated(grid_item)  # noqa: SLF001
 
     assert window._right.currentIndex() == main_window._PAGE_DETAIL  # noqa: SLF001
     assert window._current is window._items[str(a)]  # noqa: SLF001
@@ -2447,11 +2448,11 @@ def test_on_thumb_ready_sets_icon_and_caches(
 ) -> None:
     """A finished thumbnail updates the grid item and is cached."""
     a = _jpeg(tmp_path / "a.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001
-    window._on_thumb_ready(str(a), a.read_bytes())  # noqa: SLF001
-    assert str(a) in window._thumb_cache  # noqa: SLF001
+    window._folder_grid._on_thumb_ready(str(a), a.read_bytes())  # noqa: SLF001
+    assert str(a) in window._folder_grid._thumbs  # noqa: SLF001
 
 
 def test_a_thumbnail_for_a_removed_photo_is_dropped(
@@ -2461,13 +2462,13 @@ def test_a_thumbnail_for_a_removed_photo_is_dropped(
 ) -> None:
     """A detached job outlives the list it was started for; its late results are not cached."""
     a = _jpeg(tmp_path / "a.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a, "b": _jpeg(tmp_path / "b.jpg")})
     window._remove_items([str(a)])  # noqa: SLF001
 
-    window._on_thumb_ready(str(a), a.read_bytes())  # noqa: SLF001
+    window._folder_grid._on_thumb_ready(str(a), a.read_bytes())  # noqa: SLF001
 
-    assert str(a) not in window._thumb_cache  # noqa: SLF001
+    assert str(a) not in window._folder_grid._thumbs  # noqa: SLF001
 
 
 # Generous next to the 250 ms _stop_thumbs allows, but far under the 10 s decode the test holds
@@ -2497,17 +2498,17 @@ def test_stopping_thumbnails_does_not_block_on_a_slow_decode(
     _patch_gui(monkeypatch, "prepare_image_for_agent", slow_decode)
     _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - opens the grid, starts the job
-    assert window._thumb_thread is not None  # noqa: SLF001
-    detached = window._thumb_thread  # noqa: SLF001
+    assert window._folder_grid._thumb_thread is not None  # noqa: SLF001
+    detached = window._folder_grid._thumb_thread  # noqa: SLF001
     # The stop flag is only read between photos, so the freeze needs a decode already running.
     assert decoding.wait(5.0), "the worker never reached the decode"
 
     started = time.monotonic()
     try:
-        window._stop_thumbs()  # noqa: SLF001
+        window._folder_grid.stop_thumbs()  # noqa: SLF001
         elapsed = time.monotonic() - started
         assert elapsed < _STOP_THUMBS_BUDGET_S, f"_stop_thumbs blocked for {elapsed:.1f}s"
-        assert window._thumb_thread is None  # noqa: SLF001
+        assert window._folder_grid._thumb_thread is None  # noqa: SLF001
     finally:
         release.set()
         detached.wait(5000)
@@ -2515,7 +2516,8 @@ def test_stopping_thumbnails_does_not_block_on_a_slow_decode(
 
 def _grid_order(window: gui.MainWindow) -> list[str]:
     """Return the thumbnail filenames in the grid, in display order."""
-    return [window._grid.item(i).text() for i in range(window._grid.count())]  # noqa: SLF001
+    view = window._folder_grid.view  # noqa: SLF001
+    return [view.item(i).text() for i in range(view.count())]
 
 
 def test_grid_sorts_by_name_by_default(
@@ -2525,7 +2527,7 @@ def test_grid_sorts_by_name_by_default(
 ) -> None:
     """A freshly shown grid orders thumbnails by name, not the order they were added."""
     files = {name: _jpeg(tmp_path / f"{name}.jpg") for name in ("c", "a", "b")}
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, files)
 
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
@@ -2540,11 +2542,11 @@ def test_grid_sort_direction_toggle_reverses_order(
 ) -> None:
     """Flipping the direction toggle re-sorts the visible grid from A-Z to Z-A in place."""
     files = {name: _jpeg(tmp_path / f"{name}.jpg") for name in ("c", "a", "b")}
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, files)
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
-    window._grid_sort_dir.setChecked(True)  # noqa: SLF001 - ascending -> descending
+    window._folder_grid._sort_dir.setChecked(True)  # noqa: SLF001 - ascending -> descending
 
     assert _grid_order(window) == ["c.jpg", "b.jpg", "a.jpg"]
 
@@ -2558,14 +2560,14 @@ def test_grid_sort_by_status_uses_lifecycle_rank(
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
     c = _jpeg(tmp_path / "c.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a, "b": b, "c": c})
     window._items[str(a)].status = FAILED  # noqa: SLF001
     window._items[str(b)].status = PENDING  # noqa: SLF001
     window._items[str(c)].status = READY  # noqa: SLF001
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
-    combo = window._grid_sort_combo  # noqa: SLF001
+    combo = window._folder_grid._sort_combo  # noqa: SLF001
     combo.setCurrentIndex(combo.findData(SORT_STATUS))
 
     # Ascending lifecycle: pending(b) < ready(c) < failed(a), not the alphabetical file order.
@@ -2584,11 +2586,11 @@ def test_grid_sort_survives_navigating_between_folders(
     _jpeg(tmp_path / "one" / "a.jpg")
     _jpeg(tmp_path / "two" / "d.jpg")
     _jpeg(tmp_path / "two" / "c.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     window._extensions.setText("jpg")  # noqa: SLF001
     window._add_inputs([tmp_path])  # noqa: SLF001
     _select(window, window._tree.topLevelItem(0).child(0))  # noqa: SLF001 - first subfolder
-    window._grid_sort_dir.setChecked(True)  # noqa: SLF001 - descending
+    window._folder_grid._sort_dir.setChecked(True)  # noqa: SLF001 - descending
 
     _select(window, window._tree.topLevelItem(0).child(1))  # noqa: SLF001 - second subfolder
 
@@ -2604,14 +2606,14 @@ def test_grid_filter_shows_only_matching_photos(
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
     c = _jpeg(tmp_path / "c.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a, "b": b, "c": c})
     window._items[str(a)].status = SAVED  # noqa: SLF001
     window._items[str(b)].status = SAVED  # noqa: SLF001
     window._items[str(c)].status = FAILED  # noqa: SLF001
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
-    combo = window._grid_filter_combo  # noqa: SLF001
+    combo = window._folder_grid._filter_combo  # noqa: SLF001
     combo.setCurrentIndex(combo.findData(FILTER_SAVED))
 
     assert _grid_order(window) == ["a.jpg", "b.jpg"]
@@ -2626,12 +2628,12 @@ def test_grid_filter_status_message_reports_hidden_count(
     """With a filter active, the status bar shows how many of the folder's photos are visible."""
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a, "b": b})
     window._items[str(a)].status = FAILED  # noqa: SLF001
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
-    combo = window._grid_filter_combo  # noqa: SLF001
+    combo = window._folder_grid._filter_combo  # noqa: SLF001
     combo.setCurrentIndex(combo.findData(FILTER_FAILED))
 
     text = window._status.text()  # noqa: SLF001
@@ -2647,10 +2649,10 @@ def test_grid_filter_untagged_refreshes_after_metadata_scan(
     """The Untagged filter re-evaluates when the background scan reports, not just at build time."""
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a, "b": b})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
-    combo = window._grid_filter_combo  # noqa: SLF001
+    combo = window._folder_grid._filter_combo  # noqa: SLF001
     combo.setCurrentIndex(combo.findData(FILTER_UNTAGGED))
     # Nothing is scanned yet (known_fields is None), so no photo is hidden or shown as untagged.
     assert _grid_order(window) == []
@@ -2668,10 +2670,10 @@ def test_grid_filter_no_copyright_refreshes_after_metadata_scan(
     """No copyright reads the same scan as Untagged, so it re-filters when the scan reports."""
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a, "b": b})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
-    combo = window._grid_filter_combo  # noqa: SLF001
+    combo = window._folder_grid._filter_combo  # noqa: SLF001
     combo.setCurrentIndex(combo.findData(FILTER_NO_COPYRIGHT))
     assert _grid_order(window) == []
 
@@ -2687,18 +2689,18 @@ def test_a_thumbnail_with_a_notice_gets_the_copyright_badge(
 ) -> None:
     """The C badge draws next to M, and hovering the thumbnail names it."""
     a = _jpeg(tmp_path / "a.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a})
     window._on_scan_done({str(a): {FIELD_TITLE, FIELD_COPYRIGHT}})  # noqa: SLF001
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
-    tip = window._grid.item(0).toolTip()  # noqa: SLF001
+    tip = window._folder_grid._list.item(0).toolTip()  # noqa: SLF001
     assert tip == "a.jpg\nalready has metadata\nhas a copyright notice"
 
 
 def test_grid_combos_are_sized_to_their_widest_label(window: gui.MainWindow) -> None:
     """Both grid combos reserve room for their longest entry so no label is clipped."""
-    for combo in (window._grid_filter_combo, window._grid_sort_combo):  # noqa: SLF001
+    for combo in (window._folder_grid._filter_combo, window._folder_grid._sort_combo):  # noqa: SLF001
         widest = max(len(combo.itemText(i)) for i in range(combo.count()))
         assert combo.minimumContentsLength() == widest
 
@@ -2717,7 +2719,7 @@ def _open_grid(
     """Add a folder of photos and open its thumbnail grid, with no background jobs."""
     files = {name: _jpeg(tmp_path / name) for name in names}
     _stub_reads(monkeypatch, keywords=[])
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, files)
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - the folder node
     return files
@@ -2731,13 +2733,13 @@ def test_back_returns_from_a_photo_to_the_grid_it_was_opened_from(
     """Grid -> thumbnail -> Back lands on the grid again, with the folder row selected."""
     files = _open_grid(window, tmp_path, monkeypatch)
 
-    window._on_thumb_activated(window._grid_items[str(files["a.jpg"])])  # noqa: SLF001
+    window._folder_grid._on_thumb_activated(window._folder_grid._cells[str(files["a.jpg"])])  # noqa: SLF001
     assert window._right.currentIndex() == main_window._PAGE_DETAIL  # noqa: SLF001
 
     window._go_back()  # noqa: SLF001
 
     assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
-    assert window._grid_folder == tmp_path  # noqa: SLF001
+    assert window._folder_grid.folder == tmp_path  # noqa: SLF001
     current = window._tree.currentItem()  # noqa: SLF001
     assert current is not None
     assert current.data(0, PATH_ROLE) == str(tmp_path)
@@ -2883,7 +2885,7 @@ def test_enclosing_folder_opens_the_grid_of_the_open_photo(
     window._go_up()  # noqa: SLF001
 
     assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
-    assert window._grid_folder == tmp_path  # noqa: SLF001
+    assert window._folder_grid.folder == tmp_path  # noqa: SLF001
 
 
 def test_enclosing_folder_at_the_top_says_so(
@@ -3758,7 +3760,7 @@ def test_generate_menus_offer_one_time_skip_cache(
 
 def test_grid_thumbnails_share_the_context_menu(window: gui.MainWindow) -> None:
     """The folder grid asks for the same custom context menu as the tree."""
-    policy = window._grid.contextMenuPolicy()  # noqa: SLF001
+    policy = window._folder_grid._list.contextMenuPolicy()  # noqa: SLF001
     assert policy == Qt.ContextMenuPolicy.CustomContextMenu
 
 
@@ -3825,11 +3827,11 @@ def test_grid_checkbox_unchecks_photo_and_tree(
     """Unchecking a thumbnail deselects the photo and repaints its tree row."""
     a = _jpeg(tmp_path / "a.jpg")
     _jpeg(tmp_path / "b.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
-    grid_item = window._grid_items[str(a)]  # noqa: SLF001
+    grid_item = window._folder_grid._cells[str(a)]  # noqa: SLF001
     assert grid_item.checkState() == Qt.CheckState.Checked
     grid_item.setCheckState(Qt.CheckState.Unchecked)  # fires itemChanged
 
@@ -3849,7 +3851,7 @@ def test_tree_uncheck_reflects_in_grid_checkboxes(
     """Unchecking the folder in the tree unchecks every visible thumbnail."""
     a = _jpeg(tmp_path / "a.jpg")
     b = _jpeg(tmp_path / "b.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": a, "b": b})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
@@ -3857,7 +3859,7 @@ def test_tree_uncheck_reflects_in_grid_checkboxes(
     assert top is not None
     top.setCheckState(0, Qt.CheckState.Unchecked)
 
-    states = {item.checkState() for item in window._grid_items.values()}  # noqa: SLF001
+    states = {item.checkState() for item in window._folder_grid._cells.values()}  # noqa: SLF001
     assert states == {Qt.CheckState.Unchecked}
 
 
@@ -3869,17 +3871,17 @@ def test_grid_checkbox_click_does_not_open_the_photo(
     """Toggling a thumbnail checkbox swallows the click; a later plain click still opens."""
     img = _jpeg(tmp_path / "a.jpg")
     _stub_reads(monkeypatch, keywords=[])
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": img})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
-    grid_item = window._grid_items[str(img)]  # noqa: SLF001
+    grid_item = window._folder_grid._cells[str(img)]  # noqa: SLF001
 
     grid_item.setCheckState(Qt.CheckState.Unchecked)  # the toggle half of the click
-    window._on_thumb_activated(grid_item)  # noqa: SLF001 - the click half
+    window._folder_grid._on_thumb_activated(grid_item)  # noqa: SLF001 - the click half
 
     assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001 - stayed in the grid
 
-    window._on_thumb_activated(grid_item)  # noqa: SLF001 - a later plain click
+    window._folder_grid._on_thumb_activated(grid_item)  # noqa: SLF001 - a later plain click
     assert window._right.currentIndex() == main_window._PAGE_DETAIL  # noqa: SLF001
 
 
@@ -3890,12 +3892,12 @@ def test_modifier_click_on_thumbnail_keeps_the_grid(
 ) -> None:
     """A shift/cmd click is building a selection, so it must not navigate away."""
     img = _jpeg(tmp_path / "a.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _patch_gui(monkeypatch, "selection_modifiers_active", lambda: True)
     _add_dir(window, {"a": img})
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
-    window._on_thumb_activated(window._grid_items[str(img)])  # noqa: SLF001
+    window._folder_grid._on_thumb_activated(window._folder_grid._cells[str(img)])  # noqa: SLF001
 
     assert window._right.currentIndex() == main_window._PAGE_GRID  # noqa: SLF001
 
@@ -6763,12 +6765,12 @@ def test_the_grid_can_show_only_the_mixed_script_photos(
     """The folder grid offers the same filter, so a visual pass over a shoot works too."""
     flagged = _jpeg(tmp_path / "a.jpg")
     clean = _jpeg(tmp_path / "b.jpg")
-    monkeypatch.setattr(window, "_start_thumbs", lambda _paths: None)
+    monkeypatch.setattr(window._folder_grid, "_start_thumbs", lambda _paths: None)  # noqa: SLF001
     _add_dir(window, {"a": flagged, "b": clean})
     window._items[str(flagged)].foreign_terms = ["陶笛"]  # noqa: SLF001
     _select(window, window._tree.topLevelItem(0))  # noqa: SLF001 - folder -> grid
 
-    combo = window._grid_filter_combo  # noqa: SLF001
+    combo = window._folder_grid._filter_combo  # noqa: SLF001
     combo.setCurrentIndex(combo.findData(FILTER_MIXED_SCRIPT))
 
     assert _grid_order(window) == ["a.jpg"]
