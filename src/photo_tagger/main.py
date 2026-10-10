@@ -22,7 +22,6 @@ import importlib
 import json
 import os
 import sys
-import time
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path  # noqa: TC003 - cyclopts resolves the flag annotations at runtime.
@@ -75,15 +74,16 @@ from photo_tagger.cli_reports import (
     write_summary_file,
 )
 from photo_tagger.cli_telemetry import (
+    INTERRUPTED_EXIT,
     Beacons,
+    CommandReporter,
     PhotoStats,
     exit_status,
-    invocation_setup,
     run_from_totals,
     show_notice_if_due,
 )
 from photo_tagger.config import DEFAULT_USER_PROMPT, SidecarMode
-from photo_tagger.config_file import configured_exiftool_path, load_config
+from photo_tagger.config_file import configured_exiftool_path
 from photo_tagger.diagnostics import render_report, run_checks
 from photo_tagger.discovery import (
     apply_date_filter,
@@ -1691,84 +1691,6 @@ def _was_interrupted(error: BatchError) -> bool:
     return isinstance(totals, BatchTotals) and totals.interrupted
 
 
-def _telemetry_enabled_for(tokens: list[str]) -> bool:
-    """
-    Best-effort telemetry choice for an invocation without a parsed ``--no-telemetry``.
-
-    A crash may happen before (or during) CLI parsing, and the other commands have no such flag, so
-    scan the raw *tokens* for it and read the config file's [telemetry] table. The environment
-    switches are enforced inside emit and emit_crash themselves.
-    """
-    if "--no-telemetry" in tokens:
-        return False
-    table = load_config().get("telemetry", {})
-    return bool(table.get("enabled", True)) if isinstance(table, dict) else True
-
-
-# Exit statuses the command beacon names: cyclopts' own for a bad flag, and the shell's for Ctrl-C.
-_USAGE_EXIT = 2
-_INTERRUPTED_EXIT = 130
-
-
-def _command_name(tokens: list[str]) -> str:
-    """Name what *tokens* run: a subcommand, help, the version, or the default ``tag``."""
-    if {"--help", "-h"}.intersection(tokens):
-        return "help"
-    if "--version" in tokens:
-        return "version"
-    commands = {name for name in app if not name.startswith("-")}
-    return tokens[0] if tokens and tokens[0] in commands else "tag"
-
-
-def _command_outcome(exit_code: int, error: BaseException | None) -> str:
-    """Name how a command ended, from its exit status."""
-    if isinstance(error, KeyboardInterrupt):
-        return telemetry.OUTCOME_INTERRUPTED
-    if exit_code == 0:
-        return telemetry.OUTCOME_OK
-    return telemetry.OUTCOME_USAGE_ERROR if exit_code == _USAGE_EXIT else telemetry.OUTCOME_FAILED
-
-
-def _report_command(
-    tokens: list[str],
-    *,
-    exit_code: int,
-    error: BaseException | None,
-    started: float,
-) -> None:
-    """
-    Send the beacon for an invocation that sent none of its own.
-
-    That is every command but ``tag``, ``watch``, and ``gui``, plus a ``tag`` or ``watch`` that
-    stopped at the command line. The GUI is left out: its window reports itself, under its own
-    toggle. Never raises, because it runs while the real exit is on its way out.
-    """
-    command = _command_name(tokens)
-    if telemetry.sent_any() or command == "gui":
-        return
-    try:
-        enabled = _telemetry_enabled_for(tokens)
-        if not telemetry.should_send(config_enabled=enabled):
-            return
-        show_notice_if_due(enabled=enabled)
-        interrupted = isinstance(error, KeyboardInterrupt)
-        telemetry.emit(
-            telemetry.CommandInfo(
-                command=command,
-                outcome=_command_outcome(exit_code, error),
-                exit_code=exit_code,
-                duration_seconds=time.monotonic() - started,
-                error_kind=type(error).__name__ if error is not None and not interrupted else "",
-                setup=invocation_setup(_CONFIG_SOURCE.invocation),
-                details=telemetry.command_notes(),
-            ),
-            enabled=enabled,
-            block=True,
-        )
-    except Exception as exc:  # noqa: BLE001 - a beacon must never change how the CLI exits.
-        logger.debug("telemetry_command_report_failed", error=str(exc))
-
-
 def main(argv: list[str] | None = None) -> None:
     """
     Console entry point: run the CLI, reporting an unhandled crash before re-raising.
@@ -1779,7 +1701,11 @@ def main(argv: list[str] | None = None) -> None:
     sent no beacon of its own gets a short command beacon on the way out.
     """
     tokens = sys.argv[1:] if argv is None else argv
-    started = time.monotonic()
+    reporter = CommandReporter(
+        tokens,
+        commands=frozenset(name for name in app if not name.startswith("-")),
+        source=_CONFIG_SOURCE,
+    )
     exit_code = 0
     error: BaseException | None = None
     try:
@@ -1789,25 +1715,13 @@ def main(argv: list[str] | None = None) -> None:
         error = exc.__cause__ or exc.__context__
         raise
     except KeyboardInterrupt as exc:
-        exit_code, error = _INTERRUPTED_EXIT, exc
+        exit_code, error = INTERRUPTED_EXIT, exc
         raise
     except Exception as exc:
-        if _command_name(tokens) == "gui":
-            # The window reports its own crashes, under its own consent and notice.
-            raise
-        enabled = _telemetry_enabled_for(tokens)
-        # A crash on the very first run is still the first beacon, so the disclosure comes first.
-        show_notice_if_due(enabled=enabled)
-        telemetry.emit_crash(
-            exc,
-            interface="cli",
-            command=_command_name(tokens),
-            enabled=enabled,
-            block=True,
-        )
+        reporter.crashed(exc)
         raise
     finally:
-        _report_command(tokens, exit_code=exit_code, error=error, started=started)
+        reporter.finished(exit_code, error)
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point, not exercised by tests

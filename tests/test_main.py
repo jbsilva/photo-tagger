@@ -27,6 +27,7 @@ from photo_tagger import (
     telemetry,
 )
 from photo_tagger.cli_options import (
+    ConfigFileSource,
     Defaults,
     RunOptions,
     WatchConfig,
@@ -1502,10 +1503,31 @@ def test_main_does_not_report_clean_exits_as_crashes() -> None:
     assert crashes == []
 
 
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        (["undo", "--list"], "undo"),
+        (["undo", "--help"], "help"),
+        (["--version"], "version"),
+        (["-i", "photo.jpg"], "tag"),
+        ([], "tag"),
+    ],
+)
+def test_command_reporter_names_the_command(tokens: list[str], expected: str) -> None:
+    """Help and the version win over a subcommand, and anything else is the default tag."""
+    reporter = cli_telemetry.CommandReporter(
+        tokens,
+        commands=frozenset({"undo", "watch"}),
+        source=ConfigFileSource(),
+    )
+
+    assert reporter.command == expected
+
+
 def test_telemetry_enabled_for_honors_argv_flag() -> None:
     """A --no-telemetry anywhere on the command line disables the crash beacon too."""
-    assert main_module._telemetry_enabled_for(["-i", "x", "--no-telemetry"]) is False  # noqa: SLF001
-    assert main_module._telemetry_enabled_for(["-i", "x"]) is True  # noqa: SLF001
+    assert cli_telemetry.telemetry_enabled_for(["-i", "x", "--no-telemetry"]) is False
+    assert cli_telemetry.telemetry_enabled_for(["-i", "x"]) is True
 
 
 def test_telemetry_enabled_for_honors_the_config_file(
@@ -1514,10 +1536,10 @@ def test_telemetry_enabled_for_honors_the_config_file(
 ) -> None:
     """[telemetry] enabled = false in the config disables crash beacons; garbage tables do not."""
     _point_config_at(tmp_path, monkeypatch, "[telemetry]\nenabled = false\n")
-    assert main_module._telemetry_enabled_for([]) is False  # noqa: SLF001
+    assert cli_telemetry.telemetry_enabled_for([]) is False
 
     _point_config_at(tmp_path, monkeypatch, 'telemetry = "not-a-table"\n')
-    assert main_module._telemetry_enabled_for([]) is True  # noqa: SLF001
+    assert cli_telemetry.telemetry_enabled_for([]) is True
 
 
 def test_suite_is_isolated_from_developer_config() -> None:
