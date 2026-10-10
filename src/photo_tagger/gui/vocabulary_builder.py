@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGroupBox,
-    QHBoxLayout,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -24,7 +23,7 @@ from PySide6.QtWidgets import (
 
 from photo_tagger.gui.common import CLOSE_LABEL, DEFAULT_VOCABULARY_FILE
 from photo_tagger.gui.threads import release_thread, start_in_thread
-from photo_tagger.gui.widgets import blurb, hint_label, path_row
+from photo_tagger.gui.widgets import blurb, button_row, hint_label, path_row
 from photo_tagger.gui.workers import VocabularyBuildWorker
 from photo_tagger.gui_state import tooltip
 from photo_tagger.i18n import _, ngettext
@@ -106,11 +105,7 @@ class VocabularyBuilderDialog(QDialog):
         self._button.clicked.connect(self._start)
         close = QPushButton(_(CLOSE_LABEL))
         close.clicked.connect(self.accept)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(close)
-        buttons.addWidget(self._button)
-        box.addLayout(buttons)
+        box.addLayout(button_row(close, self._button))
 
     def _build_source_group(self) -> QGroupBox:
         """Build the source picker: the photos in the list, a keyword export, or both."""

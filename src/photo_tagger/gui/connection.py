@@ -20,8 +20,7 @@ from PySide6.QtWidgets import (
 
 from photo_tagger.diagnostics import run_checks
 from photo_tagger.errors import ProviderError
-from photo_tagger.gui.common import CLOSE_LABEL
-from photo_tagger.gui.widgets import busy_cursor
+from photo_tagger.gui.widgets import busy_cursor, close_row
 from photo_tagger.gui_state import Connection, check_results_html, rank_vision_models, tooltip
 from photo_tagger.i18n import _, ngettext
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
@@ -125,14 +124,7 @@ class ConnectionBar(QWidget):
             tooltip("Check ExifTool and that the provider serves the model."),
         )
         self._test_button.clicked.connect(self.test_connection)
-        close = QPushButton(_(CLOSE_LABEL))
-        close.setDefault(True)
-        close.clicked.connect(dialog.accept)
-        buttons = QHBoxLayout()
-        buttons.addWidget(self._test_button)
-        buttons.addStretch(1)
-        buttons.addWidget(close)
-        form.addRow(buttons)
+        form.addRow(close_row(dialog, self._test_button))
         return dialog
 
     def connection(self) -> Connection:

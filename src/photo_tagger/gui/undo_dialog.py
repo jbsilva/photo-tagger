@@ -11,7 +11,6 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
-    QHBoxLayout,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -21,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_tagger.gui.common import CLOSE_LABEL, PATH_ROLE
-from photo_tagger.gui.widgets import blurb, busy_cursor, readonly_box
+from photo_tagger.gui.widgets import blurb, busy_cursor, button_row, readonly_box
 from photo_tagger.gui_state import (
     journal_label,
     reverted_images,
@@ -95,12 +94,7 @@ class UndoDialog(QDialog):
         self._undo_button.clicked.connect(lambda: self._run(dry_run=False))
         close = QPushButton(_(CLOSE_LABEL))
         close.clicked.connect(self.accept)
-        buttons = QHBoxLayout()
-        buttons.addWidget(preview)
-        buttons.addStretch(1)
-        buttons.addWidget(close)
-        buttons.addWidget(self._undo_button)
-        box.addLayout(buttons)
+        box.addLayout(button_row(close, self._undo_button, leading=(preview,)))
 
     def show_runs(self) -> None:
         """Open the dialog on a freshly-read list of recorded runs."""

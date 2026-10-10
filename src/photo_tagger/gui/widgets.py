@@ -39,7 +39,7 @@ from photo_tagger.i18n import _
 
 if TYPE_CHECKING:
     # Annotation-only on Python 3.14 (lazy), so no runtime import is needed.
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Sequence
 
 
 @contextmanager
@@ -96,15 +96,28 @@ def path_row(field: QLineEdit, choose: Callable[[], None], *extra: QWidget) -> Q
     return row
 
 
-def close_row(dialog: QDialog) -> QHBoxLayout:
+def button_row(*buttons: QWidget, leading: Sequence[QWidget] = ()) -> QHBoxLayout:
+    """
+    Return the row a dialog ends with: *buttons* on the right, in order, and *leading* on the left.
+
+    The left side holds the buttons that act on the dialog's content (Preview, Test Connection), so
+    they sit apart from the ones that close it.
+    """
+    row = QHBoxLayout()
+    for widget in leading:
+        row.addWidget(widget)
+    row.addStretch(1)
+    for widget in buttons:
+        row.addWidget(widget)
+    return row
+
+
+def close_row(dialog: QDialog, *leading: QWidget) -> QHBoxLayout:
     """Return the row a settings dialog ends with: one default Close button, on the right."""
     close = QPushButton(_(CLOSE_LABEL))
     close.setDefault(True)
     close.clicked.connect(dialog.accept)
-    buttons = QHBoxLayout()
-    buttons.addStretch(1)
-    buttons.addWidget(close)
-    return buttons
+    return button_row(close, leading=leading)
 
 
 def fit_text_height(box: QPlainTextEdit, *, min_h: int = 44, max_h: int = 140) -> None:

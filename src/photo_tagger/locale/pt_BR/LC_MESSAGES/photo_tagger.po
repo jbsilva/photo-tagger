@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: photo-tagger VERSION\n"
 "Report-Msgid-Bugs-To: python@juliobs.com\n"
-"POT-Creation-Date: 2026-10-10 20:16+0200\n"
+"POT-Creation-Date: 2026-10-10 20:20+0200\n"
 "PO-Revision-Date: 2026-07-10 22:30+0200\n"
 "Last-Translator: Julio Batista Silva <python@juliobs.com>\n"
 "Language: pt_BR\n"
@@ -50,11 +50,11 @@ msgstr ""
 "as grava no arquivo de configuração, que as execuções na linha de comando"
 " também leem."
 
-#: src/photo_tagger/gui/connection.py:58
+#: src/photo_tagger/gui/connection.py:57
 msgid "Backend that serves the vision-language model."
 msgstr "Backend que serve o modelo de visão e linguagem."
 
-#: src/photo_tagger/gui/connection.py:66
+#: src/photo_tagger/gui/connection.py:65
 msgid ""
 "Model identifier. Type it, or press Refresh to list what the provider "
 "serves."
@@ -62,53 +62,53 @@ msgstr ""
 "Identificador do modelo. Digite-o ou pressione Atualizar para listar o "
 "que o provedor serve."
 
-#: src/photo_tagger/gui/connection.py:69
+#: src/photo_tagger/gui/connection.py:68
 msgid "Refresh"
 msgstr "Atualizar"
 
-#: src/photo_tagger/gui/connection.py:70
+#: src/photo_tagger/gui/connection.py:69
 msgid "Query the provider for the models it currently serves."
 msgstr "Consulta ao provedor os modelos servidos no momento."
 
-#: src/photo_tagger/gui/connection.py:74
+#: src/photo_tagger/gui/connection.py:73
 msgid "Connection..."
 msgstr "Conexão..."
 
-#: src/photo_tagger/gui/connection.py:75
+#: src/photo_tagger/gui/connection.py:74
 msgid "Server URL, API key, and a connection test."
 msgstr "URL do servidor, chave de API e um teste de conexão."
 
-#: src/photo_tagger/gui/connection.py:81
+#: src/photo_tagger/gui/connection.py:80
 msgid "Provider"
 msgstr "Provedor"
 
-#: src/photo_tagger/gui/connection.py:83
+#: src/photo_tagger/gui/connection.py:82
 msgid "Model"
 msgstr "Modelo"
 
-#: src/photo_tagger/gui/connection.py:91
+#: src/photo_tagger/gui/connection.py:90
 msgid "Connection settings"
 msgstr "Configurações de conexão"
 
-#: src/photo_tagger/gui/connection.py:99
+#: src/photo_tagger/gui/connection.py:98
 msgid "(provider default URL)"
 msgstr "(URL padrão do provedor)"
 
-#: src/photo_tagger/gui/connection.py:101
+#: src/photo_tagger/gui/connection.py:100
 msgid "Provider API base URL. Leave blank to use the provider's default."
 msgstr ""
 "URL base da API do provedor. Deixe em branco para usar o padrão do "
 "provedor."
 
-#: src/photo_tagger/gui/connection.py:103
+#: src/photo_tagger/gui/connection.py:102
 msgid "Base URL"
 msgstr "URL base"
 
-#: src/photo_tagger/gui/connection.py:112
+#: src/photo_tagger/gui/connection.py:111
 msgid "(uses provider env var)"
 msgstr "(usa a variável de ambiente do provedor)"
 
-#: src/photo_tagger/gui/connection.py:115
+#: src/photo_tagger/gui/connection.py:114
 msgid ""
 "API key for the provider. Leave blank to use the provider's environment "
 "variable (OPENAI_API_KEY, LM_STUDIO_API_KEY, LLAMA_CPP_API_KEY, or "
@@ -120,31 +120,31 @@ msgstr ""
 "LLAMA_CPP_API_KEY ou OLLAMA_API_KEY). Obrigatória para a OpenAI. Uma "
 "chave digitada vale só para esta sessão e nunca é gravada em disco."
 
-#: src/photo_tagger/gui/connection.py:121
+#: src/photo_tagger/gui/connection.py:120
 msgid "API key"
 msgstr "Chave de API"
 
-#: src/photo_tagger/gui/connection.py:123
+#: src/photo_tagger/gui/connection.py:122
 #: src/photo_tagger/gui/main_window.py:526
 msgid "Test Connection"
 msgstr "Testar Conexão"
 
-#: src/photo_tagger/gui/connection.py:125
+#: src/photo_tagger/gui/connection.py:124
 msgid "Check ExifTool and that the provider serves the model."
 msgstr "Verifica o ExifTool e se o provedor serve o modelo."
 
-#: src/photo_tagger/gui/connection.py:163
+#: src/photo_tagger/gui/connection.py:155
 msgid "Could not list models"
 msgstr "Não foi possível listar os modelos"
 
-#: src/photo_tagger/gui/connection.py:171
+#: src/photo_tagger/gui/connection.py:163
 #, python-brace-format
 msgid "Found {n} model on {provider}."
 msgid_plural "Found {n} models on {provider}."
 msgstr[0] "Encontrado {n} modelo em {provider}."
 msgstr[1] "Encontrados {n} modelos em {provider}."
 
-#: src/photo_tagger/gui/connection.py:189
+#: src/photo_tagger/gui/connection.py:181
 msgid "Connection check"
 msgstr "Verificação de conexão"
 
@@ -941,7 +941,7 @@ msgid "File types"
 msgstr "Tipos de arquivo"
 
 #: src/photo_tagger/gui/main_window.py:783
-#: src/photo_tagger/gui/watch_dialog.py:84
+#: src/photo_tagger/gui/watch_dialog.py:79
 msgid "Include subfolders"
 msgstr "Incluir subpastas"
 
@@ -1556,7 +1556,7 @@ msgstr ""
 "Executa o modelo novamente em cada foto que falhou ao gerar. Habilitado "
 "quando alguma foto realmente falhou."
 
-#: src/photo_tagger/gui/run_bar.py:98 src/photo_tagger/gui/watch_dialog.py:68
+#: src/photo_tagger/gui/run_bar.py:98 src/photo_tagger/gui/watch_dialog.py:67
 msgid "Cancel"
 msgstr "Cancelar"
 
@@ -2175,11 +2175,11 @@ msgstr "Telemetria anônima ativada."
 msgid "Anonymous telemetry off."
 msgstr "Telemetria anônima desativada."
 
-#: src/photo_tagger/gui/undo_dialog.py:59
+#: src/photo_tagger/gui/undo_dialog.py:58
 msgid "Undo writes"
 msgstr "Desfazer gravações"
 
-#: src/photo_tagger/gui/undo_dialog.py:64
+#: src/photo_tagger/gui/undo_dialog.py:63
 msgid ""
 "Every recorded run, newest first, from this window and from the command "
 "line. Undoing deletes the sidecars a run created and restores the files "
@@ -2190,11 +2190,11 @@ msgstr ""
 "criou e restaura os arquivos que ela sobrescreveu a partir do backup do "
 "ExifTool."
 
-#: src/photo_tagger/gui/undo_dialog.py:75
+#: src/photo_tagger/gui/undo_dialog.py:74
 msgid "Also revert files changed since the run"
 msgstr "Reverter também os arquivos alterados desde a execução"
 
-#: src/photo_tagger/gui/undo_dialog.py:78
+#: src/photo_tagger/gui/undo_dialog.py:77
 msgid ""
 "Off by default: a file that changed since the run was edited afterwards, "
 "and that edit is not this run's to undo."
@@ -2202,53 +2202,53 @@ msgstr ""
 "Desativado por padrão: um arquivo que mudou desde a execução foi editado "
 "depois, e essa edição não cabe a esta execução desfazer."
 
-#: src/photo_tagger/gui/undo_dialog.py:85
+#: src/photo_tagger/gui/undo_dialog.py:84
 msgid "What happened to each file appears here."
 msgstr "O que aconteceu com cada arquivo aparece aqui."
 
-#: src/photo_tagger/gui/undo_dialog.py:88
+#: src/photo_tagger/gui/undo_dialog.py:87
 msgid "Preview"
 msgstr "Prévia"
 
-#: src/photo_tagger/gui/undo_dialog.py:90
+#: src/photo_tagger/gui/undo_dialog.py:89
 msgid "Report what undoing would put back, without touching anything."
 msgstr "Informa o que desfazer restauraria, sem tocar em nada."
 
-#: src/photo_tagger/gui/undo_dialog.py:93
+#: src/photo_tagger/gui/undo_dialog.py:92
 msgid "Undo"
 msgstr "Desfazer"
 
-#: src/photo_tagger/gui/undo_dialog.py:126
+#: src/photo_tagger/gui/undo_dialog.py:120
 msgid "No recorded runs to undo."
 msgstr "Nenhuma execução registrada para desfazer."
 
-#: src/photo_tagger/gui/undo_dialog.py:134
+#: src/photo_tagger/gui/undo_dialog.py:128
 msgid "Wait for the run in progress to finish first."
 msgstr "Espere a execução em andamento terminar primeiro."
 
-#: src/photo_tagger/gui/undo_dialog.py:138
+#: src/photo_tagger/gui/undo_dialog.py:132
 msgid "Pick a run first."
 msgstr "Escolha uma execução primeiro."
 
-#: src/photo_tagger/gui/undo_dialog.py:143
+#: src/photo_tagger/gui/undo_dialog.py:137
 msgid "Could not read that run"
 msgstr "Não foi possível ler essa execução"
 
-#: src/photo_tagger/gui/undo_dialog.py:146
+#: src/photo_tagger/gui/undo_dialog.py:140
 #: src/photo_tagger/gui_state/undo_view.py:76
 msgid "That run recorded no writes."
 msgstr "Essa execução não registrou nenhuma gravação."
 
-#: src/photo_tagger/gui/undo_dialog.py:154
+#: src/photo_tagger/gui/undo_dialog.py:148
 #, python-brace-format
 msgid "Preview: {summary}"
 msgstr "Prévia: {summary}"
 
-#: src/photo_tagger/gui/undo_dialog.py:163
+#: src/photo_tagger/gui/undo_dialog.py:157
 msgid "Undo this run?"
 msgstr "Desfazer esta execução?"
 
-#: src/photo_tagger/gui/undo_dialog.py:165
+#: src/photo_tagger/gui/undo_dialog.py:159
 #, python-brace-format
 msgid ""
 "Put back {n} file? Sidecars the run created are deleted, and files it "
@@ -2301,11 +2301,11 @@ msgstr "Tela cheia"
 msgid "Fill the whole screen, hiding the window frame (F)."
 msgstr "Ocupa a tela inteira, escondendo a moldura da janela (F)."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:85
+#: src/photo_tagger/gui/vocabulary_builder.py:84
 msgid "Build a vocabulary"
 msgstr "Construir um vocabulário"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:90
+#: src/photo_tagger/gui/vocabulary_builder.py:89
 msgid ""
 "Reads the keywords your photos already carry, keeps the ones that earn "
 "their place, and writes them as a keyword file to review and edit. "
@@ -2315,19 +2315,19 @@ msgstr ""
 "lugar e as grava em um arquivo de palavras-chave para revisar e editar. "
 "Nada é gravado nas suas fotos."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:104
+#: src/photo_tagger/gui/vocabulary_builder.py:103
 msgid "Build"
 msgstr "Construir"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:117
+#: src/photo_tagger/gui/vocabulary_builder.py:112
 msgid "Read from"
 msgstr "Ler de"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:120
+#: src/photo_tagger/gui/vocabulary_builder.py:115
 msgid "The photos in the list"
 msgstr "As fotos da lista"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:124
+#: src/photo_tagger/gui/vocabulary_builder.py:119
 msgid ""
 "Counts the keywords on the photos themselves, through ExifTool, so any "
 "application that writes XMP or IPTC counts, not only Lightroom."
@@ -2335,12 +2335,12 @@ msgstr ""
 "Conta as palavras-chave nas próprias fotos, pelo ExifTool, então vale "
 "qualquer aplicativo que grave XMP ou IPTC, não só o Lightroom."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:130
-#: src/photo_tagger/gui/vocabulary_builder.py:216
+#: src/photo_tagger/gui/vocabulary_builder.py:125
+#: src/photo_tagger/gui/vocabulary_builder.py:211
 msgid "(optional)"
 msgstr "(opcional)"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:133
+#: src/photo_tagger/gui/vocabulary_builder.py:128
 msgid ""
 "A Lightroom keyword export (.txt or .csv), for a catalog that is not on "
 "this machine. Its counts are occurrences in the keyword tree, not photos."
@@ -2349,15 +2349,15 @@ msgstr ""
 "catálogo que não está nesta máquina. Suas contagens são ocorrências na "
 "árvore de palavras-chave, não fotos."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:137
+#: src/photo_tagger/gui/vocabulary_builder.py:132
 msgid "Keyword export"
 msgstr "Exportação de palavras-chave"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:143
+#: src/photo_tagger/gui/vocabulary_builder.py:138
 msgid "Keep a keyword when"
 msgstr "Manter uma palavra-chave quando"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:150
+#: src/photo_tagger/gui/vocabulary_builder.py:145
 msgid ""
 "The most useful knob: in a catalog an AI has been writing to, most "
 "keywords are used once and are one-offs rather than vocabulary."
@@ -2366,15 +2366,15 @@ msgstr ""
 "das palavras-chave aparece uma única vez e é caso isolado, não "
 "vocabulário."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:154
+#: src/photo_tagger/gui/vocabulary_builder.py:149
 msgid "Used at least this often"
 msgstr "Usada pelo menos tantas vezes"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:158
+#: src/photo_tagger/gui/vocabulary_builder.py:153
 msgid "no cap"
 msgstr "sem limite"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:161
+#: src/photo_tagger/gui/vocabulary_builder.py:156
 msgid ""
 "Caps the file, dropping the least used first. The default keeps it under "
 "the 5000 terms above which matching gives up its fuzzy pass."
@@ -2383,15 +2383,15 @@ msgstr ""
 " abaixo dos 5000 termos, acima dos quais a correspondência abre mão da "
 "passagem aproximada."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:165
+#: src/photo_tagger/gui/vocabulary_builder.py:160
 msgid "And the file holds at most"
 msgstr "E o arquivo tem no máximo"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:166
+#: src/photo_tagger/gui/vocabulary_builder.py:161
 msgid "Keep keywords containing digits"
 msgstr "Manter palavras-chave com dígitos"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:169
+#: src/photo_tagger/gui/vocabulary_builder.py:164
 msgid ""
 "Off by default: a keyword with a digit is nearly always a measurement or "
 "a model number ('19.5V', '0 Percent Battery') rather than a subject."
@@ -2400,11 +2400,11 @@ msgstr ""
 "medida ou um número de modelo ('19.5V', '0 Percent Battery'), e não um "
 "assunto."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:174
+#: src/photo_tagger/gui/vocabulary_builder.py:169
 msgid "Write bare keywords, without their hierarchies"
 msgstr "Gravar palavras-chave simples, sem hierarquias"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:177
+#: src/photo_tagger/gui/vocabulary_builder.py:172
 msgid ""
 "Worth using when the source hierarchy is not trustworthy, since a "
 "vocabulary imposes its own on every photo it matches."
@@ -2412,11 +2412,11 @@ msgstr ""
 "Vale a pena quando a hierarquia de origem não é confiável, já que um "
 "vocabulário impõe a sua a cada foto que ele casa."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:186
+#: src/photo_tagger/gui/vocabulary_builder.py:181
 msgid "Organize with the model"
 msgstr "Organizar com o modelo"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:191
+#: src/photo_tagger/gui/vocabulary_builder.py:186
 msgid ""
 "Asks the model for the two things counting cannot settle: which keywords "
 "are synonyms of each other (folded into one, the rest kept so they still "
@@ -2429,23 +2429,23 @@ msgstr ""
 "nunca decide o que manter, e nunca inventa uma palavra-chave. Precisa de "
 "um provedor acessível."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:202
+#: src/photo_tagger/gui/vocabulary_builder.py:197
 msgid "Model requests to run at once; the list is sent in chunks."
 msgstr "Requisições ao modelo em paralelo; a lista é enviada em blocos."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:204
+#: src/photo_tagger/gui/vocabulary_builder.py:199
 msgid "Requests at once"
 msgstr "Requisições em paralelo"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:209
+#: src/photo_tagger/gui/vocabulary_builder.py:204
 msgid "Write to"
 msgstr "Gravar em"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:213
+#: src/photo_tagger/gui/vocabulary_builder.py:208
 msgid "Vocabulary file"
 msgstr "Arquivo de vocabulário"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:219
+#: src/photo_tagger/gui/vocabulary_builder.py:214
 msgid ""
 "A CSV naming every dropped keyword, its count, and the rule that cut it. "
 "This is what makes the thresholds tunable rather than a guess."
@@ -2453,56 +2453,56 @@ msgstr ""
 "Um CSV que nomeia cada palavra-chave descartada, sua contagem e a regra "
 "que a cortou. É isso que torna os limites ajustáveis em vez de um chute."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:223
+#: src/photo_tagger/gui/vocabulary_builder.py:218
 msgid "Drop report"
 msgstr "Relatório de descartes"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:230
+#: src/photo_tagger/gui/vocabulary_builder.py:225
 #, python-brace-format
 msgid "The {n} photo in the list"
 msgid_plural "The {n} photos in the list"
 msgstr[0] "A {n} foto da lista"
 msgstr[1] "As {n} fotos da lista"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:242
+#: src/photo_tagger/gui/vocabulary_builder.py:237
 msgid "Choose a keyword export"
 msgstr "Escolha uma exportação de palavras-chave"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:244
+#: src/photo_tagger/gui/vocabulary_builder.py:239
 msgid "Keyword exports (*.txt *.csv);;All files (*)"
 msgstr "Exportações de palavras-chave (*.txt *.csv);;Todos os arquivos (*)"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:253
+#: src/photo_tagger/gui/vocabulary_builder.py:248
 msgid "Write the vocabulary to"
 msgstr "Gravar o vocabulário em"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:255
+#: src/photo_tagger/gui/vocabulary_builder.py:250
 msgid "Keyword files (*.txt);;All files (*)"
 msgstr "Arquivos de palavras-chave (*.txt);;Todos os arquivos (*)"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:264
+#: src/photo_tagger/gui/vocabulary_builder.py:259
 msgid "Write the drop report to"
 msgstr "Gravar o relatório de descartes em"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:266
+#: src/photo_tagger/gui/vocabulary_builder.py:261
 msgid "CSV files (*.csv);;All files (*)"
 msgstr "Arquivos CSV (*.csv);;Todos os arquivos (*)"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:284
+#: src/photo_tagger/gui/vocabulary_builder.py:279
 msgid "Pick a source: the photos in the list, a keyword export, or both."
 msgstr ""
 "Escolha uma fonte: as fotos da lista, uma exportação de palavras-chave, "
 "ou ambas."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:320
+#: src/photo_tagger/gui/vocabulary_builder.py:315
 msgid "Working..."
 msgstr "Processando..."
 
-#: src/photo_tagger/gui/vocabulary_builder.py:334
+#: src/photo_tagger/gui/vocabulary_builder.py:329
 msgid "Use this vocabulary?"
 msgstr "Usar este vocabulário?"
 
-#: src/photo_tagger/gui/vocabulary_builder.py:335
+#: src/photo_tagger/gui/vocabulary_builder.py:330
 msgid "Snap the keywords of the next generation onto the file you just built?"
 msgstr ""
 "Ajustar as palavras-chave da próxima geração ao arquivo que você acabou "
@@ -2531,11 +2531,11 @@ msgstr "Parar de Monitorar"
 msgid "Stopped watching."
 msgstr "Monitoramento encerrado."
 
-#: src/photo_tagger/gui/watch_dialog.py:41
+#: src/photo_tagger/gui/watch_dialog.py:40
 msgid "Watch a folder"
 msgstr "Monitorar uma pasta"
 
-#: src/photo_tagger/gui/watch_dialog.py:46
+#: src/photo_tagger/gui/watch_dialog.py:45
 msgid ""
 "Point this at the folder your card reader, tethered capture, or sync "
 "client fills. Photos already there are picked up first, then each new one"
@@ -2545,15 +2545,15 @@ msgstr ""
 "cliente de sincronização preenche. As fotos que já estão lá são pegas "
 "primeiro, e depois cada nova conforme chega."
 
-#: src/photo_tagger/gui/watch_dialog.py:53
+#: src/photo_tagger/gui/watch_dialog.py:52
 msgid "Generate each new photo"
 msgstr "Gerar cada foto nova"
 
-#: src/photo_tagger/gui/watch_dialog.py:56
+#: src/photo_tagger/gui/watch_dialog.py:55
 msgid "Save it too, without reviewing"
 msgstr "Salvar também, sem revisar"
 
-#: src/photo_tagger/gui/watch_dialog.py:59
+#: src/photo_tagger/gui/watch_dialog.py:58
 msgid ""
 "Off by default: the window is built around reviewing before writing. Turn"
 " it on for an unattended import, where it behaves like the CLI's watch "
@@ -2563,24 +2563,24 @@ msgstr ""
 "Ative para uma importação sem supervisão, em que ela se comporta como o "
 "comando watch da linha de comando."
 
-#: src/photo_tagger/gui/watch_dialog.py:65
+#: src/photo_tagger/gui/watch_dialog.py:64
 msgid "Start Watching"
 msgstr "Começar a Monitorar"
 
-#: src/photo_tagger/gui/watch_dialog.py:81
+#: src/photo_tagger/gui/watch_dialog.py:76
 msgid "(pick a folder)"
 msgstr "(escolha uma pasta)"
 
-#: src/photo_tagger/gui/watch_dialog.py:82
+#: src/photo_tagger/gui/watch_dialog.py:77
 msgid "Folder"
 msgstr "Pasta"
 
-#: src/photo_tagger/gui/watch_dialog.py:92
-#: src/photo_tagger/gui/watch_dialog.py:105
+#: src/photo_tagger/gui/watch_dialog.py:87
+#: src/photo_tagger/gui/watch_dialog.py:100
 msgid " seconds"
 msgstr " segundos"
 
-#: src/photo_tagger/gui/watch_dialog.py:95
+#: src/photo_tagger/gui/watch_dialog.py:90
 msgid ""
 "How often the folder is listed. Polling behaves the same on every "
 "platform and over network shares."
@@ -2588,11 +2588,11 @@ msgstr ""
 "Com que frequência a pasta é listada. A varredura se comporta igual em "
 "qualquer plataforma e em compartilhamentos de rede."
 
-#: src/photo_tagger/gui/watch_dialog.py:99
+#: src/photo_tagger/gui/watch_dialog.py:94
 msgid "Check every"
 msgstr "Verificar a cada"
 
-#: src/photo_tagger/gui/watch_dialog.py:108
+#: src/photo_tagger/gui/watch_dialog.py:103
 msgid ""
 "How long a file must sit unchanged before it is picked up, so a photo "
 "still being copied is left alone until the copy finishes."
@@ -2600,19 +2600,19 @@ msgstr ""
 "Quanto tempo um arquivo precisa ficar sem mudar antes de ser pego, para "
 "que uma foto ainda sendo copiada fique intocada até a cópia terminar."
 
-#: src/photo_tagger/gui/watch_dialog.py:112
+#: src/photo_tagger/gui/watch_dialog.py:107
 msgid "Settle for"
 msgstr "Estabilizar por"
 
-#: src/photo_tagger/gui/watch_dialog.py:119
+#: src/photo_tagger/gui/watch_dialog.py:114
 msgid "Choose a folder to watch"
 msgstr "Escolha uma pasta para monitorar"
 
-#: src/photo_tagger/gui/watch_dialog.py:151
+#: src/photo_tagger/gui/watch_dialog.py:146
 msgid "Pick a folder"
 msgstr "Escolha uma pasta"
 
-#: src/photo_tagger/gui/watch_dialog.py:151
+#: src/photo_tagger/gui/watch_dialog.py:146
 msgid "Choose the folder to watch first."
 msgstr "Escolha primeiro a pasta a monitorar."
 

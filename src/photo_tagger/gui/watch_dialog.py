@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QHBoxLayout,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -20,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_tagger.config import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
-from photo_tagger.gui.widgets import blurb, path_row
+from photo_tagger.gui.widgets import blurb, button_row, path_row
 from photo_tagger.gui_state import WatchSettings, tooltip
 from photo_tagger.i18n import _
 
@@ -67,11 +66,7 @@ class WatchDialog(QDialog):
         start.clicked.connect(self._on_start)
         cancel = QPushButton(_("Cancel"))
         cancel.clicked.connect(self.reject)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(cancel)
-        buttons.addWidget(start)
-        box.addLayout(buttons)
+        box.addLayout(button_row(cancel, start))
 
     def _build_form(self, *, recursive: bool) -> QFormLayout:
         """Build the form: which folder to poll, how often, and how long to wait."""
