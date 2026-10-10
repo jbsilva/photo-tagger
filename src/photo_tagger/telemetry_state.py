@@ -49,7 +49,7 @@ FIRST_RUN_NOTICE = (
     "zone, plus crash reports (error "
     "type and stack trace, code locations only).\n"
     "No photos, paths, filenames, tags, titles, descriptions, prompts, URLs, error messages, or "
-    "personal data are ever sent. Details: https://jbsilva.github.io/photo-tagger/telemetry/\n"
+    "personal data are ever sent. Details: https://docs.tagger.photo/telemetry/\n"
     "Turn it off with --no-telemetry, PHOTO_TAGGER_TELEMETRY=0, or [telemetry] enabled = false "
     "in your config."
 )

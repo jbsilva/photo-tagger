@@ -30,7 +30,7 @@ DEFAULT_CACHE_FILE = APP_DIR / "cache.sqlite"
 # pre-filled suggestion; the dialog's Choose button puts the file wherever the user keeps theirs.
 DEFAULT_VOCABULARY_FILE = APP_DIR / "vocabulary.txt"
 
-DOCS_URL = "https://jbsilva.github.io/photo-tagger/"
+DOCS_URL = "https://docs.tagger.photo/"
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 IS_DIR_ROLE = Qt.ItemDataRole.UserRole + 1
