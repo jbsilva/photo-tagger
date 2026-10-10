@@ -769,7 +769,7 @@ the wrong vocabulary can be reverted in one command instead of by hand:
 
 ```console
 $ photo-tagger undo
-Undoing run 20260501142233-8421.jsonl
+Undoing run 20260501142233123456-8421.jsonl
 Undoing 412 write(s)
 
   deleted    /Users/you/Pictures/Trip/IMG_0001.xmp
@@ -797,7 +797,9 @@ Three things are deliberately left alone:
     so undo reports it and moves on. `--force` overrides this.
 - Writes made with `--no-backup-xmp`. There is no copy of the previous contents, so an overwritten
     file cannot be restored. Newly created sidecars are still deleted.
-- Runs from the desktop GUI, which does not record a journal.
+- Saves from the desktop GUI with **Settings > Record Saves for Undo** turned off. Then the GUI
+    records no journal. With the setting on (the default), its journals go into the same folder, and
+    `photo-tagger undo` reads them too.
 
 If there is nothing to undo, or if any entry was left alone, `photo-tagger undo` exits with code 1.
 If every recorded write was put back, it exits with code 0. Dry runs are not written to a journal

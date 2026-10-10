@@ -971,7 +971,7 @@ def undo(
 
     A file that changed since the run is left alone unless ``--force`` says otherwise, and a file
     written with ``--no-backup-xmp`` cannot be restored at all: there is no copy of what it held.
-    Runs from the desktop GUI are not recorded.
+    Saves from the desktop GUI land in the same journal folder, unless its undo recording is off.
 
     Exit status: 1 when there is nothing to undo or when any entry was left alone; 0 when every
     recorded write was put back.
