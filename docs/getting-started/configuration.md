@@ -37,7 +37,7 @@ These variables set defaults. Any matching CLI flag still overrides them. See
 | `LLAMA_CPP_BASE_URL`  | `http://localhost:8080/v1`  | llama.cpp `llama-server` API base URL.                                             |
 | `LLAMA_CPP_API_KEY`   | none                        | API key for llama.cpp. If `llama-server` runs with `--api-key`, set this key.      |
 | `OPENAI_BASE_URL`     | `https://api.openai.com/v1` | Base URL for the `openai` provider (the real OpenAI API or a drop-in gateway).     |
-| `OPENAI_API_KEY`      | none                        | Required API key for the `openai` provider. Also the fallback key for LM Studio.   |
+| `OPENAI_API_KEY`      | none                        | Required API key for the `openai` provider. LM Studio never reads it.              |
 | `TEMPERATURE`         | `0.2`                       | Sampling temperature.                                                              |
 | `MAX_TOKENS`          | `1200`                      | Maximum tokens to generate.                                                        |
 | `TIMEOUT_SECONDS`     | `60.0`                      | Timeout of one model request, in seconds.                                          |
@@ -172,6 +172,9 @@ save_after_generating = false # Desktop window only: write each run's photos whe
     keep working: a stray or misspelled key never stops a run. If a configuration value seems to have no
     effect, make sure that you spelled the key correctly.
 
-Some flags have no configuration-file or environment equivalent, for example `-i/--input`,
-`--skip-from`, and `--append-to-skip-file`. See the [CLI reference](../usage/cli-reference.md) for
-the full detail on every flag.
+Some flags have no configuration-file or environment equivalent, for example `-i/--input`. See the
+[CLI reference](../usage/cli-reference.md) for the full detail on every flag.
+
+A key applies to every command that has an option of that name. For example, `[output] backup_xmp`
+applies to `tag`, `watch`, and `set`, and `[output] dry_run = true` makes `set` and `undo` dry runs
+too.

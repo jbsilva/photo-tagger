@@ -38,10 +38,10 @@ You point photo-tagger at a backend in three ways, in order of precedence (CLI f
     `OLLAMA_BASE_URL`, `LLAMA_CPP_BASE_URL`, or `OPENAI_BASE_URL`. When neither is set, the
     provider's default URL above is used.
 - `-k/--api-key KEY` sets the API key. Prefer the env vars. `OLLAMA_API_KEY` is for Ollama.
-    `LM_STUDIO_API_KEY` is for LM Studio (with `OPENAI_API_KEY` as a fallback). `LLAMA_CPP_API_KEY`
-    is for llama.cpp, needed only for a `llama-server` started with `--api-key`. `OPENAI_API_KEY` is
-    for the `openai` provider. Local servers usually do not require a key. The `openai` provider
-    does. If a key is missing, it fails fast with a clear message.
+    `LM_STUDIO_API_KEY` is for LM Studio, which never falls back to `OPENAI_API_KEY`.
+    `LLAMA_CPP_API_KEY` is for llama.cpp, needed only for a `llama-server` started with `--api-key`.
+    `OPENAI_API_KEY` is for the `openai` provider. Local servers usually do not require a key. The
+    `openai` provider does. If a key is missing, it fails fast with a clear message.
 
 The model identifier comes from `-m/--model` (or the `MODEL_NAME` env var) and defaults to
 `qwen/qwen3-vl-30b`.

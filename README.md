@@ -97,7 +97,8 @@ Environment variables provide defaults so you can keep the CLI concise:
 - `OLLAMA_BASE_URL`: override the Ollama HTTP endpoint (default `http://localhost:11434/v1`)
 - `OLLAMA_API_KEY`: optional API key passed to Ollama requests
 - `LM_STUDIO_BASE_URL`: override the LM Studio endpoint (default `http://localhost:1234/v1`)
-- `LM_STUDIO_API_KEY` / `OPENAI_API_KEY`: API key for LM Studio's OpenAI-compatible server
+- `LM_STUDIO_API_KEY`: API key for LM Studio's OpenAI-compatible server. `OPENAI_API_KEY` is never
+  sent to it
 - `LLAMA_CPP_BASE_URL`: override the llama.cpp `llama-server` endpoint (default
   `http://localhost:8080/v1`)
 - `LLAMA_CPP_API_KEY`: API key for llama.cpp. Set this only for a `llama-server` that runs with
