@@ -42,18 +42,19 @@ Install the optional extra with:
 
 !!! note
 
-    The GUI needs the same prerequisites as the CLI: ExifTool on your `PATH` and a reachable model
-    server. Before a run, use **Test Connection** in the window to make sure that both are available.
+    The GUI needs the same prerequisites as the CLI: ExifTool (on your `PATH` or at the configured path)
+    and a reachable model server. Before a run, use **Test Connection** in the window to make sure that
+    both are available.
 
 ## The workflow
 
 ### 1. Add photos
 
 Drag photos or folders anywhere onto the window, or use the **Add Photos...** button. A click on the
-button opens the file picker. The arrow menu of the button holds **Add Folder...** and two entries
-for folder scans. The first entry is the **File types** list, which is comma-separated and
-case-insensitive. The second entry is **Include subfolders**. These two entries work exactly like
-the CLI flags `--ext` and `--recursive`.
+button opens the file picker. **File > Add Photos...** and **File > Add Folder...** do the same. The
+arrow menu of the button holds **Add Folder...** and two entries for folder scans. The first entry
+is the **File types** list, which is comma-separated and case-insensitive. The second entry is
+**Include subfolders**. These two entries work exactly like the CLI flags `--ext` and `--recursive`.
 
 Photos appear in a nested tree on the left. The tree groups subfolders under their parent folder, so
 a shoot with many folder levels stays organized instead of flat.
@@ -77,7 +78,7 @@ You can select more than one row in the usual way:
 
 Right-click inside the selection to act on all of it at once. The menu offers **Check**,
 **Uncheck**, **Check Only** (checks these rows and unchecks the rest), **Generate** (with or without
-the cache), and **Remove**. This menu works in the thumbnail grid too.
+the cache), and **Remove From List**. This menu works in the thumbnail grid too.
 
 To take items off the list entirely (instead of only unchecking them), select them first. Then click
 **Remove**, press ++delete++ / ++backspace++, or use **Remove From List** in the right-click menu.
@@ -184,7 +185,9 @@ Each thumbnail carries small badges. Hover over a badge to see what it means. Th
 right shows the lifecycle stage: a red ✗ for failed, a green ✓ for saved, and an indigo dot for
 generated but not saved. The badges at the top left mark a photo that already has metadata (`M`), a
 copyright notice (`C`), or an XMP sidecar (`S`). An amber `!` at the top left marks text that mixes
-writing systems. The **Show** box above the grid filters the grid by any of the same states.
+writing systems. The **Show** box above the grid filters the grid by any of the same states. It also
+offers **All** and **Selected** (the checked photos). The **Sort by** box orders the thumbnails by
+name, file type, status, or existing metadata. Both choices last for the session.
 
 #### Getting back to where you were
 
@@ -219,9 +222,10 @@ instead of typing its name. The dropdown lists the likely vision-capable models 
 thread. It builds the same contextual prompt as the CLI (existing keywords, location, GPS, camera).
 
 The results appear as they come in, and the status in the tree changes for each photo. A progress
-bar in the bottom bar counts the batch down. Next to the bar, a clock shows the elapsed time. After
-the first photo is done, the clock also shows the estimated time left (`2:30 elapsed · 8:10 left`).
-As a result, a long batch tells you how long it still needs.
+bar in the bottom bar counts the finished photos up to the size of the batch (`12 / 40`). Next to
+the bar, a clock shows the elapsed time. After the first photo is done, the clock also shows the
+estimated time left (`2:30 elapsed · 8:10 left`). As a result, a long batch tells you how long it
+still needs.
 
 By default, the GUI caches the results (see [Configuration](#configuration)). If you run a batch
 again after a crash, the GUI reuses the earlier answers for unchanged photos. It does not call the
@@ -300,7 +304,8 @@ Click a photo to open it on the right. The detail pane shows two columns side by
     - **Fit** (Ctrl+0) and **100%** (Ctrl+1) jump between the two scales. A double-click toggles
         between them.
     - Drag the photo to pan it.
-    - **Full screen** (`F`) fills the display, and `Esc` closes the viewer.
+    - **Full screen** (`F` or ++f11++) fills the display. In full screen, `Esc` leaves full screen.
+        Otherwise, `Esc` closes the viewer.
 - **Existing** and **New** Title, Description, and Keywords rows, lined up side by side. The **New**
     side is editable and starts from the proposal. Both keyword columns use the same sort order, so
     you can read them line by line. Each keyword hierarchy appears once, as its deepest chain, in
@@ -343,16 +348,17 @@ those buttons spells out the current choice in its tooltip.
     equivalent of the CLI's `--no-write-title`, `--no-write-description`, and `--no-write-keywords`.
     Uncheck one to leave that field untouched on the photo. For example, uncheck **Write Keywords**
     to refresh only the title and description. A curated Lightroom keyword list then stays as it is.
-    If you turn off a field, the GUI also turns off its **Overwrite Existing** entry, because there
-    is then nothing to write.
+    If you turn off a field, the GUI grays out its **Overwrite Existing** entry, because there is
+    then nothing to write.
 
 - **Overwrite Existing** holds one entry per field. Each entry decides what a save replaces on a
-    photo that already has that field: the GUI's `--overwrite-keywords`, `--preserve-title`, and
-    `--preserve-description`. **Keywords** is off by default, so new keywords merge with the old
-    ones. Check it to replace them instead. **Title** and **Description** are on by default, because
-    each field holds only one value. Turning either field on clears a camera's placeholder text.
-    Uncheck one to keep the value the photo already has, and fill in only the photos that lack it.
-    This way, a caption you wrote by hand survives a rerun.
+    photo that already has that field. A checked entry is the GUI's `--overwrite-keywords`,
+    `--overwrite-title`, or `--overwrite-description`. An unchecked entry is `--preserve-keywords`,
+    `--preserve-title`, or `--preserve-description`. **Keywords** is off by default, so new keywords
+    merge with the old ones. Check it to replace them instead. **Title** and **Description** are on
+    by default, because each field holds only one value. Turning either field on clears a camera's
+    placeholder text. Uncheck one to keep the value the photo already has, and fill in only the
+    photos that lack it. This way, a caption you wrote by hand survives a rerun.
 
 - **Write To** picks where a save puts the metadata: the GUI's equivalent of the CLI's
     `--sidecar-mode`. The choices are:
@@ -387,8 +393,9 @@ from the existing values.
 #### Generate and save in one click
 
 A run you will not sit through can write its own photos. **Save After Generating**, on the arrow of
-either **Generate** button, writes every photo a run produced, as soon as that run finishes. Both
-buttons then read **Generate and Save**, and their tooltips spell out what that save writes.
+either **Generate** button, writes every photo a run produced, as soon as that run finishes. The
+buttons then read **Generate and Save Selected** and **Generate and Save This Photo**, and their
+tooltips spell out what that save writes.
 
 Before it writes, the run does the same two things you do at the keyboard. First, it tries again on
 the photos that **failed**. This is what **Retry Failed** does by hand: a model server that blinks
@@ -428,11 +435,11 @@ because the window is built around reviewing before writing.
 !!! tip "API keys: field or environment"
 
     The **Connection...** dialog has a masked **API key** field. Leave it blank to use the provider's
-    environment variable instead (`OPENAI_API_KEY`, `LM_STUDIO_API_KEY`, or `OLLAMA_API_KEY`). This
-    keeps the secret out of the app entirely. Or, type a key to use it for this session only. A typed
-    key stays in memory for the run, and the GUI never writes it to disk, not even with **Save Settings
-    as Defaults**. OpenAI requires a key. Local Ollama and LM Studio servers usually do not. To set it
-    from the environment instead, launch with a command such as
+    environment variable instead (`OPENAI_API_KEY`, `LM_STUDIO_API_KEY`, `LLAMA_CPP_API_KEY`, or
+    `OLLAMA_API_KEY`). This keeps the secret out of the app entirely. Or, type a key to use it for this
+    session only. A typed key stays in memory for the run, and the GUI never writes it to disk, not even
+    with **Save Settings as Defaults**. OpenAI requires a key. Local Ollama and LM Studio servers
+    usually do not. To set it from the environment instead, launch with a command such as
     `OPENAI_API_KEY=sk-... photo-tagger gui`.
 
 ### 5. When a photo fails
@@ -514,7 +521,8 @@ The panel under the fields lists the tags a save writes on a photo with no notic
 one says for a real year. A template with a typo in it is visible there before anything is written.
 
 The **Insert** row types the awkward parts for you: `©`, `{year}`, and `{artist}`. Each one lands in
-the field holding the cursor, and the buttons take no focus, so you can keep typing where you left
+the **Copyright notice** or the **XMP rights** field, whichever holds the cursor. If neither holds
+it, the text goes into the notice. The buttons take no focus, so you can keep typing where you left
 off.
 
 **XMP rights** is the same notice for XMP alone. XMP uses UTF-8 and can carry a real `©`. EXIF
@@ -545,7 +553,8 @@ fields:
 - **Organize with the model** (off by default) asks the model to settle two things that counting
     alone cannot: which keywords are synonyms of each other, and what hierarchy the list must have.
     It never decides what to keep, and it never invents a keyword. It needs a reachable provider,
-    and uses the one in the header.
+    and uses the one in the header. **Requests at once** (1 to 16) sets how many parts of the list
+    go to the model at the same time.
 - **Write to** a vocabulary file, plus an optional **drop report**: a CSV naming every dropped
     keyword, its count, and the rule that cut it, which is what makes the thresholds tunable.
 
@@ -594,8 +603,10 @@ catches up, the fans wind down, and the average draw lands under what the charge
 about three minutes of every ten. **Rest below** rests the run until the charge comes back, whenever
 the battery falls that low. This is the one to reach for on a laptop, because it needs no wattage
 numbers. It follows your screen brightness and whatever else is running on the machine. It only ever
-rests while a charger stays plugged in, because on battery power a rest recharges nothing. **Work
-for** and **Rest at most** bound how often a rest happens and how long each one lasts.
+rests while a charger stays plugged in, because on battery power a rest recharges nothing. **Resume
+at** is the charge that ends the rest. It must be above **Rest below**, and `0` means 15 points
+above it. **Work for** and **Rest at most** bound how often a rest happens and how long each one
+lasts.
 
 A run rests between photos, never in the middle of one. The status bar says why it stopped and for
 how long. The batches of a **Watch Folder** share one work window, as in `photo-tagger watch`, so a
@@ -620,7 +631,8 @@ written with **Keep ExifTool Backup** unchecked cannot be restored at all, becau
 of what it held. The dialog says so, for each such file.
 
 Photos in the list whose writes were reverted go back to `ready`, and their proposal is still there
-to save again. Their **Tagged** column is scanned again too.
+to save again. A reverted photo without a proposal goes back to `pending`. Their **Tagged** column
+is scanned again too.
 
 ### Export a CSV report
 
@@ -649,10 +661,14 @@ The GUI reads the same TOML configuration file and environment variables as the 
 the provider, model, URL, extensions, and save options from them. It can also write that file.
 **Settings > Save Settings as Defaults...** updates the configuration file already in effect, or
 creates `~/.config/photo-tagger/config.toml`. It writes the current provider, model, URL, file
-types, recursion, and save options. The save **merges**: it keeps comments, ordering, and anything
-in the configuration that the GUI does not manage, and it never writes the API key. For everything
-that the GUI does not surface, for example the prompt file, sampling, workers, and filters, use
-**Settings > Edit Config File...**. This opens the file in your editor. See
+types, recursion, and save options. It also writes the keyword rules, the copyright fields, **Save
+After Generating**, the pacing, and the switches of the **Settings** menu: telemetry, undo
+recording, notifications, and the mixed-language rewrite. If **Settings > Copyright** holds a
+template with an error, the GUI refuses to save and tells you to fix the template first, because the
+CLI would refuse that template at every later run. The save **merges**: it keeps comments, ordering,
+and anything in the configuration that the GUI does not manage, and it never writes the API key. For
+everything that the GUI does not surface, for example the prompt file, sampling, workers, and
+filters, use **Settings > Edit Config File...**. This opens the file in your editor. See
 [Configuration](../getting-started/configuration.md) for the format.
 
 Generated results are cached in the same SQLite format as the CLI's
@@ -668,7 +684,21 @@ small text in a photo. It costs time per photo and starts a fresh cache, so see
 frequency penalty, and JPEG quality. For those, and for the full set of flags, for example custom
 prompts, date-range filters, and logging, use the [CLI](cli-reference.md).
 
+### Telemetry
+
+The GUI sends the same anonymous usage beacons as the CLI. See [Telemetry](../telemetry.md). The
+first time telemetry is active, the GUI shows a dialog that tells what it sends. Press **Turn It
+Off** there to stop it. Later, use **Settings > Send Anonymous Telemetry** to turn it on or off. The
+GUI keeps the choice for the next launch.
+
+### The Help menu
+
+**Help** holds **Documentation** (opens these docs in your browser), **Test Connection** (the same
+check as in **Connection...**), **Open Logs**, and **About Photo Tagger**.
+
 ## Limitations
+
+If some photos have proposals that you did not save, closing the window asks you to approve first.
 
 !!! warning
 
