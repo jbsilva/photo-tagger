@@ -17,7 +17,7 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/astral-sh/uv-pre-commit"
-rev = "0.12.16"
+rev = "0.13.0"
 hooks = [{ id = "uv-lock" }]
 
 # Docformatter: format docstrings and make sure we use 100 columns.
@@ -41,7 +41,7 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.16.8"
+rev = "v0.17.0"
 hooks = [
   { id = "ruff-check", args = ["--fix"] },
   { id = "ruff-format" },
@@ -77,12 +77,12 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/asottile/pyupgrade"
-rev = "v3.21.2"
+rev = "v3.22.0"
 hooks = [{ id = "pyupgrade", args = ["--py314-plus"] }]
 
 [[repos]]
 repo = "https://github.com/streetsidesoftware/cspell-cli"
-rev = "v10.2.0"
+rev = "v10.3.0"
 hooks = [
   # Spell check changed files.
   { id = "cspell" },
@@ -98,13 +98,13 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/crate-ci/typos"
-rev = "v1.50.2"
+rev = "v1.51.1"
 hooks = [{ id = "typos" }]
 
 # Renovate config validator. Catches a typo in renovate.json5 before it silently breaks updates.
 [[repos]]
 repo = "https://github.com/renovatebot/pre-commit-hooks"
-rev = "44.101.3"
+rev = "44.149.2"
 hooks = [{ id = "renovate-config-validator", args = ["--strict"] }]
 
 # Static analysis for the GitHub Actions workflows. Same tool as the zizmor.yml workflow, so a
