@@ -8,21 +8,31 @@ tests.
 """
 
 import contextlib
+import csv
+import importlib
 import io
 import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from photo_tagger import (
+    diagnostics,
     main as main_module,
     telemetry,
 )
-from photo_tagger.cli_options import load_defaults, to_pacing_plan
+from photo_tagger.cli_options import (
+    WatchConfig,
+    known_config_keys,
+    load_defaults,
+    to_pacing_plan,
+    to_telemetry_settings,
+)
 from photo_tagger.errors import BatchError, DiscoveryError, ProviderError
 from photo_tagger.metadata import SOURCE_SIDECAR, FieldReading, WriteTarget
 from photo_tagger.pacing import SECONDS_PER_MINUTE
@@ -353,29 +363,38 @@ def test_ndjson_emitter_is_thread_safe(tmp_path: Path) -> None:
     assert sorted(d["file"] for d in decoded) == sorted(str(p) for p in paths)
 
 
-def test_cli_json_flag_installs_ndjson_emitter(tmp_path: Path) -> None:
-    """--json wires an _NDJSONEmitter onto run_batch's on_image_result callback."""
+def test_cli_json_flag_installs_ndjson_emitter(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--json makes run_batch's on_image_result callback print one NDJSON line per photo."""
     image = _make_jpeg(tmp_path / "img.cr3")
     captured: dict[str, Any] = {}
 
     setup, create_agent, run_batch = _patches(captured)
     with setup, create_agent, run_batch:
         _run_app(["--input", str(image), "--json"])
+    capsys.readouterr()
 
-    emitter = captured["on_image_result"]
-    assert isinstance(emitter, main_module._NDJSONEmitter)  # noqa: SLF001
+    captured["on_image_result"](_rich_outcome(image))
+    assert json.loads(capsys.readouterr().out)["file"] == str(image)
 
 
-def test_cli_default_does_not_install_ndjson_emitter(tmp_path: Path) -> None:
-    """Without --json the on_image_result callback stays None."""
+def test_cli_default_does_not_install_ndjson_emitter(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without --json the callback only keeps telemetry figures: nothing reaches stdout."""
     image = _make_jpeg(tmp_path / "img.cr3")
     captured: dict[str, Any] = {}
 
     setup, create_agent, run_batch = _patches(captured)
     with setup, create_agent, run_batch:
         _run_app(["--input", str(image)])
+    capsys.readouterr()
 
-    assert captured["on_image_result"] is None
+    captured["on_image_result"](_rich_outcome(image))
+    assert capsys.readouterr().out == ""
 
 
 # ---------------------------------------------------------------------------
@@ -468,17 +487,22 @@ def test_cli_csv_file_writes_streamed_report(tmp_path: Path) -> None:
 
 
 def test_cli_csv_file_installs_csv_sink_and_writes_header(tmp_path: Path) -> None:
-    """--csv-file alone wires a _CsvImageResultSink and emits the header even with no rows."""
+    """--csv-file writes the header up front and a row for each photo run_batch reports."""
     image = _make_jpeg(tmp_path / "img.cr3")
     csv_path = tmp_path / "report.csv"
-    captured: dict[str, Any] = {}
 
-    setup, create_agent, run_batch = _patches(captured)
-    with setup, create_agent, run_batch:
+    def fake_run_batch(*_args: object, **kwargs: Any) -> None:  # noqa: ANN401 - run_batch's kwargs.
+        kwargs["on_image_result"](_rich_outcome(image))
+
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(main_module, "run_batch", side_effect=fake_run_batch),
+    ):
         _run_app(["--input", str(image), "--csv-file", str(csv_path)])
 
-    assert isinstance(captured["on_image_result"], main_module._CsvImageResultSink)  # noqa: SLF001
-    assert csv_path.exists()
+    rows = list(csv.DictReader(csv_path.read_text(encoding="utf-8-sig").splitlines()))
+    assert [row["filename"] for row in rows] == ["img.cr3"]
 
 
 def test_cli_csv_and_json_install_fan_out(tmp_path: Path) -> None:
@@ -1337,6 +1361,10 @@ def test_cli_no_notify_flag_overrides_the_config_file(
             BatchTotals(total_files=3, success=3, dry_run=True),
             "Dry run: 3 of 3 photos checked.",
         ),
+        (
+            BatchTotals(total_files=5, success=2, failed_files=["c", "d", "e"], interrupted=True),
+            "Stopped: 2 of 5 photos tagged.",
+        ),
     ],
 )
 def test_alert_message_wording(totals: BatchTotals, expected: str) -> None:
@@ -1612,22 +1640,22 @@ def test_main_does_not_report_clean_exits_as_crashes() -> None:
     assert crashes == []
 
 
-def test_crash_telemetry_enabled_honors_argv_flag() -> None:
+def test_telemetry_enabled_for_honors_argv_flag() -> None:
     """A --no-telemetry anywhere on the command line disables the crash beacon too."""
-    assert main_module._crash_telemetry_enabled(["-i", "x", "--no-telemetry"]) is False  # noqa: SLF001
-    assert main_module._crash_telemetry_enabled(["-i", "x"]) is True  # noqa: SLF001
+    assert main_module._telemetry_enabled_for(["-i", "x", "--no-telemetry"]) is False  # noqa: SLF001
+    assert main_module._telemetry_enabled_for(["-i", "x"]) is True  # noqa: SLF001
 
 
-def test_crash_telemetry_enabled_honors_the_config_file(
+def test_telemetry_enabled_for_honors_the_config_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """[telemetry] enabled = false in the config disables crash beacons; garbage tables do not."""
     _point_config_at(tmp_path, monkeypatch, "[telemetry]\nenabled = false\n")
-    assert main_module._crash_telemetry_enabled([]) is False  # noqa: SLF001
+    assert main_module._telemetry_enabled_for([]) is False  # noqa: SLF001
 
     _point_config_at(tmp_path, monkeypatch, 'telemetry = "not-a-table"\n')
-    assert main_module._crash_telemetry_enabled([]) is True  # noqa: SLF001
+    assert main_module._telemetry_enabled_for([]) is True  # noqa: SLF001
 
 
 def test_suite_is_isolated_from_developer_config() -> None:
@@ -2769,3 +2797,336 @@ def test_pacing_rejects_a_floor_with_no_room_for_a_resume_level(tmp_path: Path) 
         main_module.app(["--input", str(image), "--battery-floor", "100"])
 
     assert exit_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# telemetry beacons
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def beacons(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Capture every event the CLI hands to telemetry.emit, marking the process as having sent."""
+    sent: list[object] = []
+
+    def fake_emit(event: object, **_kwargs: object) -> None:
+        sent.append(event)
+        telemetry._mark_sent()  # noqa: SLF001 - what a real dispatch does.
+
+    monkeypatch.setattr(telemetry, "_sent_any", False)
+    monkeypatch.setattr(telemetry, "_notes", {})
+    monkeypatch.setattr(telemetry, "emit", fake_emit)
+    return sent
+
+
+def _finishing_run_batch(totals: BatchTotals) -> Any:  # noqa: ANN401 - a patch side effect.
+    """Return a run_batch stand-in that reports *totals* the way the real one does."""
+
+    def fake(image_files: list[Path], *_args: object, **kwargs: Any) -> BatchTotals:  # noqa: ANN401
+        on_result = kwargs["on_image_result"]
+        for path in image_files:
+            on_result(_rich_outcome(path))
+        kwargs["on_complete"](totals)
+        return totals
+
+    return fake
+
+
+def test_run_beacon_describes_the_batch_and_how_it_was_set_up(
+    tmp_path: Path,
+    beacons: list[object],
+) -> None:
+    """One finished batch sends one run beacon with its outcome, settings, and setup."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    totals = BatchTotals(total_files=1, success=1, workers=1, inference_calls=1)
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(main_module, "run_batch", side_effect=_finishing_run_batch(totals)),
+        pytest.raises(SystemExit),
+    ):
+        main_module.main(["--input", str(image), "--temperature", "0.3", "--dry-run"])
+
+    assert len(beacons) == 1, "a run beacon covers the invocation: no command beacon follows it"
+    run = beacons[0]
+    assert isinstance(run, telemetry.RunInfo)
+    assert (run.command, run.job, run.outcome, run.batch_size) == ("tag", "tag", "ok", 1)
+    assert run.settings is not None
+    assert run.settings.temperature == 0.3  # noqa: PLR2004 - the flag's value
+    assert run.settings.dry_run is True
+    assert run.setup is not None
+    assert run.setup.cli_flags == "--dry-run,--input,--temperature"
+    assert {"dry_run", "temperature"} <= set(run.setup.changed.split(","))
+    assert run.photo_seconds_median == 1.5  # noqa: PLR2004 - the outcome's model time
+    assert run.keywords_mean == 2.0  # noqa: PLR2004 - the outcome's two keywords
+
+
+def test_run_beacon_reports_a_batch_with_nothing_to_do(
+    tmp_path: Path,
+    beacons: list[object],
+) -> None:
+    """A rerun whose filters leave nothing to tag still says so, as an empty run."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "_filter_batch", return_value=[]),
+        pytest.raises(SystemExit),
+    ):
+        main_module.main(["--input", str(image)])
+
+    assert [type(event) for event in beacons] == [telemetry.RunInfo]
+    assert beacons[0].outcome == telemetry.OUTCOME_EMPTY  # type: ignore[attr-defined]
+
+
+def test_run_beacon_reports_a_run_that_never_started(
+    tmp_path: Path,
+    beacons: list[object],
+) -> None:
+    """A model that cannot be reached stops the run before its first photo, and that is reported."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", side_effect=ProviderError("down")),
+        pytest.raises(SystemExit),
+    ):
+        main_module.main(["--input", str(image)])
+
+    assert len(beacons) == 1
+    run = beacons[0]
+    assert isinstance(run, telemetry.RunInfo)
+    assert (run.outcome, run.error_kind) == (telemetry.OUTCOME_SETUP_FAILED, "ProviderError")
+
+
+def test_a_telemetry_snapshot_that_raises_does_not_stop_the_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bug in building the beacon turns telemetry off for the run instead of a traceback."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    totals = BatchTotals(total_files=1, success=1, workers=1, inference_calls=1)
+    enabled: list[object] = []
+    monkeypatch.setattr(telemetry, "_sent_any", False)
+    monkeypatch.setattr(
+        telemetry,
+        "emit",
+        lambda _event, **kwargs: enabled.append(kwargs["enabled"]),
+    )
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(main_module, "run_batch", side_effect=_finishing_run_batch(totals)),
+        patch.object(main_module, "to_telemetry_settings", side_effect=ValueError("boom")),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main_module.main(["--input", str(image)])
+
+    assert exc_info.value.code == 0
+    # The run beacon goes out disabled, and no command beacon stands in for it on the way out.
+    assert enabled == [False]
+
+
+def test_other_commands_send_a_command_beacon(
+    tmp_path: Path,
+    beacons: list[object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A command with no run of its own reports its name, outcome, and the flags it was given."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    with pytest.raises(SystemExit):
+        main_module.main(["undo", "--list"])
+
+    assert len(beacons) == 1
+    command = beacons[0]
+    assert isinstance(command, telemetry.CommandInfo)
+    assert (command.command, command.outcome, command.exit_code) == ("undo", "ok", 0)
+    assert command.setup is not None
+    assert command.setup.cli_flags == "--list"
+
+
+def test_command_beacon_names_a_usage_error(beacons: list[object]) -> None:
+    """A mistyped flag is reported as a usage error, without the flag's text."""
+    with pytest.raises(SystemExit):
+        main_module.main(["--no-such-flag"])
+
+    assert len(beacons) == 1
+    command = beacons[0]
+    assert isinstance(command, telemetry.CommandInfo)
+    assert (command.command, command.outcome) == ("tag", telemetry.OUTCOME_USAGE_ERROR)
+
+
+def test_command_beacon_names_help_and_version(beacons: list[object]) -> None:
+    """Reading the help is its own kind of invocation, not a tag run."""
+    with pytest.raises(SystemExit):
+        main_module.main(["--help"])
+    assert beacons[0].command == "help"  # type: ignore[attr-defined]
+
+
+def test_command_beacon_respects_the_opt_out(
+    tmp_path: Path,
+    beacons: list[object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PHOTO_TAGGER_TELEMETRY=0 silences the fallback beacon too."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("PHOTO_TAGGER_TELEMETRY", "0")
+    with pytest.raises(SystemExit):
+        main_module.main(["undo", "--list"])
+    assert beacons == []
+
+
+def test_gui_command_leaves_reporting_to_the_window(
+    beacons: list[object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The window reports itself under its own toggle, so the CLI sends nothing for `gui`."""
+
+    def no_qt(_name: str) -> object:
+        raise ImportError(name="PySide6")
+
+    monkeypatch.setattr(importlib, "import_module", no_qt)
+    with pytest.raises(SystemExit):
+        main_module.main(["gui"])
+    assert beacons == []
+
+
+def test_doctor_notes_which_checks_failed(beacons: list[object]) -> None:
+    """The doctor beacon carries fixed problem codes, never the details that name paths or URLs."""
+    results = [
+        diagnostics.CheckResult("ExifTool", ok=False, detail="/secret", problem="not-found"),
+        diagnostics.CheckResult("Model", ok=True, detail="http://host:1234"),
+    ]
+    with (
+        patch.object(main_module, "run_checks", return_value=results),
+        patch.object(main_module, "render_report", return_value=False),
+        pytest.raises(SystemExit),
+    ):
+        main_module.main(["doctor"])
+
+    command = beacons[0]
+    assert isinstance(command, telemetry.CommandInfo)
+    assert command.details == {"checks_failed": 1, "problems": "not-found"}
+
+
+def test_watch_reports_each_batch_and_then_the_session(
+    tmp_path: Path,
+    beacons: list[object],
+) -> None:
+    """A watch sends a run per batch, then one session covering the whole watch."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    _settled_photo(inbox / "a.cr3")
+    totals = BatchTotals(total_files=1, success=1)
+    with (
+        patch.object(main_module, "setup_logging"),
+        patch.object(main_module, "create_agent", return_value=object()),
+        patch.object(main_module, "run_batch", side_effect=_finishing_run_batch(totals)),
+        patch.object(main_module, "watch_batches", side_effect=_bounded_watch),
+    ):
+        _run_app(["watch", "--input", str(inbox)])
+
+    assert [type(event) for event in beacons] == [telemetry.RunInfo, telemetry.SessionInfo]
+    run, session = beacons
+    assert (run.command, run.trigger) == ("watch", "watch")  # type: ignore[attr-defined]
+    assert isinstance(session, telemetry.SessionInfo)
+    assert (session.command, session.runs, session.photos_generated) == ("watch", 1, 1)
+    assert session.settings is not None
+    assert session.settings.watch_interval == WatchConfig().interval
+
+
+def test_watch_session_counts_only_the_photos_that_came_out_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch of three with two failures adds one photo to the session, as the GUI counts it."""
+    monkeypatch.setattr(telemetry, "emit", lambda *_args, **_kwargs: None)
+    beacons = main_module._Beacons(  # noqa: SLF001
+        enabled=False,
+        command="watch",
+        provider="lmstudio",
+        model="m",
+        output_language="English",
+        settings=telemetry.Settings(),
+        setup=telemetry.Setup(),
+    )
+    beacons.record(replace(beacons.base_run(), batch_size=3, success_count=1))
+
+    assert beacons.photos == 1
+
+
+def test_config_hook_records_the_command_and_the_typed_flags(tmp_path: Path) -> None:
+    """The hook names what was typed, by option name, and never keeps a value."""
+    main_module.app.parse_args(["watch", str(tmp_path), "--interval", "5", "-w", "2"])
+    invocation = main_module._CONFIG_SOURCE.invocation  # noqa: SLF001
+    assert invocation.command == "watch"
+    assert invocation.cli_flags == ("--input", "--interval", "--workers")
+
+
+def test_config_hook_reports_an_alias_by_its_option_name(tmp_path: Path) -> None:
+    """``--lang`` and ``--output-language`` are one option, and a negative keeps its "no"."""
+    main_module.app.parse_args(["--input", str(tmp_path), "--lang", "German", "--no-backup-xmp"])
+    invocation = main_module._CONFIG_SOURCE.invocation  # noqa: SLF001
+    assert invocation.cli_flags == ("--input", "--no-backup-xmp", "--output-language")
+
+
+def test_telemetry_settings_of_the_defaults_are_the_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Built-in option groups map onto the built-in Settings, so nothing reads as changed."""
+    for name in ("LM_STUDIO_API_KEY", "OPENAI_API_KEY", "LM_STUDIO_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    defaults = load_defaults({})
+    settings = to_telemetry_settings(
+        provider=defaults.provider,
+        inference=defaults.inference,
+        output=defaults.output,
+        artifacts=defaults.artifacts,
+        display=defaults.display,
+        filter_=defaults.filter,
+        log=defaults.log,
+        pacing=defaults.pacing,
+        workers=defaults.workers,
+        extensions=defaults.extensions,
+        recursive=defaults.recursive,
+    )
+    assert settings == telemetry.Settings()
+
+
+def test_telemetry_settings_keep_no_path_or_text(tmp_path: Path) -> None:
+    """A hint, a copyright notice, and a remote URL come out as switches and categories."""
+    defaults = load_defaults(
+        {
+            "provider": {"api_base_url": "https://gpu.example.com/v1", "provider_name": "openai"},
+            "inference": {"hint": "The animal is a deer"},
+            "copyright": {"artist": "Ada", "copyright_notice": "(c) {year} Ada", "marked": True},
+        },
+    )
+    settings = to_telemetry_settings(
+        provider=defaults.provider,
+        inference=defaults.inference,
+        output=defaults.output,
+        artifacts=defaults.artifacts,
+        display=defaults.display,
+        filter_=defaults.filter,
+        log=defaults.log,
+        pacing=defaults.pacing,
+        workers=1,
+        extensions="CR3,jpg,weird",
+        recursive=True,
+    )
+    assert (settings.endpoint, settings.secure, settings.custom_url) == ("public", True, True)
+    assert (settings.hint, settings.hint_chars) == (True, len("The animal is a deer"))
+    assert (settings.artist, settings.copyright_notice, settings.marked) == (
+        True,
+        True,
+        "copyrighted",
+    )
+    assert settings.extensions == "cr3,jpg,other"
+    assert "Ada" not in repr(settings)
+    assert "example.com" not in repr(settings)
+
+
+def test_known_config_keys_cover_every_table_the_config_reads() -> None:
+    """Every table and top-level key photo-tagger reads can be named in a beacon."""
+    known = known_config_keys()
+    assert "model_name" in known["provider"]
+    assert "save_after_generating" in known["gui"]
+    assert {"extensions", "workers", "recursive", "language", "exiftool_path"} <= known[""]

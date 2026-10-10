@@ -30,6 +30,7 @@ from cyclopts import App, ArgumentCollection, Parameter, validators
 from cyclopts.argument import update_argument_collection
 from cyclopts.config import Dict as _CycloptsDictConfig
 
+from photo_tagger import telemetry
 from photo_tagger.config import (
     DEFAULT_BATTERY_FLOOR,
     DEFAULT_BATTERY_RESUME,
@@ -56,7 +57,8 @@ from photo_tagger.pipeline import ProcessingOptions
 
 # Runtime import (not type-only): cyclopts evaluates the Annotated[ProviderName, ...] field
 # below to validate the --provider choices, so the name must exist at class-definition time.
-from photo_tagger.providers import ProviderName  # noqa: TC001
+from photo_tagger.providers import ProviderName, get_backend
+from photo_tagger.telemetry_facts import endpoint_kind, extension_list
 from photo_tagger.vocabulary import folds_plurals
 from photo_tagger.vocabulary_build import TrimRules
 from photo_tagger.watch import DEFAULT_INTERVAL_SECONDS, DEFAULT_SETTLE_SECONDS
@@ -832,12 +834,12 @@ class TelemetryConfig:
             name=("--telemetry",),
             negative="--no-telemetry",
             help=(
-                "Send anonymous usage stats (model name, batch size, OS, CPU/GPU model, RAM size, "
-                "timing, success/cache counts) and anonymous crash reports (error type and in-app "
-                "code location only) to help guide development. No photos, file paths, filenames, "
-                "tags, error messages, or personal data are ever sent. Disable with "
-                "--no-telemetry, PHOTO_TAGGER_TELEMETRY=0, or the cross-tool DO_NOT_TRACK=1. "
-                "PHOTO_TAGGER_TELEMETRY=1 sends anyway when DO_NOT_TRACK is set"
+                "Send anonymous usage stats (the settings and features used, model, batch size, "
+                "OS, CPU/GPU model, RAM size, timing, outcomes) and anonymous crash reports (error "
+                "type and in-app code location only) to help guide development. No photos, file "
+                "paths, filenames, tags, prompts, error messages, or personal data are ever sent. "
+                "Disable with --no-telemetry, PHOTO_TAGGER_TELEMETRY=0, or the cross-tool "
+                "DO_NOT_TRACK=1. PHOTO_TAGGER_TELEMETRY=1 sends anyway when DO_NOT_TRACK is set"
             ),
         ),
     ] = True
@@ -940,6 +942,14 @@ _CONFIG_TABLES: dict[str, type] = {
 _TOP_LEVEL_KEYS = ("extensions", "workers", "recursive")
 
 
+def known_config_keys() -> dict[str, frozenset[str]]:
+    """Map each config table to the keys photo-tagger reads, with "" for the top level."""
+    known = {table: frozenset(typing.get_type_hints(cls)) for table, cls in _CONFIG_TABLES.items()}
+    known[""] = frozenset((*_TOP_LEVEL_KEYS, "exiftool_path", "language"))
+    known["gui"] = frozenset({"save_after_generating"})
+    return known
+
+
 def _cli_option_names(cls: type) -> dict[str, str]:
     """Map each of *cls*'s field names to its primary long CLI option, without the dashes."""
     names: dict[str, str] = {}
@@ -1009,6 +1019,32 @@ def _apply_shadowed_keys(
     )
 
 
+@dataclass(slots=True, frozen=True)
+class Invocation:
+    """What the command line asked for: the command, and the names of the options typed on it."""
+
+    command: str = "tag"
+    cli_flags: tuple[str, ...] = ()
+
+
+def _typed_flags(arguments: ArgumentCollection) -> tuple[str, ...]:
+    """
+    Name the options typed on the command line, never their values.
+
+    Every spelling of an option is reported by its own long name, so an alias (``--lang``), a short
+    name, or a positional path counts as the one option it sets. A negative keeps its "no", named by
+    the option's first negative, so ``--no-backup-xmp`` stays apart from ``--backup-xmp``.
+    """
+    names: set[str] = set()
+    for argument in arguments:
+        negatives = tuple(argument.negatives)
+        for token in argument.tokens:
+            if token.source == "cli":
+                keyword = (token.keyword or "").split("=", 1)[0]
+                names.add(negatives[0] if keyword in negatives else argument.name)
+    return tuple(sorted(names))
+
+
 class ConfigFileSource:
     """
     Cyclopts config hook that fills flags the user did not pass from the TOML config file.
@@ -1019,11 +1055,20 @@ class ConfigFileSource:
     precedence: CLI flag > config file > built-in default.
 
     The file is re-read on every invocation, so tests (and long-lived processes) observe changes to
-    ``$PHOTO_TAGGER_CONFIG`` without re-importing ``main``.
+    ``$PHOTO_TAGGER_CONFIG`` without re-importing ``main``. The hook also records which command ran
+    and which options were typed (:attr:`invocation`), for telemetry.
     """
+
+    def __init__(self) -> None:
+        """Start with an empty invocation until cyclopts calls the hook."""
+        self.invocation = Invocation()
 
     def __call__(self, app: App, commands: tuple[str, ...], arguments: ArgumentCollection) -> None:
         """Feed the flattened config to cyclopts for any argument without CLI tokens."""
+        self.invocation = Invocation(
+            command=commands[-1] if commands else "tag",
+            cli_flags=_typed_flags(arguments),
+        )
         overrides = cli_config_overrides(load_config())
         if not overrides:
             return
@@ -1143,6 +1188,106 @@ def to_pacing_plan(config: PacingConfig) -> PacingPlan:
         battery_resume=config.battery_resume,
         work_seconds=config.work_minutes * SECONDS_PER_MINUTE,
         max_pause_seconds=config.max_pause_minutes * SECONDS_PER_MINUTE,
+    )
+
+
+def _marked_label(*, marked: bool | None) -> str:
+    """Name the XMP Marked choice the way telemetry reports it."""
+    if marked is None:
+        return "unset"
+    return "copyrighted" if marked else "public-domain"
+
+
+def to_telemetry_settings(  # noqa: PLR0913 - one parameter per option group tag() takes.
+    *,
+    provider: ProviderConfig,
+    inference: InferenceConfig,
+    output: OutputConfig,
+    artifacts: ArtifactConfig,
+    display: DisplayConfig,
+    filter_: FilterConfig,
+    log: LogConfig,
+    pacing: PacingConfig,
+    workers: int,
+    extensions: str,
+    recursive: bool,
+    vocabulary_terms: int = 0,
+    watch: WatchConfig | None = None,
+) -> telemetry.Settings:
+    """
+    Reduce a run's option groups to the bounded values telemetry reports.
+
+    Mirrors :func:`to_processing_options`: this module owns the flags, telemetry owns what is sent.
+    Nothing here keeps a path or free text: a file becomes "one is set", a hint its length.
+    """
+    backend = get_backend(provider.provider_name)
+    url = provider.api_base_url or backend.default_base_url
+    notify, notify_sound = resolve_notify(display)
+    watching = watch or WatchConfig()
+    return telemetry.Settings(
+        endpoint=endpoint_kind(url),
+        secure=url.lower().startswith("https://"),
+        custom_url=provider.api_base_url is not None,
+        api_key=bool(backend.resolve_api_key(provider.api_key)),
+        retries=provider.retries,
+        timeout_seconds=inference.timeout_seconds,
+        temperature=inference.temperature,
+        max_tokens=inference.max_tokens,
+        frequency_penalty=inference.frequency_penalty,
+        jpeg_dimensions=inference.jpeg_dimensions,
+        jpeg_quality=inference.jpeg_quality,
+        repair_language=inference.repair_language,
+        hint=bool(inference.hint),
+        hint_chars=len(inference.hint or ""),
+        custom_prompt=artifacts.prompt_file is not None,
+        workers=workers,
+        cache=artifacts.cache_file is not None,
+        max_keywords=output.max_keywords or 0,
+        vocabulary=output.vocabulary is not None,
+        vocabulary_terms=vocabulary_terms,
+        vocabulary_strict=output.vocabulary_strict,
+        session_gap_minutes=output.session_gap_minutes,
+        sidecar_mode=resolve_sidecar_mode(output),
+        write_title=output.write_title,
+        write_description=output.write_description,
+        write_keywords=output.write_keywords,
+        write_copyright=output.write_copyright,
+        overwrite_title=not output.preserve_title,
+        overwrite_description=not output.preserve_description,
+        overwrite_keywords=not output.preserve_keywords,
+        backup=output.backup_xmp,
+        undo_log=artifacts.undo_log,
+        dry_run=output.dry_run,
+        artist=bool(output.artist),
+        copyright_notice=bool(output.copyright_notice),
+        rights=bool(output.rights),
+        marked=_marked_label(marked=output.marked),
+        set_tags=len(output.set_tags or []),
+        paced=to_pacing_plan(pacing).rests,
+        duty=pacing.duty,
+        battery_floor=pacing.battery_floor,
+        battery_resume=pacing.battery_resume,
+        work_minutes=pacing.work_minutes,
+        max_pause_minutes=pacing.max_pause_minutes,
+        notify=notify,
+        notify_sound=notify_sound,
+        extensions=extension_list(extensions.split(",")),
+        recursive=recursive,
+        skip_tagged=filter_.skip_tagged,
+        date_filter=bool(filter_.newer_than or filter_.older_than),
+        skip_list=artifacts.skip_from is not None,
+        resume_list=artifacts.append_to_skip_file is not None,
+        summary_file=artifacts.summary_file is not None,
+        csv_report=artifacts.csv_file is not None,
+        json_output=display.json_output,
+        progress_bar=display.progress_bar,
+        lock_file=artifacts.lock_file is not None,
+        otel=log.otel,
+        otel_content=log.otel_content,
+        console_log_level=log.console_log_level,
+        file_log_level=log.file_log_level,
+        watch_interval=watching.interval,
+        watch_settle=watching.settle,
     )
 
 

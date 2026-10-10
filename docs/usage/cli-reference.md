@@ -492,7 +492,10 @@ along because the question that decides the right fix is whether the photo shows
 text-only pass can answer. That costs one extra call per affected photo, so it is off by default; a
 clean answer never pays for it. If the repair fails or comes back mixed again, the original answer
 is kept and the photo stays flagged. The repaired answer is what goes into the `--cache-file`, so a
-rerun replays the fix instead of paying for it twice.
+rerun replays the fix instead of paying for it twice. A mixed answer that a run without
+`--repair-language` cached is repaired when it is replayed, and the fix replaces it in the cache. A
+photo whose repair comes back mixed again keeps its original answer in the cache, so each run with
+`--repair-language` asks once more for it.
 
 In the GUI: **Settings > Rewrite Mixed-Language Output**.
 

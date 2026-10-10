@@ -10,6 +10,7 @@ import platform
 import threading
 import time
 import uuid
+from dataclasses import fields, replace
 from pathlib import Path
 
 import httpx2
@@ -17,6 +18,7 @@ import pytest
 
 from photo_tagger import __version__, telemetry
 from photo_tagger.hardware import HardwareInfo
+from photo_tagger.pacing import BatteryState
 from photo_tagger.telemetry import RunInfo
 
 
@@ -36,6 +38,7 @@ def _isolate_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("PHOTO_TAGGER_TELEMETRY", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
     monkeypatch.setattr(telemetry, "hardware_info", lambda _path: _FAKE_HARDWARE)
+    monkeypatch.setattr(telemetry, "read_battery", lambda: None)
     monkeypatch.setattr(telemetry, "_crash_beacons_sent", 0)
 
 
@@ -290,10 +293,16 @@ def test_gui_pref_write_degrades_when_unwritable(
 # --- payload contents (the privacy guarantee) --------------------------------------------------
 
 
-_PLATFORM_KEYS = {
+_ENVELOPE_KEYS = {
     "schema_version",
+    "event",
     "install_id",
+    "session_id",
     "app_version",
+    "interface",
+    "command",
+    "consent",
+    "uptime_seconds",
     "arch",
     "os",
     "os_release",
@@ -302,11 +311,21 @@ _PLATFORM_KEYS = {
     "gpu",
     "cpu_count",
     "memory_gb",
+    "install_method",
+    "installer",
+    "system_locale",
+    "utc_offset_minutes",
+    "local_hour",
+    "local_weekday",
+    "ci",
+    "terminal",
 }
 
-_EXPECTED_PAYLOAD_KEYS = _PLATFORM_KEYS | {
-    "event",
-    "interface",
+_RUN_KEYS = {
+    "job",
+    "trigger",
+    "outcome",
+    "error_kind",
     "provider",
     "model",
     "batch_size",
@@ -316,29 +335,74 @@ _EXPECTED_PAYLOAD_KEYS = _PLATFORM_KEYS | {
     "file_types",
     "success_count",
     "failure_count",
+    "initial_failures",
     "cache_hits",
     "retry_successes",
     "workers",
+    "input_tokens",
+    "output_tokens",
     "total_tokens",
+    "inference_calls",
     "inference_seconds",
     "dry_run",
     "failure_kinds",
+    "language_repairs",
+    "flagged",
+    "vocabulary_mapped",
+    "vocabulary_dropped",
+    "rested_seconds",
+    "rests_taken",
+    "shoots",
+    "photo_seconds_median",
+    "photo_seconds_p90",
+    "keywords_mean",
+    "title_chars_mean",
+    "description_chars_mean",
+    "power",
+    "battery_percent",
 }
 
-_EXPECTED_CRASH_KEYS = _PLATFORM_KEYS | {
-    "event",
-    "interface",
-    "exception_type",
-    "crash_location",
-    "crash_frames",
-}
+_EXPECTED_CRASH_KEYS = _ENVELOPE_KEYS | {"exception_type", "crash_location", "crash_frames"}
 
 
 def test_build_payload_has_exactly_the_allowlisted_keys() -> None:
-    """The beacon body is a closed set: no field can sneak in unnoticed."""
+    """The run beacon is a closed set: no field sneaks in unnoticed, and empty groups stay out."""
     payload = telemetry.build_payload(_sample_run())
-    assert set(payload) == _EXPECTED_PAYLOAD_KEYS
+    assert set(payload) == _ENVELOPE_KEYS | _RUN_KEYS
     assert payload["event"] == "run"
+    assert payload["consent"] == telemetry.CONSENT_DEFAULT
+
+
+def test_build_payload_reduces_the_model_and_the_language() -> None:
+    """A model path keeps its file name, and a typed language name that is not known is "other"."""
+    run = replace(
+        _sample_run(),
+        model="/Users/someone/models/qwen3-vl-30b.gguf",
+        output_language="Klingon, but formal",
+    )
+    payload = telemetry.build_payload(run)
+    assert payload["model"] == "qwen3-vl-30b.gguf"
+    assert payload["output_language"] == "other"
+
+
+def test_build_payload_nests_the_groups_a_run_carries() -> None:
+    """Settings, setup, and the GUI groups travel as nested objects of their own fields only."""
+    run = replace(
+        _sample_run(),
+        settings=telemetry.Settings(sidecar_mode="raw"),
+        setup=telemetry.Setup(cli_flags="--dry-run"),
+        gui=telemetry.GuiJob(hinted=2),
+        review=telemetry.ReviewStats(edited=1),
+    )
+    payload = telemetry.build_payload(run, consent=telemetry.CONSENT_ENV_OPT_IN)
+    assert set(payload) == _ENVELOPE_KEYS | _RUN_KEYS | {"settings", "setup", "gui", "review"}
+    settings = payload["settings"]
+    assert isinstance(settings, dict)
+    assert set(settings) == {f.name for f in fields(telemetry.Settings)}
+    assert settings["sidecar_mode"] == "raw"
+    assert payload["setup"]["cli_flags"] == "--dry-run"  # type: ignore[index]
+    assert payload["gui"]["hinted"] == 2  # type: ignore[index]  # noqa: PLR2004 - the sample count
+    assert payload["consent"] == telemetry.CONSENT_ENV_OPT_IN
 
 
 def test_build_payload_carries_run_and_version(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -347,23 +411,35 @@ def test_build_payload_carries_run_and_version(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(platform, "system", lambda: "Darwin")
     payload = telemetry.build_payload(_sample_run())
     assert payload["interface"] == "cli"
+    assert payload["command"] == "tag"
     assert payload["model"] == "qwen/qwen3-vl-30b"
     assert payload["batch_size"] == 12  # noqa: PLR2004 - the sample run's count
     assert payload["arch"] == "arm64"
     assert payload["os"] == "Darwin"
     assert payload["app_version"] == __version__
     assert payload["schema_version"] == telemetry.SCHEMA_VERSION
+    assert payload["session_id"] == telemetry.SESSION_ID
+
+
+def test_build_payload_reports_the_power_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run says whether the machine was on its charger and how full the battery was."""
+    monkeypatch.setattr(telemetry, "read_battery", lambda: BatteryState(percent=64, on_ac=False))
+    payload = telemetry.build_payload(_sample_run())
+    assert (payload["power"], payload["battery_percent"]) == ("battery", 64)
+    monkeypatch.setattr(telemetry, "read_battery", lambda: None)
+    assert telemetry.build_payload(_sample_run())["power"] == "none"
 
 
 def test_build_payload_leaks_no_paths_or_content() -> None:
-    """No payload value resembles a filesystem path; install id is the only opaque token."""
+    """No payload value resembles a filesystem path; the ids are the only opaque tokens."""
     payload = telemetry.build_payload(_sample_run())
     for key, value in payload.items():
-        if key in {"install_id", "model"}:  # uuid and the (slashed) model id are expected
+        if key in {"install_id", "session_id", "model"}:  # uuids and the (slashed) model id
             continue
         assert "/" not in str(value)
         assert "\\" not in str(value)
     uuid.UUID(str(payload["install_id"]))
+    uuid.UUID(str(payload["session_id"]))
 
 
 def test_build_payload_carries_language_and_file_types() -> None:
@@ -376,15 +452,9 @@ def test_build_payload_carries_language_and_file_types() -> None:
 
 def test_build_payload_carries_hardware_and_outcome_fields() -> None:
     """Hardware facts and per-run outcome counters land in the beacon body."""
-    run = RunInfo(
-        interface="cli",
-        provider="lmstudio",
-        model="m",
+    run = replace(
+        _sample_run(),
         batch_size=10,
-        duration_seconds=60.0,
-        output_language="English",
-        ui_language="en",
-        file_types="cr3",
         success_count=9,
         failure_count=1,
         cache_hits=3,
@@ -393,6 +463,7 @@ def test_build_payload_carries_hardware_and_outcome_fields() -> None:
         total_tokens=12345,
         inference_seconds=41.5,
         dry_run=True,
+        outcome=telemetry.OUTCOME_PARTIAL,
     )
     payload = telemetry.build_payload(run)
     assert payload["cpu"] == "Apple M3 Pro"
@@ -406,7 +477,87 @@ def test_build_payload_carries_hardware_and_outcome_fields() -> None:
     assert payload["workers"] == 4  # noqa: PLR2004 - the sample run's count
     assert payload["total_tokens"] == 12345  # noqa: PLR2004 - the sample run's count
     assert payload["inference_seconds"] == 41.5  # noqa: PLR2004 - the sample run's value
-    assert payload["dry_run"] == 1
+    assert payload["dry_run"] == 1, "a v2 Worker reads dry_run as a number"
+    assert payload["outcome"] == "partial"
+
+
+def test_session_payload_keeps_only_allowlisted_features() -> None:
+    """A feature name outside GUI_FEATURES never leaves the machine, whatever the caller passes."""
+    session = telemetry.SessionInfo(
+        interface="gui",
+        command="gui",
+        session_seconds=3600.0,
+        busy_seconds=600.0,
+        features={"viewer": 3, "grid": 0, "/Users/someone/secret": 1},
+        display=telemetry.Display(screen="1512x982@2"),
+    )
+    payload = telemetry.build_payload(session)
+    assert payload["event"] == "session"
+    assert payload["features"] == {"viewer": 3}
+    assert payload["display"]["screen"] == "1512x982@2"  # type: ignore[index]
+    assert "settings" not in payload
+
+
+def test_command_payload_keeps_only_allowlisted_scalar_details() -> None:
+    """Command details are a closed set too, with strings clamped."""
+    command = telemetry.CommandInfo(
+        command="set",
+        outcome=telemetry.OUTCOME_OK,
+        exit_code=0,
+        duration_seconds=1.25,
+        details={"photos": 12, "written": 12, "path": "/secret", "source": "x" * 500},
+    )
+    payload = telemetry.build_payload(command)
+    assert payload["event"] == "command"
+    assert payload["interface"] == "cli"
+    assert payload["command"] == "set"
+    assert payload["details"] == {"photos": 12, "written": 12, "source": "x" * 200}
+
+
+def test_launch_payload_is_a_gui_event() -> None:
+    """The window opening reports itself as a GUI launch with its startup time."""
+    payload = telemetry.build_payload(telemetry.LaunchInfo(startup_seconds=1.23456))
+    assert (payload["event"], payload["interface"], payload["command"]) == ("launch", "gui", "gui")
+    assert payload["startup_seconds"] == 1.235  # noqa: PLR2004 - rounded to three places
+
+
+def test_outcome_for_names_how_a_batch_ended() -> None:
+    """Interrupted beats everything; then empty, ok, failed, and partial by the failure count."""
+    assert telemetry.outcome_for(5, 0, interrupted=True) == telemetry.OUTCOME_INTERRUPTED
+    assert telemetry.outcome_for(0, 0) == telemetry.OUTCOME_EMPTY
+    assert telemetry.outcome_for(5, 0) == telemetry.OUTCOME_OK
+    assert telemetry.outcome_for(5, 5) == telemetry.OUTCOME_FAILED
+    assert telemetry.outcome_for(5, 2) == telemetry.OUTCOME_PARTIAL
+
+
+def test_notes_are_collected_for_the_command_beacon(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Note() adds to the running command's facts; command_notes() hands out a copy."""
+    monkeypatch.setattr(telemetry, "_notes", {})
+    telemetry.note(photos=3)
+    telemetry.note(written=2)
+    notes = telemetry.command_notes()
+    assert notes == {"photos": 3, "written": 2}
+    notes["photos"] = 99
+    assert telemetry.command_notes()["photos"] == 3  # noqa: PLR2004 - the noted count
+
+
+def test_sent_any_turns_on_with_the_first_beacon(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI's fallback beacon relies on this flag; a disabled emit must not set it."""
+    monkeypatch.setattr(telemetry, "_sent_any", False)
+    monkeypatch.setattr(httpx2, "post", lambda *_a, **_k: object())
+    telemetry.emit(_sample_run(), enabled=False)
+    assert telemetry.sent_any() is False
+    telemetry.emit(_sample_run(), enabled=True, block=True)
+    assert telemetry.sent_any() is True
+
+
+def test_locale_hint_is_used_for_the_system_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The GUI hands over Qt's locale, which knows the OS language when LANG is unset."""
+    monkeypatch.setattr(telemetry, "_locale_hint", None)
+    for name in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        monkeypatch.delenv(name, raising=False)
+    telemetry.set_locale_hint("pt_BR")
+    assert telemetry.build_payload(_sample_run())["system_locale"] == "pt_BR"
 
 
 def test_failure_kinds_summary_is_compact_sorted_and_skips_zeros() -> None:
@@ -428,6 +579,12 @@ def test_file_types_summary_reveals_no_filenames() -> None:
     """Only extensions leave the machine: the summary carries no path or filename."""
     summary = telemetry.file_types_summary([Path("/private/vacation-2026/IMG_0001.DNG")])
     assert summary == "dng"
+
+
+def test_file_types_summary_names_unknown_extensions_other() -> None:
+    """An unusual suffix is counted as "other" rather than sent as typed."""
+    summary = telemetry.file_types_summary([Path("/p/a.jpg"), Path("/p/b.secret")])
+    assert summary == "jpg,other"
 
 
 def test_file_types_summary_handles_empty_and_no_suffix() -> None:
@@ -484,10 +641,11 @@ def test_crash_summary_never_carries_the_message() -> None:
 
 
 def test_build_crash_payload_has_exactly_the_allowlisted_keys() -> None:
-    """The crash beacon is a closed set too, with the crash event marker."""
-    payload = telemetry.build_crash_payload(_package_exception(), interface="cli")
+    """The crash beacon is a closed set too, with the crash event marker and the command."""
+    payload = telemetry.build_crash_payload(_package_exception(), interface="cli", command="show")
     assert set(payload) == _EXPECTED_CRASH_KEYS
     assert payload["event"] == "crash"
+    assert payload["command"] == "show"
     assert payload["exception_type"] == "AttributeError"
 
 
@@ -563,7 +721,7 @@ def test_emit_swallows_payload_build_failure(monkeypatch: pytest.MonkeyPatch) ->
     whether the build will fail; it still returns the started thread, not None.
     """
 
-    def boom(_run: RunInfo) -> dict[str, object]:
+    def boom(_run: RunInfo, **_kwargs: object) -> dict[str, object]:
         msg = "platform probe blew up"
         raise RuntimeError(msg)
 
@@ -585,7 +743,7 @@ def test_emit_does_not_block_the_caller_while_building(monkeypatch: pytest.Monke
     """
     finished = threading.Event()
 
-    def slow_build(_run: RunInfo) -> dict[str, object]:
+    def slow_build(_run: RunInfo, **_kwargs: object) -> dict[str, object]:
         time.sleep(0.2)
         finished.set()
         return {}

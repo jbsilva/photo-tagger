@@ -1034,6 +1034,8 @@ class BatchTotals:
     # rests that took. Both stay zero unless the run was paced.
     rested_seconds: float = 0.0
     rests_taken: int = 0
+    # Ctrl-C stopped the batch before every photo had its turn.
+    interrupted: bool = False
 
 
 def _notify_success(ctx: _BatchContext, image_file: Path) -> None:
@@ -1616,6 +1618,7 @@ def run_batch(  # noqa: PLR0913 - public entry point; each kwarg is a distinct c
         language_repairs=usage.language_repairs,
         rested_seconds=round(pacer.rested_seconds - rested_before, 1) if pacer is not None else 0.0,
         rests_taken=pacer.rests_taken - rests_before if pacer is not None else 0,
+        interrupted=interrupted,
     )
 
     _log_totals(totals, workers=workers)

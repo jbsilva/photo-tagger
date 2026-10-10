@@ -8,6 +8,7 @@ from beacons anyone can send, so these load them into SQLite through the real mi
 import importlib.util
 import json
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -29,11 +30,16 @@ def backfill() -> ModuleType:
 
 
 @pytest.fixture
-def events_db() -> sqlite3.Connection:
-    """Return an in-memory database with the D1 schema the Worker writes to."""
+def events_db() -> Iterator[sqlite3.Connection]:
+    """Yield an in-memory database with the D1 schema the Worker writes to."""
     db = sqlite3.connect(":memory:")
-    db.executescript((_TELEMETRY / "migrations" / "0001_events.sql").read_text(encoding="utf-8"))
-    return db
+    try:
+        db.executescript(
+            (_TELEMETRY / "migrations" / "0001_events.sql").read_text(encoding="utf-8"),
+        )
+        yield db
+    finally:
+        db.close()
 
 
 def test_a_v2_row_is_rebuilt_from_its_columns(

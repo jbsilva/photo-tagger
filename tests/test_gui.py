@@ -2214,15 +2214,15 @@ def test_retry_failed_targets_only_failed_photos(
     window._items[str(a)].status = FAILED  # noqa: SLF001
     window._items[str(b)].status = READY  # noqa: SLF001
 
-    captured: list[list[Path]] = []
+    captured: list[tuple[list[Path], str]] = []
     monkeypatch.setattr(
         window,
         "_run_generation",
-        lambda items: captured.append([i.path for i in items]),
+        lambda items, **kwargs: captured.append(([i.path for i in items], kwargs["trigger"])),
     )
     window._retry_failed()  # noqa: SLF001
 
-    assert captured == [[a]]
+    assert captured == [([a], "retry")]
 
 
 def test_retry_failed_with_nothing_failed_nags(window: gui.MainWindow, tmp_path: Path) -> None:
@@ -3337,28 +3337,25 @@ def test_close_flushes_telemetry_beacon(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    Closing the window must emit the beacon with block=True.
+    Closing the window sends the session beacon and waits for it.
 
-    The process exits right after closeEvent; a non-blocking send would ride a daemon thread that
-    dies with the process, so the GUI beacon would be silently lost on every run.
+    The process exits right after closeEvent; a beacon still on its daemon thread would die with the
+    process, so the GUI beacon would be silently lost on every run.
     """
-    calls: list[dict[str, object]] = []
+    sent: list[object] = []
+    flushed: list[list[object]] = []
 
-    def fake_emit(
-        run: telemetry.RunInfo,
-        *,
-        enabled: bool,
-        opted_in: bool = False,
-        block: bool = False,
-    ) -> None:
-        calls.append({"run": run, "enabled": enabled, "opted_in": opted_in, "block": block})
+    def fake_emit(event: object, **_kwargs: object) -> object:
+        sent.append(event)
+        return f"thread for {type(event).__name__}"
 
     monkeypatch.setattr(gui.telemetry, "emit", fake_emit)
+    monkeypatch.setattr(gui.telemetry, "flush", lambda threads: flushed.append(list(threads)))
     window.close()
 
-    assert len(calls) == 1
-    assert calls[0]["block"] is True
-    assert calls[0]["run"].interface == "gui"
+    assert [type(event) for event in sent] == [telemetry.SessionInfo]
+    assert sent[0].interface == "gui"  # type: ignore[attr-defined]
+    assert flushed == [[None, "thread for SessionInfo"]], "close waits for what it sent"
 
 
 def test_close_beacon_reports_session_tagged_count_and_fields(
@@ -3366,8 +3363,8 @@ def test_close_beacon_reports_session_tagged_count_and_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The beacon reports the session's generated-photo count, language, and file types."""
-    runs: list[telemetry.RunInfo] = []
+    """The session beacon reports the generated-photo count and both languages."""
+    runs: list[telemetry.SessionInfo] = []
     monkeypatch.setattr(gui.telemetry, "emit", lambda run, **_: runs.append(run))
     monkeypatch.setattr(gui.i18n, "current_language", lambda: "pt_BR")
 
@@ -3391,8 +3388,7 @@ def test_close_beacon_reports_session_tagged_count_and_fields(
     window.close()
 
     assert len(runs) == 1
-    assert runs[0].batch_size == 2  # noqa: PLR2004 - two distinct photos generated this session
-    assert runs[0].file_types == "jpg"
+    assert runs[0].photos_generated == 2  # noqa: PLR2004 - two distinct photos this session
     assert runs[0].output_language == "German"
     assert runs[0].ui_language == "pt_BR"
 
@@ -6817,3 +6813,171 @@ def test_remove_waits_for_the_run_in_flight(
     assert str(img) in window._items  # noqa: SLF001
     assert "Cancel the run in flight" in window._status.text()  # noqa: SLF001
     window._pending_pass = None  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# usage telemetry: runs, sessions, features
+# ---------------------------------------------------------------------------
+
+
+def _capture_beacons(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Record every event the window hands to telemetry.emit."""
+    sent: list[object] = []
+    monkeypatch.setattr(gui.telemetry, "emit", lambda event, **_k: sent.append(event))
+    return sent
+
+
+def _drain_generation(window: gui.MainWindow, timeout: float = 10.0) -> None:
+    """Pump the event loop until the background generation finishes (or fail on the deadline)."""
+    deadline = time.monotonic() + timeout
+    while window._thread is not None:  # noqa: SLF001
+        assert time.monotonic() < deadline, "the background generation never finished"
+        QApplication.processEvents()
+
+
+def test_a_generation_sends_one_run_beacon_when_it_ends(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generate on two photos: one run beacon at the end, with its trigger and its counts."""
+    sent = _capture_beacons(monkeypatch)
+    _stub_generation(monkeypatch)
+    a = _jpeg(tmp_path / "a.jpg")
+    b = _jpeg(tmp_path / "b.jpg")
+    _add_dir(window, {"a": a, "b": b})
+    window._items[str(a)].hint = "The bird is an eagle"  # noqa: SLF001
+
+    window._generate()  # noqa: SLF001
+    _drain_generation(window)
+
+    runs = [event for event in sent if isinstance(event, telemetry.RunInfo)]
+    assert len(runs) == 1
+    run = runs[0]
+    assert (run.job, run.trigger, run.batch_size, run.success_count) == ("generate", "batch", 2, 2)
+    assert run.outcome == telemetry.OUTCOME_OK
+    assert run.gui is not None
+    assert run.gui.hinted == 1
+    assert run.settings is not None
+    assert run.settings.cache is True
+    assert window._usage.features["generate"] == 1  # noqa: SLF001
+
+
+def test_a_batch_save_counts_what_was_changed_by_hand(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Save Selected is a run of its own, and its review counts the edited title."""
+    sent = _capture_beacons(monkeypatch)
+    a = _jpeg(tmp_path / "a.jpg")
+    _stub_reads(monkeypatch, keywords=[])
+    _stub_save_helper(monkeypatch)
+    monkeypatch.setattr(metadata, "write_metadata", lambda *_a, **_k: True)
+    _add_dir(window, {"a": a})
+    window._on_file_done(  # noqa: SLF001
+        Proposal(
+            path=a,
+            existing_title=None,
+            existing_description=None,
+            existing_keywords=KeywordSet(),
+            title="Eagle",
+            description="An eagle.",
+            keywords=["Eagle"],
+        ),
+    )
+    window._items[str(a)].title = "Bald Eagle"  # noqa: SLF001 - the user's own correction
+
+    window._save_selected()  # noqa: SLF001
+    _drain_save(window)
+
+    runs = [event for event in sent if isinstance(event, telemetry.RunInfo)]
+    assert [run.job for run in runs] == ["save"]
+    assert runs[0].review is not None
+    assert (runs[0].review.saved, runs[0].review.edited_title) == (1, 1)
+
+
+def test_closing_mid_run_reports_the_run_cancelled_and_then_the_session(
+    window: gui.MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A window closed while a run is open sends that run as cancelled before the session."""
+    sent: list[object] = []
+    monkeypatch.setattr(gui.telemetry, "emit", lambda event, **_k: sent.append(event) or event)
+    flushed: list[list[object]] = []
+    monkeypatch.setattr(gui.telemetry, "flush", lambda threads: flushed.append(list(threads)))
+    a = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": a})
+    window._start_run("generate", "batch", [window._items[str(a)]])  # noqa: SLF001
+
+    window.close()
+
+    assert [type(event) for event in sent] == [telemetry.RunInfo, telemetry.SessionInfo]
+    assert sent[0].outcome == telemetry.OUTCOME_CANCELLED  # type: ignore[attr-defined]
+    assert flushed == [sent]
+
+
+def test_the_launch_beacon_describes_the_screen(
+    window: gui.MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The window opening reports its startup time, settings, and display facts."""
+    sent = _capture_beacons(monkeypatch)
+    window.report_launch(1.25)
+    launch = sent[0]
+    assert isinstance(launch, telemetry.LaunchInfo)
+    assert launch.startup_seconds == 1.25  # noqa: PLR2004 - what was passed
+    assert launch.display is not None
+    assert launch.display.qt_version
+    assert "x" in launch.display.screen
+    assert launch.settings is not None
+
+
+def test_features_are_counted_where_they_are_used(window: gui.MainWindow, tmp_path: Path) -> None:
+    """Using a feature counts it, and counts as time in use."""
+    _add_dir(window, {"a": _jpeg(tmp_path / "a.jpg")})
+    window._set_all_checked(checked=False)  # noqa: SLF001
+    window._invert_checked()  # noqa: SLF001
+    assert window._usage.features["select"] == 2  # noqa: SLF001, PLR2004 - two uses
+    assert window._usage.clock.split(time.monotonic() + 1).engaged > 0  # noqa: SLF001
+
+
+def test_keyboard_input_on_the_list_counts_as_time_in_use(window: gui.MainWindow) -> None:
+    """A key press in the photo list reaches the activity clock through the input watcher."""
+    from PySide6.QtCore import QEvent  # noqa: PLC0415 - the GUI tests import Qt lazily
+    from PySide6.QtGui import QKeyEvent  # noqa: PLC0415
+
+    before = window._usage.clock.split(time.monotonic()).engaged  # noqa: SLF001
+    QApplication.sendEvent(
+        window._tree,  # noqa: SLF001
+        QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier),
+    )
+    after = window._usage.clock.split(time.monotonic() + 1).engaged  # noqa: SLF001
+    assert after > before
+
+
+def test_harmonized_keywords_do_not_count_as_edits(
+    window: gui.MainWindow,
+    tmp_path: Path,
+) -> None:
+    """Shoot harmonization rewrites the proposal itself, so a save does not see a manual edit."""
+    a = _jpeg(tmp_path / "a.jpg")
+    _add_dir(window, {"a": a})
+    window._on_file_done(  # noqa: SLF001
+        Proposal(
+            path=a,
+            existing_title=None,
+            existing_description=None,
+            existing_keywords=KeywordSet(),
+            title="T",
+            description="D",
+            keywords=["Ospreys"],
+        ),
+    )
+    window._on_harmonize_done(  # noqa: SLF001
+        gui.HarmonizeResult(keywords={str(a): ["Osprey"]}, sessions=1),
+    )
+    item = window._items[str(a)]  # noqa: SLF001
+    assert item.keywords == ["Osprey"]
+    assert item.proposed_keywords == ["Osprey"]

@@ -2468,3 +2468,24 @@ def test_telemetry_toggle_note_explains_what_the_environment_decided() -> None:
 def test_telemetry_toggle_note_stays_quiet_without_do_not_track(reason: str) -> None:
     """With DO_NOT_TRACK unset, an opt-in overrules nothing, so there is nothing to explain."""
     assert telemetry_toggle_note(reason, do_not_track=False) == ""
+
+
+def test_apply_proposal_records_the_proposal_it_showed(tmp_path: Path) -> None:
+    """The first-shown proposal, its time, and its hint are kept to count later edits against."""
+    item = PhotoItem(path=tmp_path / "a.jpg")
+    proposal = Proposal(
+        path=item.path,
+        existing_title=None,
+        existing_description=None,
+        existing_keywords=KeywordSet(),
+        title="Heron",
+        description="A heron.",
+        keywords=["heron"],
+        hinted=True,
+    )
+    apply_proposal(item, proposal, now=12.5)
+    assert (item.proposed_title, item.proposed_description) == ("Heron", "A heron.")
+    assert item.proposed_keywords == item.keywords
+    assert (item.proposed_at, item.hinted) == (12.5, True)
+    item.title = "Grey Heron"
+    assert item.proposed_title == "Heron", "editing the field leaves the baseline alone"

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from loguru import logger
+from PySide6 import __version__ as pyside_version
 from PySide6.QtCore import (
     QEvent,
     QLibraryInfo,
@@ -49,6 +50,7 @@ from PySide6.QtCore import (
     QTranslator,
     QUrl,
     Signal,
+    qVersion,
 )
 
 # QCloseEvent, QDragEnterEvent and QDropEvent are used only in annotations, but they are imported
@@ -122,6 +124,7 @@ from photo_tagger.cache import (
 )
 from photo_tagger.cli_options import (
     OutputConfig,
+    known_config_keys,
     load_defaults,
     resolve_notify,
     resolve_sidecar_mode,
@@ -139,7 +142,12 @@ from photo_tagger.config import (
     SidecarMode,
     build_repair_prompt,
 )
-from photo_tagger.config_file import find_config_file, load_config, user_config_path
+from photo_tagger.config_file import (
+    config_file_kind,
+    find_config_file,
+    load_config,
+    user_config_path,
+)
 from photo_tagger.csv_report import write_report
 from photo_tagger.diagnostics import CheckResult, run_checks
 from photo_tagger.discovery import load_skip_list, skip_list_matches
@@ -173,6 +181,7 @@ from photo_tagger.gui_state import (
     PENDING,
     READY,
     REMOVED,
+    RERUN_FAILED,
     RERUN_MIXED_SCRIPT,
     SAVED,
     SELECT_CHECK,
@@ -275,6 +284,24 @@ from photo_tagger.gui_state import (
     wrap_tooltip,
     zoom_label,
 )
+from photo_tagger.gui_usage import (
+    GUI_BASELINE,
+    GUI_GENERATE_RETRIES,
+    JOB_GENERATE,
+    JOB_SAVE,
+    TRIGGER_BATCH,
+    TRIGGER_HINT,
+    TRIGGER_RETRY,
+    TRIGGER_SINGLE,
+    TRIGGER_WATCH,
+    GuiUsage,
+    RunContext,
+    RunEnd,
+    RunTally,
+    WindowFacts,
+    batch_outcome,
+    window_settings,
+)
 from photo_tagger.i18n import _, gettext_noop, ngettext
 from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.logging_setup import setup_logging
@@ -304,8 +331,10 @@ from photo_tagger.pacing import (
     PacingPlan,
     build_pacer,
 )
+from photo_tagger.pipeline import FAILURE_OTHER, classify_failure
 from photo_tagger.providers import PROVIDER_LABELS, PROVIDER_NAMES, ProviderName, get_backend
 from photo_tagger.script_guard import find_in_result
+from photo_tagger.telemetry_facts import changed_settings, config_key_names, env_var_names
 from photo_tagger.undo import (
     UndoError,
     list_journals,
@@ -359,7 +388,6 @@ _PREVIEW_MAX = 640
 _VIEWER_MAX = 3200
 _THUMB_MAX = 200  # pixels for the grid thumbnails the model never sees
 _THUMB_SIZE = 160  # icon box in the grid
-_GENERATE_RETRIES = 2
 # How long a run that writes by itself waits before re-running the photos it failed on. The CLI
 # pauses before its own retry pass for the same reason (`_RETRY_PASS_DELAY_SECONDS` in pipeline):
 # a first-pass failure usually means the model server is overloaded or mid-restart, and asking
@@ -826,7 +854,7 @@ class GenerateWorker(QObject):
 
     started = Signal(int)
     file_done = Signal(object)  # Proposal
-    file_failed = Signal(str, str)  # path, error message
+    file_failed = Signal(str, str, str)  # path, error message, failure kind
     resting = Signal(str)  # status line for a pacing rest
     finished = Signal()
 
@@ -887,6 +915,12 @@ class GenerateWorker(QObject):
         self._rest_announced = False
         self._stop = False
 
+    def rest_totals(self) -> tuple[float, int]:
+        """Return the seconds this run rested and how many rests it took."""
+        if self._pacer is None:
+            return 0.0, 0
+        return self._pacer.rested_seconds, self._pacer.rests_taken
+
     def stop(self) -> None:
         """
         Ask the loop to stop before starting the next photo.
@@ -935,7 +969,7 @@ class GenerateWorker(QObject):
                 self._model,
                 api_base_url=self._api_base_url,
                 api_key=self._api_key,
-                retries=_GENERATE_RETRIES,
+                retries=GUI_GENERATE_RETRIES,
                 output_language=self._output_language,
             )
         except Exception as exc:  # noqa: BLE001
@@ -944,7 +978,7 @@ class GenerateWorker(QObject):
             # disabled, photos stuck at "working...") for the rest of the session.
             logger.exception("gui_agent_construction_failed", error=str(exc))
             for path in self._paths:
-                self.file_failed.emit(str(path), str(exc))
+                self.file_failed.emit(str(path), str(exc), classify_failure(exc))
             self.finished.emit()
             return
 
@@ -964,7 +998,7 @@ class GenerateWorker(QObject):
                 except Exception as exc:  # noqa: BLE001
                     # One photo's failure must not stop the rest of the batch.
                     logger.exception("gui_generate_failed", file=path.name, error=str(exc))
-                    self.file_failed.emit(str(path), str(exc))
+                    self.file_failed.emit(str(path), str(exc), classify_failure(exc))
                 else:
                     self.file_done.emit(proposal)
         finally:
@@ -995,7 +1029,7 @@ class GenerateWorker(QObject):
         jpeg: BinaryContent,
         *,
         file_name: str,
-    ) -> InferenceResult:
+    ) -> tuple[InferenceResult, bool]:
         """
         Ask the model once more when its answer mixed writing systems, if the setting is on.
 
@@ -1003,13 +1037,13 @@ class GenerateWorker(QObject):
         because the two call the agent differently (no sampling knobs here, and no batch usage to
         fold into). A failed repair keeps the original answer: the note over the fields still marks
         it, and a proposal you can edit beats no proposal. So does a repair that comes back mixed
-        again.
+        again. The flag says whether a repair ran.
         """
         if not self._repair_language:
-            return inference
+            return inference, False
         finding = find_in_result(inference)
         if finding is None:
-            return inference
+            return inference, False
         logger.info("gui_foreign_script_repair_started", file=file_name, terms=finding.terms)
         prompt = build_repair_prompt(
             title=inference.title,
@@ -1022,11 +1056,11 @@ class GenerateWorker(QObject):
             repaired = analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
         except Exception as exc:  # noqa: BLE001 - a failed repair must not cost the photo its proposal.
             logger.warning("gui_foreign_script_repair_failed", file=file_name, error=str(exc))
-            return inference
+            return inference, False
         # Mixed again: the original stays, as in the CLI, and the proposal counts both calls.
         if find_in_result(repaired) is not None:
-            return inference.with_cost_of(repaired)
-        return repaired.with_cost_of(inference)
+            return inference.with_cost_of(repaired), True
+        return repaired.with_cost_of(inference), True
 
     def _generate_one(self, agent: object, path: Path, cache: InferenceCache | None) -> Proposal:
         """Read existing metadata, run the model (or hit the cache), and assemble a proposal."""
@@ -1068,12 +1102,13 @@ class GenerateWorker(QObject):
             else safe_cache_get(cache, content_key, file_name=path.name)
         )
         inference = cached
+        repaired = False
         if inference is None:
             jpeg = prepare_image_for_agent(path, max_size=self._jpeg_dimensions)
             inference = analyze_image_with_ai(image_bytes=jpeg, agent=agent, user_prompt=prompt)
             # Before the cache write, as in the CLI pipeline, so what a rerun replays is the
             # repaired answer and the extra call is paid once.
-            inference = self._repair_one(inference, agent, jpeg, file_name=path.name)
+            inference, repaired = self._repair_one(inference, agent, jpeg, file_name=path.name)
             if not skip_cache:
                 safe_cache_put(cache, content_key, inference, file_name=path.name)
         else:
@@ -1120,6 +1155,8 @@ class GenerateWorker(QObject):
             vocabulary_mapped=snapped.mapped,
             vocabulary_dropped=snapped.dropped,
             foreign_terms=list(finding.terms) if finding is not None else [],
+            hinted=bool(hint),
+            repaired=repaired,
         )
 
 
@@ -1884,11 +1921,11 @@ class MainWindow(QMainWindow):
         # UI language above; persisted under [inference] output_language, which the CLI shares.
         self._output_language = self._defaults.inference.output_language
         self._cache_file = self._defaults.artifacts.cache_file or _DEFAULT_CACHE_FILE
-        # Wall-clock start of this GUI session, reported as the run duration on close.
-        self._session_start = time.monotonic()
-        # Keys of photos generated this session, for the telemetry batch size. Tracked cumulatively
-        # (not counted off the list at close) so clearing or loading another folder never loses it.
-        self._session_tagged: set[str] = set()
+        # What this window does, for its telemetry: runs, saves, features, busy and idle time.
+        self._usage = GuiUsage(time.monotonic())
+        # The photos of the run in flight, kept apart from _generated_keys, which a chained save
+        # empties before the run is over.
+        self._run_keys: list[str] = []
         # Telemetry on/off: a persisted Settings-menu choice wins over the config-file default, and
         # a toggle turned on by hand is an opt-in that overrules DO_NOT_TRACK.
         self._telemetry_enabled, self._telemetry_opted_in = telemetry.gui_choice(
@@ -1937,6 +1974,7 @@ class MainWindow(QMainWindow):
         self._refresh_save_tooltips()
         self._show_empty()
         self._load_vocabulary(self._vocabulary_path, announce=False)
+        self._watch_activity()
 
     def _build_dialogs(self) -> None:
         """
@@ -2152,7 +2190,7 @@ class MainWindow(QMainWindow):
         help_menu = self._help_menu = menubar.addMenu(_("Help"))
         help_menu.addAction(
             _("Documentation"),
-            lambda: QDesktopServices.openUrl(QUrl(_DOCS_URL)),
+            lambda: (self._count("docs"), QDesktopServices.openUrl(QUrl(_DOCS_URL))),
         )
         help_menu.addSeparator()
         help_menu.addAction(_("Test Connection"), self._test_connection)
@@ -2193,6 +2231,7 @@ class MainWindow(QMainWindow):
                 cache_file=self._cache_file,
             ),
         )
+        self._cache_action.toggled.connect(lambda _on: self._count("cache_toggle"))
         settings_menu.addAction(self._cache_action)
         self._telemetry_action = QAction(_("Send Anonymous Telemetry"), self)
         self._telemetry_action.setCheckable(True)
@@ -2208,6 +2247,7 @@ class MainWindow(QMainWindow):
                 "default: the saves worth undoing are the ones nobody planned to.",
             ),
         )
+        self._undo_log_action.toggled.connect(lambda _on: self._count("undo_log_toggle"))
         settings_menu.addAction(self._undo_log_action)
         self._build_repair_action(settings_menu)
         self._build_notify_actions(settings_menu)
@@ -2276,6 +2316,7 @@ class MainWindow(QMainWindow):
 
     def _on_repair_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
         """Record the repair choice so the next generate run and a settings save both see it."""
+        self._count("repair_toggle")
         self._repair_language = enabled
 
     def _build_notify_actions(self, settings_menu: QMenu) -> None:
@@ -2303,6 +2344,7 @@ class MainWindow(QMainWindow):
 
     def _on_notify_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
         """Follow the notification toggle with its sound sub-toggle: no notification, no sound."""
+        self._count("notify_toggle")
         self._notify_enabled = enabled
         self._notify_sound_action.setEnabled(enabled)
 
@@ -2383,6 +2425,7 @@ class MainWindow(QMainWindow):
         """Persist the UI language choice into the config file; applied on the next launch."""
         if code == self._language:
             return
+        self._count("ui_language")
         self._language = code
         target = self._config_target()
         try:
@@ -2471,6 +2514,7 @@ class MainWindow(QMainWindow):
             # clicked action must not end up unchecked.
             self._check_output_language_action(normalized)
             return
+        self._count("output_language")
         self._output_language = normalized
         self._check_output_language_action(normalized)
         target = self._config_target()
@@ -2510,9 +2554,10 @@ class MainWindow(QMainWindow):
             self._telemetry_action.setChecked(consent.send)
         self._telemetry_action.setEnabled(consent.reason != telemetry.CONSENT_ENV_OPT_OUT)
         text = tooltip(
-            "Anonymous usage stats (model, batch size, OS, CPU/GPU model, RAM, timing) and "
-            "crash reports (error type and code location only). No photos, error messages, "
-            "or personal data.",
+            "Anonymous usage stats (the settings and features you use, model, batch size, timing, "
+            "OS, CPU/GPU, RAM, battery, screen) and crash reports (error type and code location "
+            "only). No "
+            "photos, text you type, error messages, or personal data.",
         )
         if note := telemetry_toggle_note(consent.reason, do_not_track=telemetry.do_not_track()):
             text = f"{text}\n\n{wrap_tooltip(note)}"
@@ -2580,6 +2625,7 @@ class MainWindow(QMainWindow):
         An existing file is merged, not replaced: only the GUI-managed keys change, and comments,
         ordering, and every other setting survive. A missing file is created from a template.
         """
+        self._count("save_defaults")
         target = self._config_target()
         values = self._current_config_values()
         try:
@@ -2600,6 +2646,7 @@ class MainWindow(QMainWindow):
 
     def _edit_config(self) -> None:
         """Open the config file in the user's editor, creating it first if it does not exist."""
+        self._count("edit_config")
         target = self._config_target()
         if not target.exists():
             self._save_config()
@@ -2608,6 +2655,7 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         """Show a small About dialog with the version and project link."""
+        self._count("about")
         QMessageBox.about(
             self,
             _("About Photo Tagger"),
@@ -2646,7 +2694,9 @@ class MainWindow(QMainWindow):
         self._connection_dialog = self._build_connection_dialog()
         connection = QPushButton(_("Connection..."))
         connection.setToolTip(tooltip("Server URL, API key, and a connection test."))
-        connection.clicked.connect(self._connection_dialog.exec)
+        connection.clicked.connect(
+            lambda: (self._count("connection"), self._connection_dialog.exec()),
+        )
 
         row = QHBoxLayout()
         row.addWidget(QLabel(_("Provider")))
@@ -2882,6 +2932,8 @@ class MainWindow(QMainWindow):
 
     def _apply_search(self) -> None:
         """Redraw the list through the current search text."""
+        if self._search.text().strip():
+            self._count("search")
         self._rebuild_tree()
         self._update_status()
 
@@ -2942,6 +2994,7 @@ class MainWindow(QMainWindow):
 
     def _on_view_mode_changed(self, _flat: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
         """Rebuild the list the other way round; the rebuild restores what was open."""
+        self._count("view_mode")
         self._refresh_view_button()
         self._rebuild_tree()
 
@@ -3072,6 +3125,7 @@ class MainWindow(QMainWindow):
 
     def _select_by_pattern(self, verb: str) -> None:
         """Ask for a name pattern and apply *verb* to the photos it matches."""
+        self._count("select")
         if self._warn_if_no_photos():
             return
         pattern, accepted = QInputDialog.getText(
@@ -3098,6 +3152,7 @@ class MainWindow(QMainWindow):
         phrase: str,
     ) -> None:
         """Apply one bulk selection action and report what it did; *phrase* names the criterion."""
+        self._count("select")
         if self._warn_if_no_photos():
             return
         result = apply_selection(self._items.values(), matches, verb)
@@ -3123,6 +3178,7 @@ class MainWindow(QMainWindow):
 
     def _set_all_checked(self, *, checked: bool) -> None:
         """Check or uncheck every photo at once."""
+        self._count("select")
         if self._warn_if_no_photos():
             return
         for item in self._items.values():
@@ -3132,6 +3188,7 @@ class MainWindow(QMainWindow):
 
     def _invert_checked(self) -> None:
         """Flip every photo's checkbox: checked becomes unchecked and vice versa."""
+        self._count("select")
         if self._warn_if_no_photos():
             return
         for item in self._items.values():
@@ -3164,11 +3221,15 @@ class MainWindow(QMainWindow):
         item = self._items.get(path)
         if not bool(tree_item.data(0, _IS_DIR_ROLE)) and item is not None:
             label = _("Retry Generation") if item.status == FAILED else _("Generate")
-            generate = menu.addAction(label, lambda: self._run_generation([item]))
+            trigger = TRIGGER_RETRY if item.status == FAILED else TRIGGER_SINGLE
+            generate = menu.addAction(
+                label,
+                lambda: self._run_generation([item], trigger=trigger),
+            )
             generate.setEnabled(self._thread is None)
             fresh = menu.addAction(
                 _("Generate (Skip Cache)"),
-                lambda: self._run_generation([item], use_cache=False),
+                lambda: self._run_generation([item], use_cache=False, trigger=TRIGGER_SINGLE),
             )
             fresh.setToolTip(
                 tooltip("Call the model even when a cached result exists for this photo."),
@@ -3316,6 +3377,7 @@ class MainWindow(QMainWindow):
 
     def _reveal(self, path: Path) -> None:
         """Show *path* selected in the OS file browser, or open its folder where unsupported."""
+        self._count("reveal")
         argv = reveal_command(path, sys.platform)
         if argv is not None:
             try:
@@ -3582,16 +3644,19 @@ class MainWindow(QMainWindow):
 
     def _on_grid_filter_changed(self) -> None:
         """Re-filter the visible grid when the Show choice changes."""
+        self._count("grid_filter")
         self._grid_filter = self._grid_filter_combo.currentData()
         self._resort_grid()
 
     def _on_grid_sort_changed(self) -> None:
         """Re-sort the visible grid when the sort field changes."""
+        self._count("grid_sort")
         self._grid_sort = self._grid_sort_combo.currentData()
         self._resort_grid()
 
     def _on_grid_sort_dir_toggled(self, descending: bool) -> None:  # noqa: FBT001 - Qt toggled slot
         """Flip the grid between ascending and descending, updating the toggle's arrow."""
+        self._count("grid_sort")
         self._grid_sort_desc = descending
         self._grid_sort_dir.setText("↓" if descending else "↑")
         self._grid_sort_dir.setToolTip(
@@ -3774,6 +3839,8 @@ class MainWindow(QMainWindow):
 
     def _on_details_toggled(self, expanded: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
         """Expand or collapse the keyword-change details under the disclosure arrow."""
+        if expanded:
+            self._count("keyword_changes")
         arrow = Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         self._details_toggle.setArrowType(arrow)
         self._details_panel.setVisible(expanded)
@@ -3849,6 +3916,7 @@ class MainWindow(QMainWindow):
             *self._sidecar_actions.values(),
         ):
             action.toggled.connect(self._refresh_save_tooltips)
+            action.toggled.connect(lambda _on: self._count("save_options"))
         return menu
 
     def _build_overwrite_menu(self, output: OutputConfig) -> QMenu:
@@ -3992,6 +4060,7 @@ class MainWindow(QMainWindow):
 
     def _on_autosave_toggled(self, enabled: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
         """Follow the toggle: the buttons now promise a write, and must be able to make one."""
+        self._count("autosave")
         self._refresh_generate_labels()
         if enabled and not self._write_fields_chosen():
             self._status.setText(_(_PICK_A_FIELD))
@@ -4044,8 +4113,7 @@ class MainWindow(QMainWindow):
             ),
         )
         hint_label.setToolTip(self._hint.toolTip())
-        # returnPressed passes no argument, so the keyword-only default (use_cache=True) applies.
-        self._hint.returnPressed.connect(self._generate_current)
+        self._hint.returnPressed.connect(lambda: self._generate_current(trigger=TRIGGER_HINT))
         row.addWidget(hint_label)
         row.addWidget(self._hint, stretch=1)
         self._generate_one_button = QToolButton()
@@ -4176,6 +4244,7 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 - Qt override.
         """Expand dropped files/folders and add the resulting photos to the tree."""
+        self._count("drop")
         dropped = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.toLocalFile()]
         if dropped:
             self._add_inputs(dropped)
@@ -4183,12 +4252,14 @@ class MainWindow(QMainWindow):
     # --- adding, removing, listing photos --------------------------------------------------
 
     def _choose_files(self) -> None:
+        self._count("add_photos")
         filters = file_dialog_name_filters(self._extensions.text().strip())
         files, _filter = QFileDialog.getOpenFileNames(self, _("Add Photos"), "", ";;".join(filters))
         if files:
             self._add_inputs([Path(f) for f in files])
 
     def _choose_folder(self) -> None:
+        self._count("add_folder")
         folder = QFileDialog.getExistingDirectory(self, _("Add a folder of photos"))
         if folder:
             self._add_inputs([Path(folder)])
@@ -4206,6 +4277,7 @@ class MainWindow(QMainWindow):
             return []
         for path in fresh:
             self._items[str(path)] = PhotoItem(path=path)
+        self._usage.photos_added += len(fresh)
         self._rebuild_tree()
         self._update_status()
         self._start_metadata_scan()
@@ -4213,6 +4285,7 @@ class MainWindow(QMainWindow):
 
     def _remove_selected(self) -> None:
         """Remove every selected row (files, and folders with their contents) from the list."""
+        self._count("remove")
         removed: list[str] = []
         for tree_item in self._tree.selectedItems():
             path = tree_item.data(0, _PATH_ROLE)
@@ -4227,6 +4300,7 @@ class MainWindow(QMainWindow):
 
     def _remove_by_check(self, *, checked: bool) -> None:
         """Remove every photo whose checkbox matches *checked*, hidden by the search or not."""
+        self._count("remove")
         keys = keys_by_check(self._items.values(), checked=checked)
         if not keys:
             self._status.setText(
@@ -4288,6 +4362,7 @@ class MainWindow(QMainWindow):
 
     def _clear(self) -> None:
         """Empty the list, unless a run is still working through it."""
+        self._count("clear_list")
         if self._busy():
             # A save writes from its own job list, so clearing under it would keep writing photos
             # the window no longer knows about and then report every one of them as unsaved.
@@ -4325,6 +4400,7 @@ class MainWindow(QMainWindow):
         criterion is parked and applied the moment it does: reading a few thousand photos off a
         network share takes minutes, and doing it in the click handler froze the whole window.
         """
+        self._count("uncheck_tagged")
         if not self._items:
             self._status.setText(_("Add photos before deselecting."))
             return
@@ -4362,6 +4438,7 @@ class MainWindow(QMainWindow):
 
     def _deselect_from_file(self) -> None:
         """Pick a skip-list file and uncheck the photos it names."""
+        self._count("skip_file")
         if not self._items:
             self._status.setText(_("Add photos before deselecting."))
             return
@@ -4398,6 +4475,7 @@ class MainWindow(QMainWindow):
 
     def _export_csv(self) -> None:
         """Write a CSV report of every photo in the list to a chosen path."""
+        self._count("export_csv")
         if not self._items:
             self._status.setText(_("Add photos before exporting a CSV."))
             return
@@ -4609,10 +4687,12 @@ class MainWindow(QMainWindow):
 
     def _go_back(self) -> None:
         """Return to the place shown before this one."""
+        self._count("go_back")
         self._walk_history(self._history.back)
 
     def _go_forward(self) -> None:
         """Undo a Back: return to the place it stepped away from."""
+        self._count("go_forward")
         self._walk_history(self._history.forward)
 
     def _walk_history(self, step: Callable[[], Location | None]) -> None:
@@ -4630,6 +4710,7 @@ class MainWindow(QMainWindow):
 
     def _go_up(self) -> None:
         """Show the grid of the folder holding what is open, the way Finder goes up a level."""
+        self._count("go_up")
         location = self._history.current
         folder = self._enclosing_folder(location) if location is not None else None
         if folder is None:
@@ -4731,6 +4812,8 @@ class MainWindow(QMainWindow):
     # --- folder thumbnail grid -------------------------------------------------------------
 
     def _show_grid(self, folder: Path) -> None:
+        if folder != self._grid_folder:  # a refresh of the grid on show is not a new visit
+            self._count("grid")
         self._stop_thumbs()
         self._grid_folder = folder
         self._grid.clear()
@@ -4978,6 +5061,7 @@ class MainWindow(QMainWindow):
 
     def _open_viewer(self) -> None:
         """Open the photo on show in a window of its own, big enough to zoom into."""
+        self._count("viewer")
         item = self._current
         if item is None:
             return
@@ -5201,6 +5285,7 @@ class MainWindow(QMainWindow):
         self._refresh_status_cell(item)
 
     def _save_current(self) -> None:
+        self._count("save_one")
         if self._current is None or self._busy():
             return
         if not self._write_fields_chosen():
@@ -5208,6 +5293,7 @@ class MainWindow(QMainWindow):
             return
         self._commit_current()
         ok = self._write_item(self._current)
+        self._usage.saved_single(self._current, ok=ok, now=time.monotonic())
         name = self._current.path.name
         self._status.setText(
             _("Saved {name}.").format(name=name)
@@ -5218,6 +5304,7 @@ class MainWindow(QMainWindow):
         self._update_status()
 
     def _save_selected(self) -> None:
+        self._count("save")
         if not self._write_fields_chosen():
             self._status.setText(_(_PICK_A_FIELD))
             return
@@ -5239,6 +5326,11 @@ class MainWindow(QMainWindow):
         """
         if self._busy():
             return
+        if self._usage.run is None:
+            self._start_run(JOB_SAVE, TRIGGER_BATCH, items)
+        else:
+            # The save a finished generation chains: part of that run.
+            self._usage.run.save_begun(time.monotonic())
         options = self._save_options()
         jobs = [build_save_job(item, options) for item in items]
         self._save_jobs = {str(job.path): job for job in jobs}
@@ -5267,6 +5359,7 @@ class MainWindow(QMainWindow):
         job = self._save_jobs.get(path)
         if item is None or job is None:
             return
+        self._usage.saved(item, ok=ok, now=time.monotonic())
         self._apply_write_result(item, job, ok=ok)
         self._saved_ok += int(ok)
         self._advance_progress()
@@ -5279,6 +5372,8 @@ class MainWindow(QMainWindow):
             # on a window that is going away.
             return
         total = len(self._save_jobs)
+        if self._usage.run is not None:
+            self._usage.run.save_ended(time.monotonic())
         # A cancelled save leaves the un-written photos marked WORKING; free them so they look
         # ready-again rather than stuck.
         self._reset_working()
@@ -5317,6 +5412,7 @@ class MainWindow(QMainWindow):
             # exactly what a chained save looks for. Chaining on would rewrite the photos the
             # user stopped it from writing. The watch itself keeps running: whatever lands next
             # still queues normally.
+            self._finish_run(telemetry.OUTCOME_CANCELLED)
             return
         # Same as a finished generation: the alert is for the run nobody was watching.
         self._alert_run_finished(self._status.text())
@@ -5337,39 +5433,45 @@ class MainWindow(QMainWindow):
     # --- generation ------------------------------------------------------------------------
 
     def _generate(self, *, use_cache: bool = True) -> None:
+        self._count("generate" if use_cache else "skip_cache")
         selected = [item for item in self._items.values() if item.selected]
         if not selected:
             self._status.setText(_("Check at least one photo first."))
             return
         self._run_generation(selected, use_cache=use_cache)
 
-    def _generate_current(self, *, use_cache: bool = True) -> None:
+    def _generate_current(self, *, use_cache: bool = True, trigger: str = TRIGGER_SINGLE) -> None:
+        self._count("hint_enter" if trigger == TRIGGER_HINT else "generate_one")
+        if not use_cache:
+            self._count("skip_cache")
         if self._current is None:
             self._status.setText(_("Open a photo to generate it."))
             return
-        self._run_generation([self._current], use_cache=use_cache)
+        self._run_generation([self._current], use_cache=use_cache, trigger=trigger)
 
     def _retry_failed(self) -> None:
+        self._count("retry_failed")
         failed = [item for item in self._items.values() if item.status == FAILED]
         if not failed:
             self._status.setText(_("No failed photos to retry."))
             return
-        self._run_generation(failed)
+        self._run_generation(failed, trigger=TRIGGER_RETRY)
 
     def _run_generation(
         self,
         items: list[PhotoItem],
         *,
         use_cache: bool = True,
-        extra_pass: bool = False,
+        extra_pass: str | None = None,
         refresh: bool = False,
+        trigger: str = TRIGGER_BATCH,
     ) -> None:
         if self._busy() or not items:
             return
         # Fold the open photo's visible edits (most importantly a just-typed hint) into its
         # state before the run reads it.
         self._commit_current()
-        if not extra_pass:
+        if extra_pass is None:
             # An extra pass is the same batch having another go at part of itself, so it keeps
             # the batch (and the passes still owed) the chain is working through, and adds to
             # that batch's tallies rather than reporting the closing line off its own handful.
@@ -5380,6 +5482,13 @@ class MainWindow(QMainWindow):
             self._batch_uses_cache = use_cache
             self._vocabulary_mapped = 0
             self._vocabulary_dropped = {}
+            self._start_run(JOB_GENERATE, trigger, items, use_cache=use_cache)
+        elif self._usage.run is not None:
+            self._usage.run.pass_started(
+                extra_pass,
+                len(items),
+                retry=extra_pass == RERUN_FAILED,
+            )
         for item in items:
             item.status = WORKING
             self._refresh_status_cell(item)
@@ -5432,17 +5541,19 @@ class MainWindow(QMainWindow):
             return
         # Normalizing the proposal runs the save's own merge, which must not re-capitalize a
         # catalog's terms, so the vocabulary spellings ride along.
-        apply_proposal(item, proposal, verbatim=self._verbatim_spellings())
+        apply_proposal(item, proposal, verbatim=self._verbatim_spellings(), now=time.monotonic())
         self._vocabulary_mapped += proposal.vocabulary_mapped
         record_dropped_terms(self._vocabulary_dropped, proposal.vocabulary_dropped)
-        self._session_tagged.add(str(item.path))
+        self._usage.generated(str(item.path), proposal)
         self._refresh_status_cell(item)
         self._advance_progress()
         if self._current is item:
             self._show_item(item)
         self._update_status()
 
-    def _on_file_failed(self, path: str, message: str) -> None:
+    def _on_file_failed(self, path: str, message: str, kind: str = FAILURE_OTHER) -> None:
+        if self._usage.run is not None:
+            self._usage.run.failed(path, kind)
         item = self._items.get(path)
         if item is None:
             return
@@ -5465,11 +5576,13 @@ class MainWindow(QMainWindow):
         if worker is None:
             if self._pending_pass is not None or self._harmonize_thread is not None:
                 # Between the chain's steps: nothing to stop mid-photo, so end it at the next step.
+                self._count("cancel")
                 self._chain_cancelled = True
                 self._cancel_button.setEnabled(False)
                 if self._harmonize_thread is None:
                     self._end_chain()
             return
+        self._count("cancel")
         self._cancelling = True
         worker.stop()
         self._cancel_button.setEnabled(False)
@@ -5480,6 +5593,9 @@ class MainWindow(QMainWindow):
             # closeEvent already tore the thread down; this queued signal arriving afterwards
             # must not touch widgets on a window that is going away, or tear down twice.
             return
+        if self._usage.run is not None and self._worker is not None:
+            rested, rests = self._worker.rest_totals()
+            self._usage.run.generation_ended(time.monotonic(), rested=rested, rests=rests)
         # A cancelled run leaves the un-started photos marked WORKING; free them so they look
         # queued-again rather than stuck, and report what actually got done.
         reset = self._reset_working()
@@ -5505,6 +5621,7 @@ class MainWindow(QMainWindow):
         if cancelled:
             # Same reasoning as the cancelled save: harmonizing and then saving unattended is
             # more work on the batch the user just stopped.
+            self._finish_run(telemetry.OUTCOME_CANCELLED)
             return
         self._after_generation()
 
@@ -5567,6 +5684,7 @@ class MainWindow(QMainWindow):
         self._pending_pass = None
         self._set_running(running=False)
         self._status.setText(_("Cancelled. Nothing else was generated or saved."))
+        self._finish_run(telemetry.OUTCOME_CANCELLED)
         self._continue_watch()
 
     def _batch_items(self) -> list[PhotoItem]:
@@ -5614,7 +5732,7 @@ class MainWindow(QMainWindow):
             self._run_generation(
                 targets,
                 use_cache=self._batch_uses_cache,
-                extra_pass=True,
+                extra_pass=name,
                 refresh=name == RERUN_MIXED_SCRIPT,
             )
             return
@@ -5657,6 +5775,7 @@ class MainWindow(QMainWindow):
             self._status.setText(_(_PICK_A_FIELD))
         # Nothing more is chained, so whatever the run was, it is over.
         self._set_running(running=False)
+        self._finish_run()
         self._continue_watch()
 
     def _reset_working(self) -> int:
@@ -5694,10 +5813,6 @@ class MainWindow(QMainWindow):
     def _has_failures(self) -> bool:
         """Report whether any photo is currently in the failed state."""
         return any(item.status == FAILED for item in self._items.values())
-
-    def _has_unsaved_proposals(self) -> bool:
-        """Report whether any photo has a generated proposal not yet written to disk."""
-        return any(item.has_proposal and item.status != SAVED for item in self._items.values())
 
     def _set_running(self, *, running: bool, total: int = 0) -> None:
         """Switch the window between idle and busy: buttons, progress bar, and the clock."""
@@ -5883,6 +5998,7 @@ class MainWindow(QMainWindow):
 
     def _show_keyword_rules(self) -> None:
         """Open the Keyword rules dialog on the values currently in force."""
+        self._count("keyword_rules")
         self._vocabulary_field.setText(str(self._vocabulary_path or ""))
         self._strict_box.setChecked(self._vocabulary_strict)
         self._session_gap_box.setValue(self._session_gap)
@@ -6066,6 +6182,7 @@ class MainWindow(QMainWindow):
 
     def _show_pacing(self) -> None:
         """Open the Pacing dialog; a run already in flight keeps the plan it started with."""
+        self._count("pacing")
         self._pacing_dialog.exec()
 
     def _build_copyright_dialog(self) -> QDialog:
@@ -6252,11 +6369,13 @@ class MainWindow(QMainWindow):
 
     def _show_copyright(self) -> None:
         """Open the Copyright dialog, its preview refreshed for the photo on screen."""
+        self._count("copyright")
         self._refresh_copyright()
         self._copyright_dialog.exec()
 
     def _choose_vocabulary(self) -> None:
         """Pick a keyword file and put it in force for the next generation."""
+        self._count("choose_vocabulary")
         chosen, _filter = QFileDialog.getOpenFileName(
             self._keyword_rules_dialog,
             _("Choose a vocabulary file"),
@@ -6302,16 +6421,19 @@ class MainWindow(QMainWindow):
 
     def _on_strict_toggled(self, strict: bool) -> None:  # noqa: FBT001 - Qt toggled(bool) slot.
         """Remember whether keywords outside the vocabulary are dropped."""
+        self._count("vocabulary_strict")
         self._vocabulary_strict = strict
 
     def _on_session_gap_changed(self, minutes: float) -> None:
         """Remember the idle gap that separates one shoot from the next."""
+        self._count("session_gap")
         self._session_gap = minutes
 
     # --- shoot harmonization -----------------------------------------------------------------
 
     def _harmonize_now(self) -> None:
         """Menu action: harmonize the proposals on hand, explaining when there is nothing to do."""
+        self._count("harmonize_now")
         if self._session_gap <= 0:
             self._status.setText(_("Set a session gap first: Settings > Keyword Rules."))
             return
@@ -6353,6 +6475,10 @@ class MainWindow(QMainWindow):
             item = self._items.get(key)
             if item is not None:
                 item.keywords = list(keywords)
+                # The shoot's own agreement, not a change made by hand.
+                item.proposed_keywords = list(keywords)
+        if self._usage.run is not None:
+            self._usage.run.harmonized += len(result.keywords)
         if self._current is not None and str(self._current.path) in result.keywords:
             # The open photo's keyword box is showing what harmonization just replaced.
             self._keywords.setPlainText(keywords_to_text(self._current.keywords))
@@ -6605,6 +6731,7 @@ class MainWindow(QMainWindow):
         """Read the builder's choices and run the build on a background thread."""
         if self._build_thread is not None:
             return
+        self._count("build_vocabulary")
         paths = self._item_paths() if self._build_from_photos.isChecked() else []
         # Read both optional paths first. An assignment inside the argument list below reads as a
         # puzzle, and the worker takes twelve arguments already.
@@ -6788,6 +6915,7 @@ class MainWindow(QMainWindow):
 
     def _run_undo(self, *, dry_run: bool) -> None:
         """Put back (or preview putting back) everything the selected run wrote."""
+        self._count("undo_preview" if dry_run else "undo")
         if not dry_run and self._busy():
             # A save in flight is writing the very files an undo would be reverting.
             self._undo_details.setPlainText(_("Wait for the run in progress to finish first."))
@@ -6995,6 +7123,7 @@ class MainWindow(QMainWindow):
         """Poll *settings*' folders on a background thread until the watch is stopped."""
         if self._watch_thread is not None:
             return
+        self._count("watch_start")
         self._watch_settings = settings
         self._watch_added = 0
         self._watch_pending = []
@@ -7044,7 +7173,7 @@ class MainWindow(QMainWindow):
             if (item := self._items.get(key)) is not None and item.status == PENDING
         ]
         if targets:
-            self._run_generation(targets)
+            self._run_generation(targets, trigger=TRIGGER_WATCH)
 
     def _continue_watch(self) -> None:
         """Take whatever the watch picked up while the last run was busy."""
@@ -7064,6 +7193,7 @@ class MainWindow(QMainWindow):
             # Already stopped: the worker's own finished signal arrives just after a Stop click,
             # and re-running this would overwrite whatever the status bar says by then.
             return
+        self._count("watch_stop")
         if self._watch_worker is not None:
             self._watch_worker.stop()
         self._teardown_watch_thread()
@@ -7094,6 +7224,7 @@ class MainWindow(QMainWindow):
     # --- providers and diagnostics ---------------------------------------------------------
 
     def _refresh_models(self) -> None:
+        self._count("refresh_models")
         backend = get_backend(self._provider_name())
         base_url = self._url.text().strip() or backend.default_base_url
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -7118,6 +7249,7 @@ class MainWindow(QMainWindow):
         )
 
     def _test_connection(self) -> None:
+        self._count("test_connection")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             results = run_checks(
@@ -7138,6 +7270,7 @@ class MainWindow(QMainWindow):
 
     def _open_logs(self) -> None:
         """Reveal the log folder in the OS file browser so the user can read the run logs."""
+        self._count("open_logs")
         _LOG_FOLDER.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(_LOG_FOLDER)))
 
@@ -7223,7 +7356,10 @@ class MainWindow(QMainWindow):
         front builds the type during a plain import instead, well away from event delivery. The
         drag-and-drop handlers below take the same precaution.
         """
-        if self._has_unsaved_proposals():
+        unsaved = sum(
+            1 for item in self._items.values() if item.has_proposal and item.status != SAVED
+        )
+        if unsaved:
             reply = QMessageBox.question(
                 self,
                 _("Unsaved changes"),
@@ -7248,7 +7384,7 @@ class MainWindow(QMainWindow):
         self._teardown_harmonize_thread()
         self._teardown_watch_thread()
         self._teardown_build_thread()
-        self._emit_telemetry()
+        self._report_close(unsaved=unsaved)
         super().closeEvent(event)
 
     def maybe_show_telemetry_notice(self) -> None:
@@ -7270,9 +7406,8 @@ class MainWindow(QMainWindow):
         box.setText(_("Photo Tagger sends anonymous usage stats to guide development."))
         box.setInformativeText(
             _(
-                "Collected: model name, batch size, OS, CPU/GPU model, RAM size, timing, and "
-                "anonymous crash reports (error type and code location only).\n"
-                "Never: photos, file paths, filenames, tags, error messages, or personal data.\n\n"
+                "It sends the settings and features you use, how runs go, your system, and crash "
+                "reports. It never sends your photos, file names, or anything you write.\n\n"
                 "You can turn this off now, or anytime from Settings > Send Anonymous Telemetry.",
             ),
         )
@@ -7284,30 +7419,227 @@ class MainWindow(QMainWindow):
             # Unchecking fires _on_telemetry_toggled, which persists the choice.
             self._telemetry_action.setChecked(False)
 
-    def _emit_telemetry(self) -> None:
-        """
-        Fire a best-effort GUI usage beacon on close; never raises.
+    # --- telemetry -----------------------------------------------------------------------------
 
-        The process exits right after closeEvent, so a fire-and-forget daemon thread would be killed
-        mid-send and the beacon silently lost. block=True waits for the flush; a healthy send is
-        tens of milliseconds and the bad case (no network) is capped by emit's timeout.
+    def _count(self, feature: str) -> None:
+        """Count one use of a feature, for the session beacon (names from GUI_FEATURES)."""
+        self._usage.count(feature, time.monotonic())
+
+    def _touch(self, *_args: object) -> None:
+        """Count input as time in use; connected to signals, whose arguments do not matter."""
+        self._usage.clock.touch(time.monotonic())
+
+    def _watch_activity(self) -> None:
         """
-        telemetry.emit(
-            telemetry.RunInfo(
-                interface="gui",
-                provider=self._provider_name(),
-                model=self._model.currentText().strip(),
-                batch_size=len(self._session_tagged),
-                duration_seconds=time.monotonic() - self._session_start,
-                output_language=self._output_language,
-                ui_language=i18n.current_language(),
-                file_types=telemetry.file_types_summary(Path(key) for key in self._session_tagged),
-                success_count=len(self._session_tagged),
-            ),
+        Count keyboard and mouse use of the window as time in use.
+
+        A filter on the few widgets a review happens in, plus focus changes anywhere, rather than
+        one on the whole application: that would run Python for every event Qt delivers.
+        """
+        self._input_watcher = _InputWatcher(self._touch, self)
+        for widget in (
+            self._tree,
+            self._grid,
+            self._title,
+            self._description,
+            self._keywords,
+            self._hint,
+        ):
+            widget.installEventFilter(self._input_watcher)
+            if hasattr(widget, "viewport"):
+                widget.viewport().installEventFilter(self._input_watcher)
+        app = QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(self._touch)
+
+    def _send(self, event: telemetry.Event, *, block: bool = False) -> object:
+        """Send one beacon under this window's toggle; returns the sending thread, if any."""
+        return telemetry.emit(
+            event,
             enabled=self._telemetry_enabled,
             opted_in=self._telemetry_opted_in,
-            block=True,
+            block=block,
         )
+
+    def _telemetry_settings(self) -> telemetry.Settings:
+        """Snapshot the window's settings as the bounded values telemetry reports."""
+        backend = get_backend(self._provider_name())
+        typed = self._url.text().strip()
+        watching = self._watch_settings or WatchSettings()
+        return window_settings(
+            self._current_config_values(),
+            WindowFacts(
+                url=typed or backend.default_base_url,
+                custom_url=bool(typed),
+                api_key=bool(backend.resolve_api_key(self._api_key_value())),
+                cache=self._cache_action.isChecked(),
+                jpeg_dimensions=self._model_image_size,
+                vocabulary_terms=len(self._vocabulary.terms) if self._vocabulary else 0,
+                copyright=self._copyright_fields,
+                watch_interval=watching.interval,
+                watch_settle=watching.settle,
+            ),
+        )
+
+    def _run_context(self) -> RunContext:
+        """
+        Describe what a run starts with: model, languages, settings, and how they were set.
+
+        Telemetry must never stop the window, so a snapshot that raises leaves only the bare facts.
+        """
+        try:
+            return self._describe_run()
+        except Exception as exc:  # noqa: BLE001 - any snapshot bug must not stop the window.
+            logger.warning("telemetry_snapshot_failed", error=repr(exc))
+            return RunContext(
+                provider="",
+                model="",
+                output_language="",
+                ui_language=i18n.current_language(),
+                settings=telemetry.Settings(),
+                setup=telemetry.Setup(),
+            )
+
+    def _describe_run(self) -> RunContext:
+        """Build the run context from the window's current settings."""
+        settings = self._telemetry_settings()
+        keys, unknown = config_key_names(self._raw_config, known_config_keys())
+        return RunContext(
+            provider=self._provider_name(),
+            model=self._model.currentText().strip(),
+            output_language=self._output_language,
+            ui_language=i18n.current_language(),
+            settings=settings,
+            setup=telemetry.Setup(
+                config_file=config_file_kind(),
+                config_keys=keys,
+                unknown_config_keys=unknown,
+                env_vars=env_var_names(),
+                changed=changed_settings(settings, GUI_BASELINE),
+            ),
+        )
+
+    def _display_facts(self) -> telemetry.Display:
+        """Describe the toolkit and the screen the window runs on."""
+        screen = QApplication.primaryScreen()
+        size = screen.size() if screen is not None else None
+        scheme = QApplication.styleHints().colorScheme()
+        if self.isFullScreen():
+            window = "full-screen"
+        elif self.isMaximized():
+            window = "maximized"
+        else:
+            window = f"{self.width()}x{self.height()}"
+        return telemetry.Display(
+            qt_version=qVersion(),
+            pyside_version=pyside_version,
+            screen=f"{size.width()}x{size.height()}@{screen.devicePixelRatio():g}" if size else "",
+            screens=len(QApplication.screens()),
+            color_scheme=_COLOR_SCHEMES.get(scheme, ""),
+            window=window,
+        )
+
+    def _start_run(
+        self,
+        job: str,
+        trigger: str,
+        items: list[PhotoItem],
+        *,
+        use_cache: bool = True,
+    ) -> None:
+        """Open the run the window reports when it ends."""
+        self._finish_run()
+        self._run_keys = [str(item.path) for item in items]
+        generating = job == JOB_GENERATE
+        self._usage.start_run(
+            RunTally(
+                job=job,
+                trigger=trigger,
+                started=time.monotonic(),
+                batch_size=len(items),
+                context=self._run_context(),
+                use_cache=use_cache,
+                autosave=generating and self._wants_chained_save(),
+                hinted=sum(1 for item in items if item.hint) if generating else 0,
+                regenerated_flagged=(
+                    sum(1 for item in items if item.foreign_terms) if generating else 0
+                ),
+            ),
+        )
+
+    def _finish_run(self, outcome: str | None = None) -> object:
+        """Close the run in flight, if any, and send its beacon; returns the sending thread."""
+        run = self._usage.run
+        if run is None:
+            return None
+        now = time.monotonic()
+        batch = [item for key in self._run_keys if (item := self._items.get(key)) is not None]
+        info = self._usage.finish_run(
+            RunEnd(
+                now=now,
+                outcome=outcome,
+                attended=self._usage.clock.engaged_between(run.started, now),
+                succeeded=batch_outcome(batch)[0] if run.job == JOB_GENERATE else run.saved,
+                failed=batch_outcome(batch)[1] if run.job == JOB_GENERATE else 0,
+                file_types=telemetry.file_types_summary(Path(key) for key in self._run_keys),
+                flagged=sum(1 for item in batch if item.foreign_terms),
+            ),
+        )
+        self._run_keys = []
+        return self._send(info) if info is not None else None
+
+    def report_launch(self, startup_seconds: float) -> None:
+        """Send the launch beacon: how long the window took to open, and what it opened with."""
+        context = self._run_context()
+        self._send(
+            telemetry.LaunchInfo(
+                startup_seconds=startup_seconds,
+                settings=context.settings,
+                setup=context.setup,
+                display=self._display_facts(),
+            ),
+        )
+
+    def _report_close(self, *, unsaved: int) -> None:
+        """
+        Send the run the window closed on, if any, then the session, and wait for both.
+
+        The process exits right after closeEvent, so a beacon still on its daemon thread would be
+        lost; flush waits for both within one budget, instead of one after the other.
+        """
+        run = self._finish_run(telemetry.OUTCOME_CANCELLED)
+        session = self._send(
+            self._usage.session_info(
+                time.monotonic(),
+                context=self._run_context(),
+                unsaved=unsaved,
+                closed_with_unsaved=bool(unsaved),
+                view_mode=VIEW_LIST if self._flat_list() else VIEW_TREE,
+                display=self._display_facts(),
+            ),
+        )
+        telemetry.flush([run, session])
+
+
+# How the OS color scheme reads in the launch and session beacons.
+_COLOR_SCHEMES = {Qt.ColorScheme.Dark: "dark", Qt.ColorScheme.Light: "light"}
+
+
+class _InputWatcher(QObject):
+    """Event filter that reports key presses, clicks, and scrolling; it never consumes them."""
+
+    _INPUT = frozenset({QEvent.Type.KeyPress, QEvent.Type.MouseButtonPress, QEvent.Type.Wheel})
+
+    def __init__(self, touch: Callable[[], None], parent: QObject) -> None:
+        """Call *touch* on every input event the watched widgets receive."""
+        super().__init__(parent)
+        self._touch = touch
+
+    def eventFilter(self, _watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override.
+        """Note the input and let the event through untouched."""
+        if event.type() in self._INPUT:
+            self._touch()
+        return False
 
 
 def _make_placeholder() -> QPixmap:
@@ -7426,6 +7758,7 @@ def _diff_html(diff: list[tuple[str, str]]) -> str:
 
 def launch(argv: list[str] | None = None) -> int:
     """Create the application, show the main window, and run the event loop."""
+    started = time.monotonic()
     # A Finder/Dock launch inherits a minimal PATH, so graft on the PATH the user's login shell
     # would set. That recovers exiftool wherever their package manager put it (Homebrew, Nix,
     # MacPorts, ...). A no-op for a normal shell launch, where those dirs are already present.
@@ -7462,6 +7795,8 @@ def launch(argv: list[str] | None = None) -> int:
         str(configured) if configured else None,
         system_hint=QLocale.system().name(),
     )
+    # A Finder launch has no LANG, but Qt still knows the OS language for the beacons.
+    telemetry.set_locale_hint(QLocale.system().name())
     if language != "en":
         # Also translate Qt's own stock strings (file dialogs, standard buttons). Best-effort:
         # PySide6 wheels may not ship every qtbase catalog.
@@ -7490,7 +7825,9 @@ def launch(argv: list[str] | None = None) -> int:
     try:
         window = MainWindow()
         window.show()
+        startup_seconds = time.monotonic() - started
         window.maybe_show_telemetry_notice()
+        window.report_launch(startup_seconds)
         return app.exec()
     except Exception as exc:
         # A crash outside the event loop (startup, teardown) kills the process; flush the beacon.

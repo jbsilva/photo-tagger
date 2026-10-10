@@ -23,7 +23,8 @@ import os
 import sys
 import tempfile
 import threading
-from dataclasses import asdict, dataclass
+import time
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Protocol
@@ -55,16 +56,18 @@ from photo_tagger.cli_options import (
     TelemetryConfig,
     VocabularyBuildConfig,
     WatchConfig,
+    known_config_keys,
     resolve_notify,
     resolve_sidecar_mode,
     to_extra_fields,
     to_pacing_plan,
     to_processing_options,
+    to_telemetry_settings,
     to_trim_rules,
     validate_pacing,
 )
 from photo_tagger.config import DEFAULT_USER_PROMPT, SidecarMode
-from photo_tagger.config_file import configured_exiftool_path, load_config
+from photo_tagger.config_file import config_file_kind, configured_exiftool_path, load_config
 from photo_tagger.csv_report import CsvReportWriter, ReportRow
 from photo_tagger.diagnostics import render_report, run_checks
 from photo_tagger.discovery import (
@@ -106,6 +109,14 @@ from photo_tagger.progress import batch_progress
 # on the doctor command to validate the --provider choices, so it must exist at definition time.
 from photo_tagger.providers import ProviderName  # noqa: TC001
 from photo_tagger.sessions import plan_sessions
+from photo_tagger.telemetry_facts import (
+    changed_settings,
+    config_key_names,
+    env_var_names,
+    joined,
+    mean,
+    quantile,
+)
 from photo_tagger.undo import (
     DELETED,
     RESTORED,
@@ -143,13 +154,16 @@ if TYPE_CHECKING:
     from photo_tagger.fields import ExtraFields
     from photo_tagger.metadata import FieldReading
     from photo_tagger.models import GeneratedMetadata
+    from photo_tagger.sessions import SessionPlan
     from photo_tagger.undo import UndoJournal
 
 
 # Any TOML config is layered onto flags the user does not pass by the ConfigFileSource hook at
 # parse time, giving per-field precedence (CLI flag > config file > built-in). The hook re-reads
 # the file per invocation, so nothing config-dependent is captured at import.
-app = App(name="photo-tagger", version=__version__, config=ConfigFileSource())
+# The hook also records the command and the options typed on it, which telemetry reports.
+_CONFIG_SOURCE = ConfigFileSource()
+app = App(name="photo-tagger", version=__version__, config=_CONFIG_SOURCE)
 
 
 # Built-in default option groups, hoisted to module scope so the function-default expressions on
@@ -233,6 +247,10 @@ def doctor(
     # captured in the report itself, not the logs.
     logger.remove()
     results = run_checks(provider, model, api_base_url=url, api_key=api_key)
+    telemetry.note(
+        checks_failed=sum(not result.ok for result in results),
+        problems=joined(result.problem for result in results),
+    )
     if not render_report(results):
         raise SystemExit(1)
 
@@ -410,6 +428,7 @@ def show(
     except DiscoveryError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
+    telemetry.note(photos=len(image_files))
     # One ExifTool process for the whole report: a folder of five thousand photos must not pay a
     # process spawn each.
     with managed_helper(None) as helper:
@@ -565,6 +584,7 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
         raise SystemExit(1) from exc
 
     mode = resolve_sidecar_mode(OutputConfig(sidecar_mode=sidecar_mode, use_sidecar=use_sidecar))
+    telemetry.note(photos=len(image_files))
     if dry_run:
         _preview_fields(console, image_files, fields)
         return
@@ -576,6 +596,7 @@ def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
         backup=backup_xmp,
         journal=open_journal(datetime.now(tz=UTC), enabled=undo_log),
     )
+    telemetry.note(written=written, failed=len(failed))
     console.print(f"[green]Wrote {written} of {len(image_files)} photo(s).[/green]")
     if failed:
         console.print(f"[red]{len(failed)} failed; see the log for what ExifTool said.[/red]")
@@ -591,6 +612,13 @@ def _preview_fields(console: Console, image_files: list[Path], fields: ExtraFiel
         for tag, value in fields.resolve(years[image_file]).items():
             table.add_row(tag, Text(value))
         console.print(table)
+
+
+def _census_source(inputs: list[Path] | None, from_export: Path | None) -> str:
+    """Name where a vocabulary census came from, for telemetry: photos, an export, or both."""
+    if inputs and from_export:
+        return "both"
+    return "export" if from_export else "photos"
 
 
 def _build_census(
@@ -702,6 +730,12 @@ def vocabulary(  # noqa: PLR0913 - every parameter is a separate concern of the 
         raise SystemExit(1)
 
     result = trim(census, rules)
+    telemetry.note(
+        source=_census_source(inputs, from_export),
+        keywords_read=len(census.uses),
+        keywords_kept=len(result.kept),
+        keywords_dropped=len(result.dropped),
+    )
     stats: OrganizeStats | None = None
     if build.organize:
         console.print(f"Organizing {len(result.kept)} keyword(s) with {provider.model_name}...")
@@ -846,6 +880,8 @@ def undo(
 
     console.print(f"Undoing run {journal_path.name}")
     results = undo_run(records, force=force, dry_run=dry_run)
+    put_back = sum(result.action in _UNDO_OK_ACTIONS for result in results)
+    telemetry.note(entries=len(results), put_back=put_back, left_alone=len(results) - put_back)
     if not _render_undo_results(results, console, dry_run=dry_run):
         raise SystemExit(1)
 
@@ -1105,7 +1141,10 @@ def _alert_message(totals: BatchTotals) -> str:
     photos = "photo" if totals.total_files == 1 else "photos"
     verb = "checked" if totals.dry_run else "tagged"
     line = f"{totals.success} of {totals.total_files} {photos} {verb}"
-    if failed := len(totals.failed_files):
+    if totals.interrupted:
+        # After a Ctrl-C the photos never started are in failed_files too, but none of them failed.
+        line = f"Stopped: {line}"
+    elif failed := len(totals.failed_files):
         line = f"{line}, {failed} failed"
     return f"Dry run: {line}." if totals.dry_run else f"{line}."
 
@@ -1128,6 +1167,296 @@ def _maybe_show_telemetry_notice(*, enabled: bool) -> None:
     notice = telemetry.first_run_notice()
     if notice is not None:
         sys.stderr.write(notice + "\n")
+
+
+def _invocation_setup() -> telemetry.Setup:
+    """Describe how this invocation was configured: the config file, the flags, the environment."""
+    keys, unknown = config_key_names(load_config(), known_config_keys())
+    return telemetry.Setup(
+        config_file=config_file_kind(),
+        config_keys=keys,
+        unknown_config_keys=unknown,
+        cli_flags=joined(_CONFIG_SOURCE.invocation.cli_flags),
+        env_vars=env_var_names(),
+    )
+
+
+@dataclass(slots=True, frozen=True)
+class _Groups:
+    """The option groups one tag or watch invocation parsed, for the telemetry describing it."""
+
+    provider: ProviderConfig
+    inference: InferenceConfig
+    output: OutputConfig
+    artifacts: ArtifactConfig
+    display: DisplayConfig
+    filter_: FilterConfig
+    log: LogConfig
+    pacing: PacingConfig
+    telemetry_enabled: bool
+    workers: int
+    extensions: str
+    recursive: bool
+    watch: WatchConfig | None = None
+
+
+@dataclass(slots=True)
+class _Beacons:
+    """
+    The telemetry of one tag or watch invocation: how it was set up, and what it has reported.
+
+    Built before anything can fail, so a run that stops before its first photo is reported too.
+    """
+
+    enabled: bool
+    command: str
+    provider: str
+    model: str
+    output_language: str
+    settings: telemetry.Settings
+    setup: telemetry.Setup
+    started: float = field(default_factory=time.monotonic)
+    sent: bool = False
+    runs: int = 0
+    photos: int = 0
+    busy_seconds: float = 0.0
+    first_run_seconds: float = -1.0
+
+    @classmethod
+    def for_invocation(cls, command: str, groups: _Groups) -> _Beacons:
+        """
+        Snapshot what *groups* set up, before the run can fail.
+
+        Telemetry must never be why a run fails, so a snapshot that raises (a bug, or an input no
+        test foresaw) leaves the invocation with telemetry off instead of a traceback.
+        """
+        try:
+            return cls._snapshot(command, groups)
+        except Exception as exc:  # noqa: BLE001 - any snapshot bug must not stop the run.
+            logger.warning("telemetry_snapshot_failed", error=repr(exc))
+            # Off means off: the command beacon on the way out must not stand in for this run.
+            telemetry.mark_reported()
+            return cls(
+                enabled=False,
+                command=command,
+                provider="",
+                model="",
+                output_language="",
+                settings=telemetry.Settings(),
+                setup=telemetry.Setup(),
+            )
+
+    @classmethod
+    def _snapshot(cls, command: str, groups: _Groups) -> _Beacons:
+        """Build the beacons of an invocation from its option groups."""
+        settings = to_telemetry_settings(
+            provider=groups.provider,
+            inference=groups.inference,
+            output=groups.output,
+            artifacts=groups.artifacts,
+            display=groups.display,
+            filter_=groups.filter_,
+            log=groups.log,
+            pacing=groups.pacing,
+            workers=groups.workers,
+            extensions=groups.extensions,
+            recursive=groups.recursive,
+            watch=groups.watch,
+        )
+        return cls(
+            enabled=groups.telemetry_enabled,
+            command=command,
+            provider=groups.provider.provider_name,
+            model=groups.provider.model_name,
+            output_language=groups.inference.output_language,
+            settings=settings,
+            setup=_invocation_setup(),
+        )
+
+    def emit(self, event: telemetry.Event) -> None:
+        """Send *event*, showing the one-time notice first if it is still due."""
+        _maybe_show_telemetry_notice(enabled=self.enabled)
+        telemetry.emit(event, enabled=self.enabled, block=True)
+        self.sent = True
+
+    def described(self) -> telemetry.Setup:
+        """Return the setup, naming the settings that differ from the built-in defaults."""
+        return replace(self.setup, changed=changed_settings(self.settings, telemetry.Settings()))
+
+    def base_run(self) -> telemetry.RunInfo:
+        """Return a run of this invocation with nothing done yet, for a call site to fill in."""
+        return telemetry.RunInfo(
+            interface="cli",
+            command=self.command,
+            trigger="watch" if self.command == "watch" else "",
+            provider=self.provider,
+            model=self.model,
+            batch_size=0,
+            duration_seconds=0.0,
+            output_language=self.output_language,
+            ui_language=i18n.current_language(),
+            file_types="",
+            settings=self.settings,
+            setup=self.described(),
+        )
+
+    def record(self, run: telemetry.RunInfo) -> None:
+        """Send one finished batch and add it to the session a watch reports at the end."""
+        if not self.runs:
+            self.first_run_seconds = time.monotonic() - self.started - run.duration_seconds
+        self.runs += 1
+        # Photos that came out done, as the GUI counts them: a failed photo was not generated.
+        self.photos += run.success_count
+        self.busy_seconds += run.duration_seconds
+        self.emit(run)
+
+    def stopped(self, error: SystemExit | KeyboardInterrupt) -> None:
+        """Report a run that ended before its first photo, unless a beacon already covers it."""
+        if self.sent or (isinstance(error, SystemExit) and not _exit_code(error)):
+            return
+        interrupted = isinstance(error, KeyboardInterrupt)
+        cause = error.__cause__ or error
+        self.emit(
+            replace(
+                self.base_run(),
+                duration_seconds=time.monotonic() - self.started,
+                outcome=(
+                    telemetry.OUTCOME_INTERRUPTED if interrupted else telemetry.OUTCOME_SETUP_FAILED
+                ),
+                error_kind="" if interrupted else type(cause).__name__,
+            ),
+        )
+
+    def session(self) -> telemetry.SessionInfo:
+        """Summarize a watch from start to stop: how long, how busy, how many batches."""
+        elapsed = time.monotonic() - self.started
+        return telemetry.SessionInfo(
+            interface="cli",
+            command=self.command,
+            session_seconds=elapsed,
+            provider=self.provider,
+            model=self.model,
+            output_language=self.output_language,
+            ui_language=i18n.current_language(),
+            busy_seconds=self.busy_seconds,
+            idle_seconds=max(0.0, elapsed - self.busy_seconds),
+            runs=self.runs,
+            first_run_seconds=self.first_run_seconds,
+            photos_generated=self.photos,
+            settings=self.settings,
+            setup=self.described(),
+        )
+
+
+class _PhotoStats:
+    """``on_image_result`` sink that keeps what telemetry reports per photo: timing and sizes."""
+
+    def __init__(self) -> None:
+        """Start empty; workers may call concurrently, hence the lock."""
+        self._lock = threading.Lock()
+        self._seconds: list[float] = []
+        self._keywords: list[float] = []
+        self._titles: list[float] = []
+        self._descriptions: list[float] = []
+
+    def __call__(self, outcome: ImageOutcome) -> None:
+        """Keep one finished photo's model time and text sizes, never the text."""
+        if not outcome.success:
+            return
+        with self._lock:
+            if not outcome.from_cache and outcome.seconds > 0:
+                self._seconds.append(outcome.seconds)
+            self._keywords.append(len(outcome.keywords))
+            self._titles.append(len(outcome.title or ""))
+            self._descriptions.append(len(outcome.description or ""))
+
+    def apply(self, run: telemetry.RunInfo) -> telemetry.RunInfo:
+        """Return *run* with the per-photo figures filled in."""
+        return replace(
+            run,
+            photo_seconds_median=quantile(self._seconds, 0.5),
+            photo_seconds_p90=quantile(self._seconds, 0.9),
+            keywords_mean=mean(self._keywords),
+            title_chars_mean=mean(self._titles),
+            description_chars_mean=mean(self._descriptions),
+        )
+
+
+def _batch_run(  # noqa: PLR0913 - the batch and its beacons and what the run tracked beside it.
+    totals: BatchTotals,
+    image_files: list[Path],
+    *,
+    beacons: _Beacons,
+    started_at: datetime,
+    stats: _PhotoStats,
+    plan: SessionPlan | None,
+) -> telemetry.RunInfo:
+    """Describe one finished batch for its telemetry beacon."""
+    run = replace(
+        beacons.base_run(),
+        batch_size=totals.total_files,
+        duration_seconds=(datetime.now(tz=UTC) - started_at).total_seconds(),
+        file_types=telemetry.file_types_summary(image_files),
+        outcome=telemetry.outcome_for(
+            totals.total_files,
+            len(totals.failed_files),
+            interrupted=totals.interrupted,
+        ),
+        success_count=totals.success,
+        failure_count=len(totals.failed_files),
+        initial_failures=totals.initial_failures,
+        cache_hits=totals.cache_hits,
+        retry_successes=totals.retry_successes,
+        workers=totals.workers,
+        input_tokens=totals.input_tokens,
+        output_tokens=totals.output_tokens,
+        total_tokens=totals.total_tokens,
+        inference_calls=totals.inference_calls,
+        inference_seconds=totals.inference_seconds,
+        dry_run=totals.dry_run,
+        failure_kinds=telemetry.failure_kinds_summary(totals.failure_kinds),
+        language_repairs=totals.language_repairs,
+        flagged=len(totals.flagged_files),
+        vocabulary_mapped=totals.vocabulary_mapped,
+        vocabulary_dropped=len(totals.vocabulary_dropped),
+        rested_seconds=totals.rested_seconds,
+        rests_taken=totals.rests_taken,
+        shoots=len(plan.sessions) if plan is not None else 0,
+    )
+    return stats.apply(run)
+
+
+def _exit_code(exc: SystemExit) -> int:
+    """Return the status a SystemExit leaves the process with."""
+    if exc.code is None:
+        return 0
+    return exc.code if isinstance(exc.code, int) else 1
+
+
+def _start_run(log: LogConfig) -> None:
+    """Set up the log sinks, tracing, and the ExifTool path a tag or watch run needs."""
+    try:
+        setup_logging(
+            file_log_level=log.file_log_level,
+            console_log_level=log.console_log_level,
+            log_folder=log.log_folder,
+        )
+    except OSError as exc:
+        # No sink is guaranteed to be active yet (setup_logging removes the default one before it
+        # can fail), so this cannot rely on the logger; write directly to stderr like the gui
+        # command's own pre-logging error path does.
+        sys.stderr.write(f"Could not set up logging at {log.log_folder}: {exc}\n")
+        raise SystemExit(1) from exc
+    _enable_tracing(log)
+    _apply_exiftool_path(configured_exiftool_path())
+
+
+def _require_inputs(inputs: list[Path] | None) -> list[Path]:
+    """Return *inputs*, or stop with the hint to pass some when there are none."""
+    if not inputs:
+        logger.error("no_inputs_provided", hint="Pass one or more --input/-i paths to watch")
+        raise SystemExit(1)
+    return inputs
 
 
 @app.default
@@ -1248,60 +1577,69 @@ def tag(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group.
 
         photo-tagger -i Pictures/Mixed --skip-tagged
     """
+    beacons = _Beacons.for_invocation(
+        "tag",
+        _Groups(
+            provider=provider,
+            inference=inference,
+            output=output,
+            artifacts=artifacts,
+            display=display,
+            filter_=filter_,
+            log=log,
+            pacing=pacing,
+            telemetry_enabled=telemetry_config.enabled,
+            workers=workers,
+            extensions=image_extensions,
+            recursive=recursive,
+        ),
+    )
     try:
-        setup_logging(
-            file_log_level=log.file_log_level,
-            console_log_level=log.console_log_level,
-            log_folder=log.log_folder,
-        )
-    except OSError as exc:
-        # No sink is guaranteed to be active yet (setup_logging removes the default one before
-        # it can fail), so this cannot rely on the logger; write directly to stderr like the gui
-        # command's own pre-logging error path does.
-        sys.stderr.write(f"Could not set up logging at {log.log_folder}: {exc}\n")
-        raise SystemExit(1) from exc
-    _enable_tracing(log)
-    _apply_exiftool_path(configured_exiftool_path())
+        _start_run(log)
+        with contextlib.ExitStack() as stack:
+            if artifacts.lock_file is not None:
+                try:
+                    stack.enter_context(FileLock(artifacts.lock_file))
+                except LockHeldError as exc:
+                    logger.error(
+                        "lock_held_by_other_process",
+                        file=str(artifacts.lock_file),
+                        error=str(exc),
+                    )
+                    raise SystemExit(1) from exc
+                except OSError as exc:
+                    # Parent dir not writable, filesystem full, etc. Surface a clean
+                    # message instead of letting the traceback land in the user's tty.
+                    logger.error(
+                        "lock_file_open_failed",
+                        file=str(artifacts.lock_file),
+                        error=str(exc),
+                    )
+                    raise SystemExit(1) from exc
 
-    with contextlib.ExitStack() as stack:
-        if artifacts.lock_file is not None:
             try:
-                stack.enter_context(FileLock(artifacts.lock_file))
-            except LockHeldError as exc:
-                logger.error(
-                    "lock_held_by_other_process",
-                    file=str(artifacts.lock_file),
-                    error=str(exc),
+                _tag_inside_lock(
+                    inputs=inputs,
+                    image_extensions=image_extensions,
+                    recursive=recursive,
+                    workers=workers,
+                    filter_=filter_,
+                    display=display,
+                    artifacts=artifacts,
+                    provider=provider,
+                    output=output,
+                    inference=inference,
+                    log=log,
+                    beacons=beacons,
+                    pacing=pacing,
                 )
+            except PhotoTaggerError as exc:
                 raise SystemExit(1) from exc
-            except OSError as exc:
-                # Parent dir not writable, filesystem full, etc. Surface a clean
-                # message instead of letting the traceback land in the user's tty.
-                logger.error(
-                    "lock_file_open_failed",
-                    file=str(artifacts.lock_file),
-                    error=str(exc),
-                )
-                raise SystemExit(1) from exc
-
-        try:
-            _tag_inside_lock(
-                inputs=inputs,
-                image_extensions=image_extensions,
-                recursive=recursive,
-                workers=workers,
-                filter_=filter_,
-                display=display,
-                artifacts=artifacts,
-                provider=provider,
-                output=output,
-                inference=inference,
-                log=log,
-                telemetry_config=telemetry_config,
-                pacing=pacing,
-            )
-        except PhotoTaggerError as exc:
-            raise SystemExit(1) from exc
+    except (SystemExit, KeyboardInterrupt) as exc:
+        # A run that stopped before its first photo (no model, no photos, a held lock) sends no
+        # batch beacon of its own, so it is reported here.
+        beacons.stopped(exc)
+        raise
 
 
 @dataclass(slots=True)
@@ -1327,7 +1665,7 @@ class _RunSetup:
     artifacts: ArtifactConfig
     display: DisplayConfig
     session_gap_minutes: float
-    telemetry_enabled: bool
+    beacons: _Beacons
     # Resolved from the two --notify flags, not the group itself: --notify-sound implies --notify,
     # and the batch runner should not have to know that.
     notify_enabled: bool
@@ -1375,7 +1713,7 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
     output: OutputConfig,
     inference: InferenceConfig,
     pacing: PacingConfig,
-    telemetry_enabled: bool,
+    beacons: _Beacons,
 ) -> _RunSetup:
     """Build the agent, cache, report sinks, pacer, and undo journal shared by every batch."""
     # Raises VocabularyError (a PhotoTaggerError) on an unusable file, which the commands turn into
@@ -1385,6 +1723,8 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         if output.vocabulary is not None
         else None
     )
+    if vocabulary is not None:
+        beacons.settings = replace(beacons.settings, vocabulary_terms=len(vocabulary.terms))
     # A --hint and the --vocabulary listing ride inside the user prompt, so the cache namespace
     # below picks them up too: a hinted run never replays results generated without the hint (and
     # vice versa), and the same holds for a vocabulary.
@@ -1440,7 +1780,7 @@ def _build_run_setup(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
             artifacts=artifacts,
             display=display,
             session_gap_minutes=output.session_gap_minutes,
-            telemetry_enabled=telemetry_enabled,
+            beacons=beacons,
             notify_enabled=notify_enabled,
             notify_sound=notify_sound,
             cache=cache,
@@ -1498,7 +1838,7 @@ def _log_startup(  # noqa: PLR0913 - the run itself plus the four inputs that ar
         progress_bar=setup.display.progress_bar,
         notify=setup.notify_enabled,
         notify_sound=setup.notify_sound,
-        telemetry=setup.telemetry_enabled,
+        telemetry=setup.beacons.enabled,
         skip_from=_maybe_str(artifacts.skip_from),
         append_to_skip_file=_maybe_str(artifacts.append_to_skip_file),
         skip_tagged=filter_.skip_tagged,
@@ -1539,6 +1879,8 @@ def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
     exit 1 and ``watch`` logs before waiting for the next batch.
     """
     started_at = datetime.now(tz=UTC)
+    stats = _PhotoStats()
+    plan = plan_sessions(image_files, gap_minutes=setup.session_gap_minutes)
 
     def _on_complete(totals: BatchTotals) -> None:
         # Runs once before run_batch raises, so the summary file is written, the desktop alert
@@ -1561,28 +1903,15 @@ def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
             provider_name=setup.provider.provider_name,
             user_prompt_chars=len(setup.user_prompt),
         )
-        telemetry.emit(
-            telemetry.RunInfo(
-                interface="cli",
-                provider=setup.provider.provider_name,
-                model=setup.provider.model_name,
-                batch_size=totals.total_files,
-                duration_seconds=(datetime.now(tz=UTC) - started_at).total_seconds(),
-                output_language=setup.inference.output_language,
-                ui_language=i18n.current_language(),
-                file_types=telemetry.file_types_summary(image_files),
-                success_count=totals.success,
-                failure_count=len(totals.failed_files),
-                cache_hits=totals.cache_hits,
-                retry_successes=totals.retry_successes,
-                workers=totals.workers,
-                total_tokens=totals.total_tokens,
-                inference_seconds=totals.inference_seconds,
-                dry_run=totals.dry_run,
-                failure_kinds=telemetry.failure_kinds_summary(totals.failure_kinds),
+        setup.beacons.record(
+            _batch_run(
+                totals,
+                image_files,
+                beacons=setup.beacons,
+                started_at=started_at,
+                stats=stats,
+                plan=plan,
             ),
-            enabled=setup.telemetry_enabled,
-            block=True,
         )
 
     with batch_progress(len(image_files), enabled=setup.display.progress_bar) as progress:
@@ -1596,8 +1925,8 @@ def _process_batch(image_files: list[Path], setup: _RunSetup) -> None:
             workers=setup.workers,
             progress=progress,
             cache=setup.cache,
-            on_image_result=setup.on_image_result,
-            session_plan=plan_sessions(image_files, gap_minutes=setup.session_gap_minutes),
+            on_image_result=_combine_image_result_callbacks(setup.on_image_result, stats),
+            session_plan=plan,
             journal=setup.journal,
             pacer=setup.pacer,
         )
@@ -1630,11 +1959,11 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
     output: OutputConfig,
     inference: InferenceConfig,
     log: LogConfig,
-    telemetry_config: TelemetryConfig,
+    beacons: _Beacons,
     pacing: PacingConfig,
 ) -> None:
     """Body of ``tag`` that runs once the optional file lock has been acquired."""
-    _maybe_show_telemetry_notice(enabled=telemetry_config.enabled)
+    _maybe_show_telemetry_notice(enabled=beacons.enabled)
     newer_than = _parse_filter_date(filter_.newer_than, flag="--newer-than")
     older_than = _parse_filter_date(filter_.older_than, flag="--older-than")
     # Discovery first: building the run truncates the CSV report, opens the cache and validates the
@@ -1649,6 +1978,7 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
     )
     if not image_files:
         logger.info("no_files_to_process_after_skipping")
+        beacons.emit(replace(beacons.base_run(), outcome=telemetry.OUTCOME_EMPTY))
         return
     setup = _build_run_setup(
         workers=workers,
@@ -1658,7 +1988,7 @@ def _tag_inside_lock(  # noqa: PLR0913 - mirrors tag()'s flag groups one-for-one
         output=output,
         inference=inference,
         pacing=pacing,
-        telemetry_enabled=telemetry_config.enabled,
+        beacons=beacons,
     )
     _log_startup(
         setup,
@@ -1733,39 +2063,48 @@ def watch(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag group
 
         photo-tagger watch -i ~/Pictures/Inbox -r --interval 10 --skip-tagged
     """
-    try:
-        setup_logging(
-            file_log_level=log.file_log_level,
-            console_log_level=log.console_log_level,
-            log_folder=log.log_folder,
-        )
-    except OSError as exc:
-        sys.stderr.write(f"Could not set up logging at {log.log_folder}: {exc}\n")
-        raise SystemExit(1) from exc
-    _enable_tracing(log)
-    _apply_exiftool_path(configured_exiftool_path())
-    if not inputs:
-        logger.error("no_inputs_provided", hint="Pass one or more --input/-i paths to watch")
-        raise SystemExit(1)
-
-    try:
-        _watch_forever(
-            inputs=inputs,
-            image_extensions=image_extensions,
-            recursive=recursive,
-            workers=watch_config.workers,
-            watch_config=watch_config,
-            filter_=filter_,
-            display=display,
-            artifacts=artifacts,
+    beacons = _Beacons.for_invocation(
+        "watch",
+        _Groups(
             provider=provider,
-            output=output,
             inference=inference,
-            telemetry_config=telemetry_config,
+            output=output,
+            artifacts=artifacts,
+            display=display,
+            filter_=filter_,
+            log=log,
             pacing=pacing,
-        )
-    except PhotoTaggerError as exc:
-        raise SystemExit(1) from exc
+            telemetry_enabled=telemetry_config.enabled,
+            workers=watch_config.workers,
+            extensions=image_extensions,
+            recursive=recursive,
+            watch=watch_config,
+        ),
+    )
+    try:
+        _start_run(log)
+        folders = _require_inputs(inputs)
+        try:
+            _watch_forever(
+                inputs=folders,
+                image_extensions=image_extensions,
+                recursive=recursive,
+                workers=watch_config.workers,
+                watch_config=watch_config,
+                filter_=filter_,
+                display=display,
+                artifacts=artifacts,
+                provider=provider,
+                output=output,
+                inference=inference,
+                beacons=beacons,
+                pacing=pacing,
+            )
+        except PhotoTaggerError as exc:
+            raise SystemExit(1) from exc
+    except (SystemExit, KeyboardInterrupt) as exc:
+        beacons.stopped(exc)
+        raise
 
 
 def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one.
@@ -1781,11 +2120,11 @@ def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one
     provider: ProviderConfig,
     output: OutputConfig,
     inference: InferenceConfig,
-    telemetry_config: TelemetryConfig,
+    beacons: _Beacons,
     pacing: PacingConfig,
 ) -> None:
     """Poll for new photos and tag each settled batch until interrupted."""
-    _maybe_show_telemetry_notice(enabled=telemetry_config.enabled)
+    _maybe_show_telemetry_notice(enabled=beacons.enabled)
     newer_than = _parse_filter_date(filter_.newer_than, flag="--newer-than")
     older_than = _parse_filter_date(filter_.older_than, flag="--older-than")
     setup = _build_run_setup(
@@ -1796,7 +2135,7 @@ def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one
         output=output,
         inference=inference,
         pacing=pacing,
-        telemetry_enabled=telemetry_config.enabled,
+        beacons=beacons,
     )
     logger.info(
         "watching_for_new_photos",
@@ -1839,20 +2178,85 @@ def _watch_forever(  # noqa: PLR0913 - mirrors watch()'s flag groups one-for-one
         logger.info("watch_stopped_by_user", batches=batches, photos=tagged)
     finally:
         setup.close()
+        beacons.emit(beacons.session())
 
 
-def _crash_telemetry_enabled(tokens: list[str]) -> bool:
+def _telemetry_enabled_for(tokens: list[str]) -> bool:
     """
-    Best-effort telemetry opt-out resolution for the crash path.
+    Best-effort telemetry choice for an invocation without a parsed ``--no-telemetry``.
 
-    A crash may happen before (or during) CLI parsing, so the parsed --no-telemetry flag is not
-    available; scan the raw *tokens* for it and read the config file's [telemetry] table. The
-    environment opt-outs are enforced inside emit_crash itself.
+    A crash may happen before (or during) CLI parsing, and the other commands have no such flag, so
+    scan the raw *tokens* for it and read the config file's [telemetry] table. The environment
+    switches are enforced inside emit and emit_crash themselves.
     """
     if "--no-telemetry" in tokens:
         return False
     table = load_config().get("telemetry", {})
     return bool(table.get("enabled", True)) if isinstance(table, dict) else True
+
+
+# Exit statuses the command beacon names: cyclopts' own for a bad flag, and the shell's for Ctrl-C.
+_USAGE_EXIT = 2
+_INTERRUPTED_EXIT = 130
+
+
+def _command_name(tokens: list[str]) -> str:
+    """Name what *tokens* run: a subcommand, help, the version, or the default ``tag``."""
+    if {"--help", "-h"}.intersection(tokens):
+        return "help"
+    if "--version" in tokens:
+        return "version"
+    commands = {name for name in app if not name.startswith("-")}
+    return tokens[0] if tokens and tokens[0] in commands else "tag"
+
+
+def _command_outcome(exit_code: int, error: BaseException | None) -> str:
+    """Name how a command ended, from its exit status."""
+    if isinstance(error, KeyboardInterrupt):
+        return telemetry.OUTCOME_INTERRUPTED
+    if exit_code == 0:
+        return telemetry.OUTCOME_OK
+    return telemetry.OUTCOME_USAGE_ERROR if exit_code == _USAGE_EXIT else telemetry.OUTCOME_FAILED
+
+
+def _report_command(
+    tokens: list[str],
+    *,
+    exit_code: int,
+    error: BaseException | None,
+    started: float,
+) -> None:
+    """
+    Send the beacon for an invocation that sent none of its own.
+
+    That is every command but ``tag``, ``watch``, and ``gui``, plus a ``tag`` or ``watch`` that
+    stopped at the command line. The GUI is left out: its window reports itself, under its own
+    toggle. Never raises, because it runs while the real exit is on its way out.
+    """
+    command = _command_name(tokens)
+    if telemetry.sent_any() or command == "gui":
+        return
+    try:
+        enabled = _telemetry_enabled_for(tokens)
+        if not telemetry.should_send(config_enabled=enabled):
+            return
+        _maybe_show_telemetry_notice(enabled=enabled)
+        interrupted = isinstance(error, KeyboardInterrupt)
+        telemetry.emit(
+            telemetry.CommandInfo(
+                command=command,
+                outcome=_command_outcome(exit_code, error),
+                exit_code=exit_code,
+                duration_seconds=time.monotonic() - started,
+                error_kind=type(error).__name__ if error is not None and not interrupted else "",
+                setup=_invocation_setup(),
+                details=telemetry.command_notes(),
+            ),
+            enabled=enabled,
+            block=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - a beacon must never change how the CLI exits.
+        logger.debug("telemetry_command_report_failed", error=str(exc))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1861,21 +2265,33 @@ def main(argv: list[str] | None = None) -> None:
 
     Expected exits (SystemExit from clean error handling, Ctrl-C) pass through untouched; anything
     else is a genuine crash, so an anonymous beacon (exception type and in-app code location only,
-    never the message) is sent before the traceback surfaces as usual.
+    never the message) is sent before the traceback surfaces as usual. An invocation that sent no
+    beacon of its own gets a short command beacon on the way out.
     """
     tokens = sys.argv[1:] if argv is None else argv
+    started = time.monotonic()
+    exit_code = 0
+    error: BaseException | None = None
     try:
         app(tokens)
-    except SystemExit, KeyboardInterrupt:
+    except SystemExit as exc:
+        exit_code = _exit_code(exc)
+        error = exc.__cause__ or exc.__context__
+        raise
+    except KeyboardInterrupt as exc:
+        exit_code, error = _INTERRUPTED_EXIT, exc
         raise
     except Exception as exc:
         telemetry.emit_crash(
             exc,
             interface="cli",
-            enabled=_crash_telemetry_enabled(tokens),
+            command=_command_name(tokens),
+            enabled=_telemetry_enabled_for(tokens),
             block=True,
         )
         raise
+    finally:
+        _report_command(tokens, exit_code=exit_code, error=error, started=started)
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point, not exercised by tests

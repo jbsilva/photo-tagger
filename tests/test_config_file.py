@@ -7,7 +7,12 @@ from typing import Annotated
 import pytest
 from loguru import logger
 
-from photo_tagger.config_file import apply_overrides, find_config_file, load_config
+from photo_tagger.config_file import (
+    apply_overrides,
+    config_file_kind,
+    find_config_file,
+    load_config,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -144,6 +149,26 @@ def test_find_config_file_discovers_local_config(
     found = find_config_file()
     assert found is not None
     assert found.resolve() == cfg.resolve()
+
+
+def test_config_file_kind_names_the_location_never_the_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Telemetry learns which lookup found the file (env, cwd, user, none), not where it is."""
+    monkeypatch.chdir(tmp_path)
+    assert config_file_kind() == "none"
+    local = tmp_path / ".photo-tagger.toml"
+    local.write_text("recursive = true\n")
+    assert config_file_kind() == "cwd"
+    local.unlink()
+    user = tmp_path / "home" / "config.toml"
+    user.parent.mkdir()
+    user.write_text("recursive = true\n")
+    monkeypatch.setattr("photo_tagger.config_file._USER_CONFIG", user)
+    assert config_file_kind() == "user"
+    monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(user))
+    assert config_file_kind() == "env"
 
 
 # --- load_config -------------------------------------------------------------------------------

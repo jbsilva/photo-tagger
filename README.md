@@ -482,30 +482,30 @@ source and spec live in [`packaging/`](packaging/)). Two things to know:
 
 ## Telemetry
 
-photo-tagger sends a single anonymous beacon at the end of each run so development can be guided by
-how the tool is actually used (which models, platforms, and hardware are common, typical batch
-sizes), and one when the app crashes so breakage is visible without waiting for bug reports. It is
-**opt-out**: on by default, with a one-time notice on the first run, and easy to disable.
+photo-tagger sends small anonymous beacons that show how the tool is used. A beacon goes out at the
+end of each run and each other command, as the GUI window opens and closes, and on a crash. It is
+**opt-out**. It is on by default, you see a notice once on the first run, and you can turn it off at
+any time. [docs/telemetry.md](docs/telemetry.md) lists every field.
 
-**What is collected**, and nothing else:
+**What is collected:**
 
-- app version and interface (`cli` or `gui`)
-- provider and model name
-- batch size (photo count), run duration, and outcome counts (successes, failures, cache hits, retry
-  recoveries, worker count, token totals, model time, dry-run flag), plus coarse failure buckets
-  (fixed labels like `timeout` or `metadata-write`, never error text)
-- CPU architecture, OS, OS release, and Python version
-- CPU and GPU model names (for example "Apple M3 Pro" or "NVIDIA GeForce RTX 4070"), logical core
-  count, and RAM size in whole gigabytes: generic values shared by millions of machines
-- on a crash: the exception *type* and its code location inside photo-tagger
-  (`module:function:line`), never the error message (messages can embed paths)
-- a random install id (a UUID generated once, **not** derived from any hardware identifier)
+- the app version, the interface (`cli` or `gui`), and the command
+- the provider and model, and where the model server runs: `localhost`, your network, or the name of
+  a known public service, never the URL
+- the settings and features you use, as switches, counts, and mode names, never the text or paths
+  they hold, and which settings differ from the defaults
+- per run: batch size, file types, duration, outcome counts, tokens, and model time
+- in the GUI: how long the window is busy, in use, or idle, how many photos you edit before saving
+  (counts only), and your screen size
+- the OS, CPU and GPU model names, core count, RAM, power source and battery level, locale, time
+  zone offset, and install method
+- on a crash: the exception *type* and its code location inside photo-tagger, never the message
+- a random install id (a UUID made once, **not** derived from any hardware identifier)
 
-**What is never collected:** file paths, filenames, photo contents, generated tags/titles/
-descriptions, prompts, API keys, IP addresses, error messages, or anything else that identifies you.
-The exact, closed payloads are the
-[`build_payload` and `build_crash_payload`](src/photo_tagger/telemetry.py) functions; there is
-nothing else to leak.
+**What is never collected:** photos, file paths, and filenames. The generated tags, titles, and
+descriptions, your prompts and hints, and server URLs are never sent either. Neither are API keys,
+IP addresses, error messages, or anything else that identifies you. The dataclasses in
+[`telemetry.py`](src/photo_tagger/telemetry.py) are the closed list of what leaves the machine.
 
 **Where it goes:** our own Cloudflare Worker at `telemetry.tagger.photo`. No third-party analytics
 service is involved, and the collector's full source (and the queries run against it) lives in
@@ -518,8 +518,8 @@ crash or slow down a run.
 - pass `--no-telemetry` on the command line
 - set `PHOTO_TAGGER_TELEMETRY=0` (or the cross-tool `DO_NOT_TRACK=1`) in your environment
 - put `enabled = false` under `[telemetry]` in your config file
-- in the desktop app, uncheck **Settings > Send Anonymous Telemetry** (the first-run dialog also
-  offers a one-click "Turn It Off"); the choice is remembered for next launch
+- in the desktop app, clear **Settings > Send Anonymous Telemetry**. The first-run dialog also
+  offers **Turn It Off**. The app keeps the choice for the next launch.
 
 An opt-out in the environment or on the command line wins over every opt-in, so exporting
 `PHOTO_TAGGER_TELEMETRY=0` once disables telemetry everywhere, including the GUI. In the desktop

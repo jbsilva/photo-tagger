@@ -1207,6 +1207,7 @@ def test_run_batch_serial_handles_keyboard_interrupt(tmp_path: Path) -> None:
     # --skip-from rerun can pick them up. on_complete still fires so a
     # --summary-file is written even when the run was aborted.
     assert len(totals.failed_files) >= 1
+    assert totals.interrupted is True
 
 
 def test_run_batch_concurrent_handles_keyboard_interrupt(tmp_path: Path) -> None:

@@ -33,11 +33,16 @@ module owns one slice of that pipeline:
   polling folder watcher behind the `watch` command.
 - `models.py` - shared data types: `GeneratedMetadata` (the model's schema), `InferenceResult`, and
   `KeywordSet` (the typed value object that replaced the old `dict[str, list[str]]`).
+- `telemetry.py` - the anonymous usage beacons: consent, the event dataclasses that are the closed
+  list of what is sent, and sending. `telemetry_facts.py` reduces URLs, install paths, and the
+  environment to coarse categories for it. A new field needs a line in `docs/telemetry.md`.
 - `cache.py`, `locking.py`, `image_io.py`, `discovery.py`, `progress.py`, `logging_setup.py`,
   `diagnostics.py` - focused single-purpose helpers; `errors.py` - the domain exception hierarchy.
 - `gui.py` - optional PySide6 desktop frontend (the `photo-tagger gui` command), a thin shell over
-  `run_batch`; `gui_state.py` - its Qt-free, unit-tested logic. The GUI is additive: no pipeline
-  code is Qt-aware. PySide6 lives behind the `[gui]` extra and is imported lazily.
+  `run_batch`; `gui_state.py` - its Qt-free, unit-tested logic; `gui_usage.py` - its Qt-free usage
+  tracking for telemetry (runs, sessions, busy and idle time, edits before a save). The GUI is
+  additive: no pipeline code is Qt-aware. PySide6 lives behind the `[gui]` extra and is imported
+  lazily.
 
 The version is single-sourced: `photo_tagger.__version__` reads installed distribution metadata, so
 `pyproject.toml`'s `[project].version` is the only code-side source. Do not reintroduce a hardcoded

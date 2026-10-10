@@ -66,6 +66,11 @@ All notable changes to this project are documented here. The format is based on
 - GUI: the **Remove** button's arrow offers **Remove Checked** and **Remove Unchecked**, so you can
   take photos off the list by checkbox, not only by selection.
 
+- Telemetry now reports the settings and features you use, as switches, counts, and mode names, and
+  how each run ends. In the GUI, each generation and save is a run of its own, and the session tells
+  how long the window was busy, in use, or idle. [docs/telemetry.md](docs/telemetry.md) lists every
+  field. You see the notice once more.
+
 ### Changed
 
 - `PHOTO_TAGGER_TELEMETRY` replaces `PHOTO_TAGGER_NO_TELEMETRY`. `0` turns telemetry off, and `1`

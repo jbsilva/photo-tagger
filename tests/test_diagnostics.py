@@ -61,6 +61,7 @@ def test_check_exiftool_reports_failure_when_absent(monkeypatch: pytest.MonkeyPa
     result = check_exiftool()
     assert result.ok is False
     assert "not found" in result.detail
+    assert result.problem == diagnostics.PROBLEM_NOT_FOUND
 
 
 def test_check_exiftool_honors_configured_executable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,6 +84,7 @@ def test_check_provider_ok_when_model_served(monkeypatch: pytest.MonkeyPatch) ->
     result = check_provider("lmstudio", "vision-pro", api_base_url=None, api_key=None)
     assert result.ok is True
     assert "available at" in result.detail
+    assert result.problem == ""
 
 
 def test_check_provider_fails_when_model_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -91,6 +93,7 @@ def test_check_provider_fails_when_model_missing(monkeypatch: pytest.MonkeyPatch
     result = check_provider("lmstudio", "vision-pro", api_base_url=None, api_key=None)
     assert result.ok is False
     assert "not served" in result.detail
+    assert result.problem == diagnostics.PROBLEM_MODEL_MISSING
 
 
 def test_check_provider_fails_when_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,6 +107,7 @@ def test_check_provider_fails_when_unreachable(monkeypatch: pytest.MonkeyPatch) 
     result = check_provider("ollama", "m", api_base_url="http://localhost:11434", api_key=None)
     assert result.ok is False
     assert "unreachable" in result.detail
+    assert result.problem == diagnostics.PROBLEM_UNREACHABLE
 
 
 def test_check_provider_flags_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,6 +123,7 @@ def test_check_provider_flags_missing_api_key(monkeypatch: pytest.MonkeyPatch) -
     result = check_provider("openai", "gpt-4o", api_base_url=None, api_key=None)
     assert result.ok is False
     assert "API key" in result.detail
+    assert result.problem == diagnostics.PROBLEM_NO_API_KEY
 
 
 # ---------------------------------------------------------------------------

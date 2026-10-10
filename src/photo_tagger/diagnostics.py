@@ -22,6 +22,13 @@ if TYPE_CHECKING:
     from photo_tagger.providers import ProviderName
 
 
+# Why a check failed, as a fixed code telemetry may report (the detail text names paths and URLs).
+PROBLEM_NOT_FOUND = "not-found"
+PROBLEM_NO_API_KEY = "no-api-key"
+PROBLEM_UNREACHABLE = "unreachable"
+PROBLEM_MODEL_MISSING = "model-missing"
+
+
 @dataclass(frozen=True, slots=True)
 class CheckResult:
     """Outcome of one diagnostic check."""
@@ -29,6 +36,7 @@ class CheckResult:
     name: str
     ok: bool
     detail: str
+    problem: str = ""  # one of the PROBLEM_* codes when the check failed
 
 
 def check_exiftool() -> CheckResult:
@@ -47,6 +55,7 @@ def check_exiftool() -> CheckResult:
             ok=False,
             detail=f"{target!r} not found; install ExifTool (https://exiftool.org) or set "
             "PHOTO_TAGGER_EXIFTOOL",
+            problem=PROBLEM_NOT_FOUND,
         )
     return CheckResult("ExifTool", ok=True, detail=path)
 
@@ -74,13 +83,24 @@ def check_provider(
             label,
             ok=False,
             detail="provider requires an API key; set OPENAI_API_KEY or pass --api-key",
+            problem=PROBLEM_NO_API_KEY,
         )
     try:
         models = backend.list_models(base_url, resolved_key)
     except ProviderError as exc:
-        return CheckResult(label, ok=False, detail=f"{base_url} unreachable: {exc}")
+        return CheckResult(
+            label,
+            ok=False,
+            detail=f"{base_url} unreachable: {exc}",
+            problem=PROBLEM_UNREACHABLE,
+        )
     if model_name not in models:
-        return CheckResult(label, ok=False, detail=f"not served at {base_url}")
+        return CheckResult(
+            label,
+            ok=False,
+            detail=f"not served at {base_url}",
+            problem=PROBLEM_MODEL_MISSING,
+        )
     return CheckResult(label, ok=True, detail=f"available at {base_url}")
 
 

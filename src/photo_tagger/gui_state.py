@@ -211,6 +211,14 @@ class PhotoItem:
     # Mixed-script bits of the generated text, carried over from the proposal so the detail pane
     # can point at them. Cleared when the photo is generated again.
     foreign_terms: list[str] = field(default_factory=list)
+    # The proposal as the window first showed it, so telemetry can count what was changed by hand
+    # before a save (the counts leave the machine, never the text). proposed_at is a monotonic
+    # clock reading, None until the photo is generated.
+    proposed_title: str = ""
+    proposed_description: str = ""
+    proposed_keywords: list[str] = field(default_factory=list)
+    proposed_at: float | None = None
+    hinted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +252,9 @@ class Proposal:
     vocabulary_mapped: int = 0
     vocabulary_dropped: list[str] = field(default_factory=list)
     foreign_terms: list[str] = field(default_factory=list)
+    # Whether a hint went into the prompt, and whether a second call rewrote mixed-script text.
+    hinted: bool = False
+    repaired: bool = False
 
 
 def expand_inputs(
@@ -539,13 +550,15 @@ def apply_proposal(
     proposal: Proposal,
     *,
     verbatim: Mapping[str, str] | None = None,
+    now: float | None = None,
 ) -> None:
     """
     Fill *item*'s existing metadata and seed its editable copy from *proposal*.
 
     The keywords are normalized on the way in (see :func:`normalize_keyword_lines`), so the field
     shows the set a save would write rather than the model's two raw lists. *verbatim* is the
-    vocabulary's own spelling of each term, which that merge must not touch.
+    vocabulary's own spelling of each term, which that merge must not touch. *now* stamps when the
+    proposal arrived, for the time a review takes.
     """
     item.existing_title = proposal.existing_title
     item.existing_description = proposal.existing_description
@@ -566,6 +579,11 @@ def apply_proposal(
     item.foreign_terms = list(proposal.foreign_terms)
     item.status = READY
     item.error = ""
+    item.proposed_title = item.title
+    item.proposed_description = item.description
+    item.proposed_keywords = list(item.keywords)
+    item.proposed_at = now
+    item.hinted = proposal.hinted
 
 
 # metadata.py keeps the sources as stable identifiers; only the window turns them into words.

@@ -47,6 +47,16 @@ def find_config_file() -> Path | None:
     return None
 
 
+def config_file_kind() -> str:
+    """Name where the config came from, never its path: ``env``, ``cwd``, ``user``, or ``none``."""
+    path = find_config_file()
+    if path is None:
+        return "none"
+    if os.getenv("PHOTO_TAGGER_CONFIG"):
+        return "env"
+    return "cwd" if path == _LOCAL_CONFIG else "user"
+
+
 def load_config(path: Path | None = None) -> dict[str, Any]:
     """
     Read the TOML config file and return its contents as a nested dict.
