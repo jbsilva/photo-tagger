@@ -30,6 +30,7 @@ from photo_tagger.cli_options import (
     WatchConfig,
     known_config_keys,
     load_defaults,
+    resolve_notify,
     to_pacing_plan,
     to_telemetry_settings,
 )
@@ -1555,17 +1556,20 @@ def test_resolve_sidecar_mode_precedence(
 @pytest.mark.parametrize(
     ("notify_flag", "sound_flag", "expected"),
     [
+        (None, False, (False, False)),
         (False, False, (False, False)),
         (True, False, (True, False)),
         (True, True, (True, True)),
         # --notify-sound alone: the sound is how the notification announces itself.
-        (False, True, (True, True)),
+        (None, True, (True, True)),
+        # A typed --no-notify (or notify = false in the config file) beats the sound.
+        (False, True, (False, False)),
     ],
 )
 def test_resolve_notify_precedence(
     expected: tuple[bool, bool],
     *,
-    notify_flag: bool,
+    notify_flag: bool | None,
     sound_flag: bool,
 ) -> None:
     """The two alert flags fold into (raise an alert, make it audible)."""
@@ -3327,6 +3331,32 @@ def test_a_typed_embed_in_photo_beats_a_saved_sidecar_mode(
         _run_app(["set", "--input", str(image), "--embed-in-photo", "--artist", "Ada"])
 
     assert seen == ["none"]
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        # The sound implies the alert, even over a notify = false the GUI saved.
+        (["--notify-sound"], (True, True)),
+        # A typed --no-notify beats the saved sound.
+        (["--no-notify"], (False, False)),
+    ],
+)
+def test_a_typed_notify_flag_beats_the_saved_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    typed: list[str],
+    expected: tuple[bool, bool],
+) -> None:
+    """What is typed wins over what the GUI saved, in both directions."""
+    config = tmp_path / "config.toml"
+    saved_off = "notify = false" if "--notify-sound" in typed else "notify_sound = true"
+    config.write_text(f"[display]\n{saved_off}\n", encoding="utf-8")
+    monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(config))
+
+    _command, bound, _ignored = main_module.app.parse_args(["--input", str(tmp_path), *typed])
+
+    assert resolve_notify(bound.arguments["display"]) == expected
 
 
 def test_config_hook_reports_an_alias_by_its_option_name(tmp_path: Path) -> None:

@@ -3355,6 +3355,25 @@ def test_notify_toggles_default_off_and_gate_each_other(window: gui.MainWindow) 
     assert sound.isEnabled() is False
 
 
+def test_a_saved_sound_survives_while_alerts_are_off(
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sound box keeps its saved value, so turning alerts back on brings the sound with it."""
+    config = tmp_path / "config.toml"
+    config.write_text("[display]\nnotify = false\nnotify_sound = true\n", encoding="utf-8")
+    monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(config))
+    win = gui.MainWindow()
+    try:
+        assert win._settings_menu._notify_action.isChecked() is False  # noqa: SLF001
+        sound = win._settings_menu._notify_sound_action  # noqa: SLF001
+        assert sound.isChecked() is True
+        assert sound.isEnabled() is False
+    finally:
+        win.close()
+
+
 def test_finished_generation_alerts_with_the_status_line(
     window: gui.MainWindow,
     monkeypatch: pytest.MonkeyPatch,

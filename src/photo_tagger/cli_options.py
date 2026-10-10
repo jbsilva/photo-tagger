@@ -597,8 +597,9 @@ class DisplayConfig:
             ),
         ),
     ] = False
+    # None is "not set", so --notify-sound alone can imply it while a typed --no-notify still wins.
     notify: Annotated[
-        bool,
+        bool | None,
         Parameter(
             name=("--notify",),
             negative="--no-notify",
@@ -609,7 +610,7 @@ class DisplayConfig:
                 "silence on a machine that has none"
             ),
         ),
-    ] = False
+    ] = None
     notify_sound: Annotated[
         bool,
         Parameter(
@@ -617,7 +618,7 @@ class DisplayConfig:
             negative="--no-notify-sound",
             help=(
                 "Play a sound with the notification, falling back to the terminal bell where "
-                "the platform offers nothing better. Implies --notify"
+                "the platform offers nothing better. Implies --notify, unless --no-notify is set"
             ),
         ),
     ] = False
@@ -1093,6 +1094,17 @@ def _drop_modes_the_shorthand_overrules(overrides: dict[str, Any], typed: tuple[
         overrides.pop("sidecar-mode", None)
 
 
+def _drop_a_notify_the_sound_implies(overrides: dict[str, Any], typed: tuple[str, ...]) -> None:
+    """
+    Leave the config file's ``notify`` out when the command line typed --notify-sound alone.
+
+    --notify-sound implies --notify, but the GUI saves ``notify`` with its settings, so a saved
+    ``notify = false`` would silence the sound just typed. A typed --no-notify still wins.
+    """
+    if "--notify-sound" in typed and not {"--notify", "--no-notify"}.intersection(typed):
+        overrides.pop("notify", None)
+
+
 class ConfigFileSource:
     """
     Cyclopts config hook that fills flags the user did not pass from the TOML config file.
@@ -1119,6 +1131,7 @@ class ConfigFileSource:
         )
         overrides = cli_config_overrides(load_config())
         _drop_modes_the_shorthand_overrules(overrides, self.invocation.cli_flags)
+        _drop_a_notify_the_sound_implies(overrides, self.invocation.cli_flags)
         if not overrides:
             return
         source = find_config_file()
@@ -1170,9 +1183,11 @@ def resolve_notify(display: DisplayConfig) -> tuple[bool, bool]:
     Fold the two notification flags into (raise an alert, make it audible).
 
     ``--notify-sound`` on its own is read as asking for both: the sound is how the notification
-    announces itself, so nobody means it to play without one.
+    announces itself, so nobody means it to play without one. A ``--no-notify`` (or ``notify =
+    false``) wins, and silences the sound with it.
     """
-    return (display.notify or display.notify_sound, display.notify_sound)
+    enabled = display.notify_sound if display.notify is None else display.notify
+    return (enabled, enabled and display.notify_sound)
 
 
 def to_extra_fields(config: CopyrightConfig) -> ExtraFields:

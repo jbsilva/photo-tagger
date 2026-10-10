@@ -172,9 +172,11 @@ class SettingsMenu(QMenu):
         self.addAction(self._undo_log_action)
         self._build_repair_action()
         # End-of-run desktop alert, resolved the same way the CLI resolves its two flags: a config
-        # that asks only for the sound is asking for the notification that carries it.
-        notify_enabled, notify_sound = resolve_notify(defaults.display)
-        self._build_notify_actions(enabled=notify_enabled, sound=notify_sound)
+        # that asks only for the sound is asking for the notification that carries it. The sound
+        # box keeps its own saved value, greyed out while the alert is off, so turning the alert
+        # back on brings the sound back too.
+        notify_enabled, _sound = resolve_notify(defaults.display)
+        self._build_notify_actions(enabled=notify_enabled, sound=defaults.display.notify_sound)
 
     def _build_repair_action(self) -> None:
         """Add the toggle that lets a run pay a second call to undo a mixed-script answer."""
