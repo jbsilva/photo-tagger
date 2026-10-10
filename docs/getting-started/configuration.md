@@ -102,6 +102,7 @@ preserve_description = false  # true keeps the description a photo already has.
 write_title = true        # Generate and write a title.
 write_description = true  # Generate and write a description.
 write_keywords = true     # Write keywords (false leaves existing keywords untouched).
+write_copyright = true    # Write the [copyright] block below (false skips it).
 backup_xmp = true         # Keep ExifTool's *_original backup before writing.
 sidecar_mode = "all"      # "none" embeds; "raw" is a sidecar for RAW only; "both" writes each.
 dry_run = false           # Run the model and log results, but write nothing.
@@ -109,6 +110,13 @@ dry_run = false           # Run the model and log results, but write nothing.
 # vocabulary = "~/keywords.txt"  # Restrict keywords to the terms in this file.
 # vocabulary_strict = false      # Drop keywords the vocabulary does not cover.
 # session_gap_minutes = 60       # Group photos into shoots and harmonize each shoot.
+
+[copyright]
+# artist = "Ada Lovelace"  # EXIF:Artist, XMP-dc:Creator, IPTC:By-line.
+# copyright_notice = "Copyright (c) {year} {artist}, All rights reserved"
+# rights = "© {year} {artist}, All rights reserved"  # XMP-dc:Rights only.
+# marked = true            # XMP-xmpRights:Marked; false declares public domain.
+# set_tags = ["XMP-xmpRights:WebStatement=https://example.com/terms"]
 
 [log]
 file_log_level = "DEBUG"     # DEBUG/INFO/WARNING/ERROR/CRITICAL/OFF.

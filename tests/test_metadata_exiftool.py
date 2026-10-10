@@ -5,19 +5,30 @@ The functions here invoke exiftool through pyexiftool, so they need the binary o
 to real (small) JPEG files in a tmp directory.
 """
 
+import os
 import shutil
+from datetime import UTC, datetime
 from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pytest
+from exiftool import ExifToolHelper  # type: ignore[attr-defined]
 from PIL import Image
 
+from photo_tagger.config import TAG_EXIF_DATE_TIME_ORIGINAL
+from photo_tagger.fields import SHOWN_FIELDS
 from photo_tagger.metadata import (
     FIELD_KEYWORDS,
     FIELD_TITLE,
+    SOURCE_IMAGE,
+    SOURCE_SIDECAR,
+    capture_year,
     iter_field_presence,
     metadata_targets,
+    read_all_tags,
     read_caption,
+    read_capture_years,
+    read_fields,
     read_image_context,
     write_metadata,
     write_metadata_everywhere,
@@ -293,3 +304,174 @@ def test_read_caption_round_trip(tmp_path: Path) -> None:
         use_sidecar=False,
     )
     assert read_caption(img) == ("A small title", "A small description.")
+
+
+def _set_capture_date(path: Path, when: str) -> None:
+    """Stamp EXIF:DateTimeOriginal so the copyright year has something to come from."""
+    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
+        et.set_tags(
+            files=[str(path)],
+            tags={TAG_EXIF_DATE_TIME_ORIGINAL: when},
+            params=["-overwrite_original"],
+        )
+
+
+def test_extra_tags_are_embedded_alongside_the_generated_fields(tmp_path: Path) -> None:
+    """A copyright payload rides in the same write as the keywords, in every namespace."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+
+    assert write_metadata(
+        img,
+        KeywordSet(subject=["Beach"]),
+        title="A title",
+        extra={
+            "EXIF:Artist": "Ada Lovelace",
+            "XMP-dc:Creator": "Ada Lovelace",
+            "IPTC:By-line": "Ada Lovelace",
+            "XMP-dc:Rights": "© 2019 Ada Lovelace",
+            "XMP-xmpRights:Marked": "True",
+        },
+        backup=False,
+        use_sidecar=False,
+    )
+
+    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
+        block = et.get_tags(
+            files=[str(img)],
+            tags=["EXIF:Artist", "XMP:Creator", "IPTC:By-line", "XMP:Rights", "XMP:Marked"],
+        )[0]
+    assert block["EXIF:Artist"] == "Ada Lovelace"
+    assert block["XMP:Creator"] == "Ada Lovelace"
+    assert block["IPTC:By-line"] == "Ada Lovelace"
+    assert block["XMP:Rights"] == "© 2019 Ada Lovelace"
+    assert block["XMP:Marked"] is True
+
+
+def test_sidecar_write_keeps_the_xmp_half_of_an_extra_payload(tmp_path: Path) -> None:
+    """
+    EXIF and IPTC are dropped for a sidecar rather than failing the write.
+
+    ExifTool answers "Nothing to write" when every tag in a payload belongs to a group an XMP file
+    cannot hold, which would fail every photo in a run that only asked for a credit.
+    """
+    img = _write_jpeg(tmp_path / "img.jpg")
+
+    assert write_metadata(
+        img,
+        KeywordSet(),
+        extra={"EXIF:Artist": "Ada Lovelace", "XMP-dc:Creator": "Ada Lovelace"},
+        backup=False,
+        use_sidecar=True,
+    )
+
+    sidecar = tmp_path / "img.xmp"
+    assert sidecar.is_file()
+    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
+        block = et.get_tags(files=[str(sidecar)], tags=["XMP:Creator", "EXIF:Artist"])[0]
+    assert block["XMP:Creator"] == "Ada Lovelace"
+    assert "EXIF:Artist" not in block
+
+
+def test_extra_tags_alone_are_enough_to_write(tmp_path: Path) -> None:
+    """The `set` command writes no keyword, title, or description, and must not be refused."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+
+    assert write_metadata(
+        img,
+        KeywordSet(),
+        extra={"EXIF:Artist": "Ada Lovelace"},
+        backup=False,
+        use_sidecar=False,
+    )
+
+    with ExifToolHelper() as et:  # type: ignore[no-untyped-call]
+        assert (
+            et.get_tags(files=[str(img)], tags=["EXIF:Artist"])[0]["EXIF:Artist"] == "Ada Lovelace"
+        )
+
+
+def test_capture_year_comes_from_the_photo_not_from_today(tmp_path: Path) -> None:
+    """A 2019 frame is stamped 2019, whenever the run happens."""
+    shot_in = 2019
+    img = _write_jpeg(tmp_path / "img.jpg")
+    _set_capture_date(img, f"{shot_in}:07:14 10:32:11")
+
+    assert read_capture_years([img]) == {img: shot_in}
+    assert capture_year(img, f"{shot_in}:07:14 10:32:11") == shot_in
+
+
+def test_capture_year_falls_back_to_the_file_mtime(tmp_path: Path) -> None:
+    """A photo with no capture date still gets a year: the file's own."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+    os.utime(img, (1_000_000_000, 1_000_000_000))  # 2001-09-09 UTC
+    expected = datetime.fromtimestamp(1_000_000_000, tz=UTC).astimezone().year
+
+    assert read_capture_years([img]) == {img: expected}
+    assert capture_year(img, None) == expected
+    assert capture_year(img, "not a date") == expected
+
+
+def test_read_fields_reports_the_tag_behind_every_value(tmp_path: Path) -> None:
+    """Two copyright tags that disagree are two lines, each naming where it came from."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+    write_metadata(
+        img,
+        KeywordSet(),
+        extra={"EXIF:Copyright": "Copyright (c) 2019 Ada", "XMP-dc:Rights": "© 2019 Ada"},
+        backup=False,
+        use_sidecar=False,
+    )
+
+    readings = read_fields(img, SHOWN_FIELDS)
+    copyrights = [r for r in readings if r.label == "Copyright"]
+    assert [(r.value, r.tag) for r in copyrights] == [
+        ("© 2019 Ada", "XMP:Rights"),
+        ("Copyright (c) 2019 Ada", "EXIF:Copyright"),
+    ]
+    assert all(r.source == SOURCE_IMAGE for r in copyrights)
+
+
+def test_read_fields_collapses_a_value_repeated_across_tags(tmp_path: Path) -> None:
+    """One credit written to three namespaces reads back as one line, not three."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+    write_metadata(
+        img,
+        KeywordSet(),
+        extra={
+            "EXIF:Artist": "Ada Lovelace",
+            "XMP-dc:Creator": "Ada Lovelace",
+            "IPTC:By-line": "Ada Lovelace",
+        },
+        backup=False,
+        use_sidecar=False,
+    )
+
+    creators = [r for r in read_fields(img, SHOWN_FIELDS) if r.label == "Creator"]
+    assert [(r.value, r.tag) for r in creators] == [("Ada Lovelace", "XMP:Creator")]
+
+
+def test_read_fields_marks_a_value_that_lives_in_the_sidecar(tmp_path: Path) -> None:
+    """Where a value lives is part of the answer: a catalog reads the sidecar, not the photo."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+    write_metadata(img, KeywordSet(), title="From the sidecar", backup=False, use_sidecar=True)
+
+    titles = [r for r in read_fields(img, SHOWN_FIELDS) if r.label == "Title"]
+    assert [(r.value, r.source) for r in titles] == [("From the sidecar", SOURCE_SIDECAR)]
+
+
+def test_read_fields_is_empty_for_a_missing_photo(tmp_path: Path) -> None:
+    """A path with nothing behind it reports nothing rather than raising."""
+    assert read_fields(tmp_path / "ghost.jpg", SHOWN_FIELDS) == []
+    assert read_all_tags(tmp_path / "ghost.jpg") == {}
+
+
+def test_read_all_tags_reports_each_file_and_drops_binary(tmp_path: Path) -> None:
+    """--all covers the photo and its sidecar, minus the payloads a terminal cannot show."""
+    img = _write_jpeg(tmp_path / "img.jpg")
+    write_metadata(img, KeywordSet(subject=["Beach"]), backup=False, use_sidecar=True)
+
+    by_file = read_all_tags(img)
+    assert set(by_file) == {str(img), str(tmp_path / "img.xmp")}
+    assert by_file[str(img)]["File:FileType"] == "JPEG"
+    assert by_file[str(tmp_path / "img.xmp")]["XMP:Subject"] == "Beach"
+    assert all(not v.startswith("(Binary data") for tags in by_file.values() for v in tags.values())

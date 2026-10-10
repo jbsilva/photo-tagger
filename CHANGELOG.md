@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- `--artist` and `--copyright` write your credit and copyright notice alongside the AI fields, into
+  EXIF, XMP, and IPTC, with `{year}` taken from each photo's own capture date. Also `--rights`,
+  `--marked`, `--set TAG=VALUE`, `--no-write-copyright`, and a `[copyright]` config table.
+
+- `photo-tagger set` writes those same fields on already-tagged photos, with no model call.
+
+- `photo-tagger show` prints what a photo carries, naming the ExifTool tag behind every value.
+  `--all` dumps every tag, `--json` pipes it elsewhere.
+
 - `--otel` exports an OpenTelemetry trace of every model call (timings, tokens, failures) to a
   collector you run, so a slow or expensive batch is something you can read rather than guess at.
   Off by default and pointed only where `--otel-endpoint` says. The photo itself is never exported;

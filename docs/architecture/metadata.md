@@ -130,6 +130,29 @@ from surviving underneath the new description.
 Title and description are only written when `--write-title` and `--write-description` are enabled
 (both are on by default). If the payload would be empty, nothing is written.
 
+### Fields the model has no part in
+
+`photo_tagger.fields` holds the other half of the payload: the metadata only the photographer knows.
+`--artist`, `--copyright`, `--rights`, and `--marked` become the tags below. `--set TAG=VALUE` adds
+any other tag under its ExifTool name. A tagging run and the `set` command write the same map. The
+`set` command calls no model.
+
+| Field        | Flag          | Tags written                                                |
+| ------------ | ------------- | ----------------------------------------------------------- |
+| Creator      | `--artist`    | `EXIF:Artist`\*, `XMP-dc:Creator`, `IPTC:By-line`           |
+| Copyright    | `--copyright` | `EXIF:Copyright`\*, `IPTC:CopyrightNotice`, `XMP-dc:Rights` |
+| Rights (XMP) | `--rights`    | `XMP-dc:Rights`, over the line above                        |
+| Rights flag  | `--marked`    | `XMP-xmpRights:Marked`                                      |
+
+\* For a sidecar target the writer drops the EXIF tags, because a sidecar holds XMP and nothing
+else. ExifTool ignores an EXIF tag there without a word, but a payload with nothing left in it fails
+the write.
+
+A notice is a template. `{year}` becomes the year of the photo, and `{artist}` becomes the name. The
+year comes from `EXIF:DateTimeOriginal`. If the photo carries no capture date, the year comes from
+the file's mtime. The pipeline reads that tag for the prompt anyway, so a dated notice costs no
+extra ExifTool call.
+
 ### Sidecar or embedded
 
 By default photo-tagger writes an XMP sidecar named after the image (`image.cr3` gets `image.xmp`).

@@ -1,7 +1,7 @@
 """Tests for metadata helpers that don't need a real exiftool binary."""
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -9,6 +9,7 @@ import pytest
 from exiftool.exceptions import ExifToolExecuteError
 
 from photo_tagger.config import TAG_EXIF_IMAGE_DESCRIPTION
+from photo_tagger.fields import SHOWN_FIELDS
 from photo_tagger.metadata import (
     FIELD_DESCRIPTION,
     FIELD_KEYWORDS,
@@ -21,6 +22,7 @@ from photo_tagger.metadata import (
     _dedup_preserving_first_case,
     _value_is_present,
     build_contextual_prompt,
+    capture_year,
     find_field_presence,
     find_tagged_images,
     format_metadata_value,
@@ -28,9 +30,11 @@ from photo_tagger.metadata import (
     managed_helper,
     plan_writes,
     prompt_with_hint,
+    read_all_tags,
     read_caption,
     read_caption_values,
     read_capture_times,
+    read_fields,
     read_image_context,
     read_keyword_sets,
     read_metadata_sources,
@@ -1529,3 +1533,32 @@ def test_read_keyword_sets_with_no_paths_reads_nothing(tmp_path: Path) -> None:
     assert read_keyword_sets([]) == {}
     with patch("photo_tagger.metadata.metadata_targets", return_value=[]):
         assert read_keyword_sets([tmp_path / "gone.cr3"]) == {tmp_path / "gone.cr3": KeywordSet()}
+
+
+def test_read_fields_degrades_when_exiftool_cannot_run(tmp_path: Path) -> None:
+    """A broken ExifTool reports nothing rather than raising into the command."""
+    image = tmp_path / "img.jpg"
+    image.write_bytes(b"\xff\xd8stub")
+
+    with patch(
+        "photo_tagger.metadata._batched_get_tags",
+        side_effect=FileNotFoundError("no exiftool"),
+    ):
+        assert read_fields(image, SHOWN_FIELDS) == []
+
+
+def test_read_all_tags_degrades_when_exiftool_cannot_run(tmp_path: Path) -> None:
+    """Same for the --all dump: an empty answer, and the failure in the log."""
+    image = tmp_path / "img.jpg"
+    image.write_bytes(b"\xff\xd8stub")
+
+    with patch(
+        "photo_tagger.metadata.managed_helper",
+        side_effect=FileNotFoundError("no exiftool"),
+    ):
+        assert read_all_tags(image) == {}
+
+
+def test_capture_year_falls_back_to_today_for_a_file_it_cannot_stat(tmp_path: Path) -> None:
+    """A copyright notice needs a year for every photo, even one that vanished mid-run."""
+    assert capture_year(tmp_path / "ghost.jpg", None) == datetime.now(tz=UTC).astimezone().year

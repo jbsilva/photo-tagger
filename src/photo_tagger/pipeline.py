@@ -22,6 +22,7 @@ from photo_tagger.config import (
     DEFAULT_TEMPERATURE,
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_USER_PROMPT,
+    TAG_EXIF_DATE_TIME_ORIGINAL,
     SidecarMode,
     build_repair_prompt,
 )
@@ -30,6 +31,7 @@ from photo_tagger.image_io import prepare_image_for_agent
 from photo_tagger.keywords import merge_keywords
 from photo_tagger.metadata import (
     build_contextual_prompt,
+    capture_year,
     managed_helper,
     read_image_context,
     write_metadata_everywhere,
@@ -46,6 +48,7 @@ if TYPE_CHECKING:
     from exiftool import ExifToolHelper  # type: ignore[attr-defined]
     from pydantic_ai import Agent, BinaryContent
 
+    from photo_tagger.fields import ExtraFields
     from photo_tagger.metadata import ImageContext
     from photo_tagger.models import GeneratedMetadata
     from photo_tagger.sessions import SessionPlan
@@ -158,6 +161,9 @@ class ProcessingOptions:
     # flag alone is free and always right, while a repair costs a call and can strip a foreign term
     # the photo genuinely showed.
     repair_language: bool = False
+    # Copyright, creator, and any raw tag assignment, written alongside the generated fields. None
+    # (and an empty one) means the run touches only what the model produced.
+    extra_fields: ExtraFields | None = None
 
 
 @contextlib.contextmanager
@@ -301,6 +307,9 @@ class _PendingWrite:
     text fields, what the photo already carries in all three (to merge keywords into, and to decide
     whether a preserved title or description is written at all), and the scratch pad the deferred
     :class:`ImageOutcome` is built from.
+
+    ``extra_tags`` is resolved here rather than at write time because its copyright year comes from
+    this photo's own capture date, which was read with the rest of its context.
     """
 
     keywords: list[str]
@@ -310,6 +319,7 @@ class _PendingWrite:
     scratch: _InferenceScratch
     existing_title: str | None = None
     existing_description: str | None = None
+    extra_tags: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -621,6 +631,23 @@ def _apply_session_vocabulary(
     return vocabulary.snap(keywords).keywords
 
 
+def _resolve_extra_tags(
+    image_path: Path,
+    context: ImageContext,
+    options: ProcessingOptions,
+) -> dict[str, str]:
+    """
+    Render this photo's copyright and ``--set`` tags, dating the notice by its capture year.
+
+    The capture date is already in *context* (the prompt uses it as a hint), so a per-photo year
+    costs no extra exiftool call.
+    """
+    if options.extra_fields is None or options.extra_fields.is_empty:
+        return {}
+    captured = context.camera_info.get(TAG_EXIF_DATE_TIME_ORIGINAL)
+    return options.extra_fields.resolve(capture_year(image_path, captured))
+
+
 def process_photo(
     image_path: Path,
     ctx: _BatchContext,
@@ -713,6 +740,7 @@ def process_photo(
             scratch=outcome_sink if outcome_sink is not None else {},
             existing_title=context.existing_title,
             existing_description=context.existing_description,
+            extra_tags=_resolve_extra_tags(image_path, context, options),
         )
         if ctx.pending is not None:
             # Session mode: hold the analysis until the whole shoot has one shared vocabulary.
@@ -788,6 +816,7 @@ def _write_pending(
             description=description,
             subject_keywords=merged_keywords.subject,
             hierarchical_keywords=merged_keywords.hierarchical,
+            extra_tags=pending.extra_tags,
         )
         return True
 
@@ -796,6 +825,7 @@ def _write_pending(
         merged_keywords,
         description=description,
         title=title,
+        extra=pending.extra_tags,
         backup=options.backup_xmp,
         sidecar_mode=options.sidecar_mode,
         et=et,

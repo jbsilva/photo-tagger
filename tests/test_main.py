@@ -23,7 +23,8 @@ from photo_tagger import (
     telemetry,
 )
 from photo_tagger.cli_options import load_defaults
-from photo_tagger.errors import BatchError, ProviderError
+from photo_tagger.errors import BatchError, DiscoveryError, ProviderError
+from photo_tagger.metadata import SOURCE_SIDECAR, FieldReading, WriteTarget
 from photo_tagger.pipeline import BatchTotals, ImageOutcome
 from photo_tagger.undo import UndoError, UndoJournal
 from photo_tagger.vocabulary_build import KeywordCensus, TrimResult
@@ -2293,3 +2294,299 @@ def test_watch_reads_the_interval_and_settle_flags(tmp_path: Path) -> None:
         _run_app(["watch", "--input", str(inbox), "--interval", "11", "--settle", "3"])
 
     assert seen == {"interval": 11.0, "settle": 3.0}
+
+
+def test_show_prints_the_curated_fields_with_their_tags(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The table names the value and the ExifTool tag behind it."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    readings = [
+        FieldReading(label="Creator", value="Ada Lovelace", tag="XMP:Creator", source="image file"),
+    ]
+
+    with patch.object(main_module, "read_fields", return_value=readings):
+        _run_app(["show", "--input", str(image)])
+
+    out = capsys.readouterr().out
+    assert "Ada Lovelace" in out
+    assert "XMP:Creator" in out
+
+
+def test_show_marks_a_value_that_lives_in_the_sidecar(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Which file answers is part of the report, because a catalog reads the sidecar."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    readings = [
+        FieldReading(
+            label="Title",
+            value="From the sidecar",
+            tag="XMP:Title",
+            source=SOURCE_SIDECAR,
+        ),
+    ]
+
+    with patch.object(main_module, "read_fields", return_value=readings):
+        _run_app(["show", "--input", str(image)])
+
+    assert "sidecar" in capsys.readouterr().out
+
+
+def test_show_json_emits_one_parseable_line_per_photo(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--json is a stream a pipe can read: one object per photo, never wrapped by the console."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    readings = [
+        FieldReading(
+            label="Copyright",
+            value="© 2019 Ada Lovelace, All rights reserved, and then some more text to be sure",
+            tag="XMP:Rights",
+            source="image file",
+        ),
+    ]
+
+    with patch.object(main_module, "read_fields", return_value=readings):
+        _run_app(["show", "--input", str(image), "--json"])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["file"] == str(image.resolve())
+    assert payload["fields"][0]["tag"] == "XMP:Rights"
+
+
+def test_show_reports_a_photo_with_no_metadata(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Nothing found is said plainly, rather than printing an empty table."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+
+    with patch.object(main_module, "read_fields", return_value=[]):
+        _run_app(["show", "--input", str(image)])
+
+    assert "no metadata" in capsys.readouterr().out
+
+
+def test_show_all_dumps_every_tag_per_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--all groups by the file each tag came from, photo and sidecar alike."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    dump = {str(image): {"EXIF:Artist": "Ada"}, str(tmp_path / "img.xmp"): {"XMP:Creator": "Ada"}}
+
+    with patch.object(main_module, "read_all_tags", return_value=dump):
+        _run_app(["show", "--input", str(image), "--all"])
+
+    out = capsys.readouterr().out
+    assert "EXIF:Artist" in out
+    assert "XMP:Creator" in out
+
+
+def test_show_exits_1_when_nothing_matches(tmp_path: Path) -> None:
+    """An empty folder is exit 1 with discovery's own message, so a script notices."""
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.app(["show", "--input", str(tmp_path)])
+    assert exit_info.value.code == 1
+
+
+def test_set_writes_the_copyright_fields_dated_per_photo(tmp_path: Path) -> None:
+    """The year comes from each photo, so one command stamps a decade of shoots correctly."""
+    old = _make_jpeg(tmp_path / "old.cr3")
+    new = _make_jpeg(tmp_path / "new.cr3")
+    written: dict[Path, dict[str, str]] = {}
+
+    def fake_write(image: Path, _keywords: object, **kwargs: Any) -> tuple[bool, list[Any]]:  # noqa: ANN401 - mirrors the writer it stands in for.
+        written[image] = kwargs["extra"]
+        return (True, [])
+
+    with (
+        patch.object(main_module, "read_capture_years", return_value={old: 2011, new: 2025}),
+        patch.object(main_module, "write_metadata_everywhere", side_effect=fake_write),
+    ):
+        _run_app(
+            [
+                "set",
+                "--input",
+                str(old),
+                "--input",
+                str(new),
+                "--artist",
+                "Ada Lovelace",
+                "--copyright",
+                "Copyright (c) {year} {artist}, All rights reserved",
+                "--rights",
+                "© {year} {artist}, All rights reserved",
+                "--marked",
+            ],
+        )
+
+    assert written[old]["EXIF:Copyright"] == "Copyright (c) 2011 Ada Lovelace, All rights reserved"
+    assert written[new]["XMP-dc:Rights"] == "© 2025 Ada Lovelace, All rights reserved"
+    assert written[new]["XMP-dc:Creator"] == "Ada Lovelace"
+    assert written[new]["XMP-xmpRights:Marked"] == "True"
+
+
+def test_set_records_its_writes_for_undo(tmp_path: Path) -> None:
+    """A run that went to the wrong folder is one `photo-tagger undo` away."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    target = WriteTarget(path=tmp_path / "img.xmp", use_sidecar=True, existed=False)
+    journal = MagicMock()
+
+    with (
+        patch.object(main_module, "read_capture_years", return_value={image.resolve(): 2025}),
+        patch.object(main_module, "write_metadata_everywhere", return_value=(True, [target])),
+        patch.object(main_module, "open_journal", return_value=journal),
+    ):
+        _run_app(["set", "--input", str(image), "--artist", "Ada"])
+
+    assert journal.record.call_args.kwargs["created"] is True
+
+
+def test_set_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """--dry-run prints the tags each photo would get and opens nothing for writing."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+
+    with (
+        patch.object(main_module, "read_capture_years", return_value={image.resolve(): 2025}),
+        patch.object(main_module, "write_metadata_everywhere") as write,
+    ):
+        _run_app(["set", "--input", str(image), "--dry-run", "--copyright", "(c) {year} Ada"])
+
+    assert "(c) 2025 Ada" in capsys.readouterr().out
+    write.assert_not_called()
+
+
+def test_set_exits_1_when_no_field_was_asked_for(tmp_path: Path) -> None:
+    """A `set` with nothing to set is a mistake worth reporting, not a silent no-op."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.app(["set", "--input", str(image)])
+    assert exit_info.value.code == 1
+
+
+def test_set_exits_1_on_a_template_it_cannot_fill(tmp_path: Path) -> None:
+    """A typo in the notice stops the run before the first photo is touched."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    with (
+        patch.object(main_module, "write_metadata_everywhere") as write,
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        main_module.app(["set", "--input", str(image), "--copyright", "(c) {shot_at}"])
+    assert exit_info.value.code == 1
+    write.assert_not_called()
+
+
+def test_set_exits_1_when_a_write_fails(tmp_path: Path) -> None:
+    """A failed write is exit 1, so a scripted stamp does not report success it did not have."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    with (
+        patch.object(main_module, "read_capture_years", return_value={image.resolve(): 2025}),
+        patch.object(main_module, "write_metadata_everywhere", return_value=(False, [])),
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        main_module.app(["set", "--input", str(image), "--artist", "Ada"])
+    assert exit_info.value.code == 1
+
+
+def test_tag_passes_the_copyright_fields_to_the_pipeline(tmp_path: Path) -> None:
+    """The same flags work on a tagging run, so one pass credits the photos it touches."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--artist", "Ada", "--copyright", "(c) {year} {artist}"])
+
+    fields = captured["options"].extra_fields
+    assert fields.resolve(2025)["EXIF:Copyright"] == "(c) 2025 Ada"
+
+
+def test_tag_reads_the_copyright_table_from_the_config_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[copyright] in the config file is how "always credit my photos" is spelled."""
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[copyright]\nartist = "Ada Lovelace"\ncopyright_notice = "(c) {year} {artist}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(config))
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image)])
+
+    assert captured["options"].extra_fields.resolve(2025)["EXIF:Artist"] == "Ada Lovelace"
+
+
+def test_show_all_json_emits_the_raw_tag_dump(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--all --json hands over everything ExifTool reported, keyed by file."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    dump = {str(image): {"EXIF:Artist": "Ada"}}
+
+    with patch.object(main_module, "read_all_tags", return_value=dump):
+        _run_app(["show", "--input", str(image), "--all", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tags"][str(image)]["EXIF:Artist"] == "Ada"
+
+
+@pytest.mark.parametrize("command", ["show", "set"])
+def test_read_and_write_commands_report_an_unusable_input(tmp_path: Path, command: str) -> None:
+    """Discovery failing is exit 1 with the reason, not a traceback."""
+    image = _make_jpeg(tmp_path / "img.cr3")
+    args = [command, "--input", str(image)]
+    if command == "set":
+        args += ["--artist", "Ada"]
+
+    with (
+        patch.object(main_module, "resolve_image_batch", side_effect=DiscoveryError("unreadable")),
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        main_module.app(args)
+
+    assert exit_info.value.code == 1
+
+
+def test_set_exits_1_when_no_photo_matches(tmp_path: Path) -> None:
+    """Asking to credit an empty folder is exit 1, not a silent success."""
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.app(["set", "--input", str(tmp_path), "--artist", "Ada"])
+    assert exit_info.value.code == 1
+
+
+def test_no_write_copyright_skips_a_configured_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag skips a copyright the config file sets, for one run, without editing the file."""
+    config = tmp_path / "config.toml"
+    config.write_text('[copyright]\nartist = "Ada Lovelace"\n', encoding="utf-8")
+    monkeypatch.setenv("PHOTO_TAGGER_CONFIG", str(config))
+    image = _make_jpeg(tmp_path / "img.cr3")
+    captured: dict[str, Any] = {}
+
+    setup, create_agent, run_batch = _patches(captured)
+    with setup, create_agent, run_batch:
+        _run_app(["--input", str(image), "--no-write-copyright"])
+
+    assert captured["options"].extra_fields.is_empty
+
+
+def test_the_copyright_table_wins_over_a_stale_output_key() -> None:
+    """The GUI saves [copyright]; an older [output] artist must not undo what it saved."""
+    defaults = load_defaults({"output": {"artist": "Old"}, "copyright": {"artist": "Me"}})
+    assert defaults.output.artist == "Me"

@@ -23,6 +23,7 @@ charliermarsh
 chave
 CHEVRONLIGHT
 Cim
+CIPA
 cogvlm
 configfile
 conftest
@@ -96,6 +97,7 @@ iptc
 IPTC
 isort
 jbsilva
+José
 kwarg
 LANCZOS
 Landschaft

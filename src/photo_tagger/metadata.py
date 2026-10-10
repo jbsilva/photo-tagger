@@ -3,7 +3,7 @@
 import contextlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from itertools import batched, chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,10 +14,14 @@ from loguru import logger
 
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
+    from collections.abc import Generator, Iterable, Mapping, Sequence
+
+    from photo_tagger.fields import FieldSpec
 
 from photo_tagger.config import (
     CAMERA_TAGS,
+    CITY_TAGS,
+    COUNTRY_TAGS,
     LOCATION_TAGS,
     NON_RAW_EXTENSIONS,
     TAG_EXIF_DATE_TIME_ORIGINAL,
@@ -26,6 +30,7 @@ from photo_tagger.config import (
     TAG_IPTC_OBJECT_NAME,
     TAG_XMP_DESCRIPTION,
     TAG_XMP_HIERARCHICAL_SUBJECT,
+    TAG_XMP_IMAGE_DESCRIPTION,
     TAG_XMP_SUBJECT,
     TAG_XMP_TITLE,
     TAG_XMP_WEIGHTED_FLAT_SUBJECT,
@@ -71,12 +76,12 @@ _GPS_TAG = "Composite:GPSPosition"
 # Existing title/description tags, in read priority order (first non-empty wins). The GUI
 # surfaces these so a user can see and edit what is already on the photo before saving.
 _TITLE_TAGS: tuple[str, ...] = (TAG_XMP_TITLE, TAG_IPTC_OBJECT_NAME)
-# "XMP:ImageDescription" is the family-0 spelling of XMP-tiff:ImageDescription, the mirror
+# TAG_XMP_IMAGE_DESCRIPTION is the read spelling of XMP-tiff:ImageDescription, the mirror
 # write_metadata itself produces, so our own sidecars (and other tools' tiff namespace
 # descriptions) count on re-read.
 _DESCRIPTION_TAGS: tuple[str, ...] = (
     TAG_XMP_DESCRIPTION,
-    "XMP:ImageDescription",
+    TAG_XMP_IMAGE_DESCRIPTION,
     TAG_EXIF_IMAGE_DESCRIPTION,
 )
 
@@ -517,6 +522,120 @@ SOURCE_SIDECAR = "XMP sidecar"
 
 
 @dataclass(slots=True, frozen=True)
+class FieldReading:
+    """One value a photo carries for a shown field: what it says, and which tag holds it."""
+
+    label: str
+    value: str
+    tag: str
+    # SOURCE_IMAGE or SOURCE_SIDECAR.
+    source: str
+
+
+def _readings_for_field(spec: FieldSpec, blocks: list[dict[str, Any]]) -> list[FieldReading]:
+    """
+    Collect one field's distinct values across the photo and its sidecar, best first.
+
+    Distinct is the point: a photo credited the same way in XMP, EXIF, and IPTC is one line, while
+    one whose EXIF copyright disagrees with its XMP rights is two, which is exactly the
+    disagreement somebody runs ``show`` to find.
+    """
+    readings: list[FieldReading] = []
+    seen: set[str] = set()
+    for tag in spec.tags:
+        for block in _sidecar_first(blocks):
+            value = block.get(tag)
+            if not _value_is_present(value):
+                continue
+            text = format_metadata_value(value)
+            if text in seen:
+                continue
+            seen.add(text)
+            readings.append(
+                FieldReading(
+                    label=spec.label,
+                    value=text,
+                    tag=tag,
+                    source=SOURCE_SIDECAR if _is_sidecar_block(block) else SOURCE_IMAGE,
+                ),
+            )
+    return readings
+
+
+def read_fields(
+    image_path: Path,
+    specs: Sequence[FieldSpec],
+    *,
+    et: ExifToolHelper | None = None,
+) -> list[FieldReading]:
+    """
+    Read the fields in *specs* off a photo and its XMP sidecar, in one exiftool call.
+
+    Returns one entry per distinct value, in the order *specs* lists the fields; a field nothing
+    carries is simply absent. This is what ``photo-tagger show`` prints, and it reports the tag
+    behind every value because "which copyright does Lightroom actually see" is a question about the
+    tag, not about the photo.
+    """
+    targets = metadata_targets(image_path)
+    if not targets:
+        return []
+
+    tags = list(dict.fromkeys(tag for spec in specs for tag in spec.tags))
+    try:
+        blocks = _batched_get_tags(et, files=targets, tags=tags)
+    except _EXIFTOOL_ERRORS as exc:
+        logger.exception("failed_to_read_fields", file=str(image_path), error=str(exc))
+        return []
+    return [reading for spec in specs for reading in _readings_for_field(spec, blocks)]
+
+
+def read_all_tags(
+    image_path: Path,
+    *,
+    et: ExifToolHelper | None = None,
+) -> dict[str, dict[str, str]]:
+    """
+    Read every tag exiftool reports, keyed by the file it came from.
+
+    The escape hatch behind ``show --all``: the curated field list answers the usual question, and
+    this answers the unusual one without making the user leave the tool. Binary payloads (thumbnail
+    data, colour profiles) are left out, since a terminal cannot show them anyway.
+    """
+    targets = metadata_targets(image_path)
+    if not targets:
+        return {}
+
+    try:
+        with managed_helper(et) as helper:
+            blocks: list[dict[str, Any]] = helper.get_metadata(files=targets)
+    except _EXIFTOOL_ERRORS as exc:
+        logger.exception("failed_to_read_all_tags", file=str(image_path), error=str(exc))
+        return {}
+
+    by_file: dict[str, dict[str, str]] = {}
+    for block in blocks:
+        source = str(block.get("SourceFile", image_path))
+        by_file[source] = _printable_tags(block)
+    return by_file
+
+
+# How exiftool renders a value it will not print: a thumbnail, an ICC profile, a maker note blob.
+_BINARY_MARKER = "(Binary data"
+
+
+def _printable_tags(block: dict[str, Any]) -> dict[str, str]:
+    """Flatten one exiftool result block to text, dropping its own key and any binary payload."""
+    printable: dict[str, str] = {}
+    for tag, value in block.items():
+        if tag == "SourceFile":
+            continue
+        text = format_metadata_value(value)
+        if not text.startswith(_BINARY_MARKER):
+            printable[tag] = text
+    return printable
+
+
+@dataclass(slots=True, frozen=True)
 class CaptionValue:
     """One title or description found on a photo, and which file it came from."""
 
@@ -826,6 +945,51 @@ def read_capture_times(
     return times
 
 
+def _year_of(image_path: Path, captured: datetime | None) -> int:
+    """
+    Return *captured*'s year, or the file's own mtime year, or this year.
+
+    A copyright notice needs a year for every photo, so this always answers. The mtime is the
+    honest second choice: for a scan or a photo whose EXIF was stripped, it is usually the day the
+    file was made. The current year is the last resort, for a file we cannot even stat.
+    """
+    if captured is not None:
+        return captured.year
+    try:
+        return datetime.fromtimestamp(image_path.stat().st_mtime, tz=UTC).astimezone().year
+    except OSError as exc:
+        logger.warning("capture_year_fell_back_to_today", file=str(image_path), error=str(exc))
+        return datetime.now(tz=UTC).astimezone().year
+
+
+def capture_year(image_path: Path, captured: str | None) -> int:
+    """
+    Return the year a photo was taken, from an already-read ``EXIF:DateTimeOriginal`` string.
+
+    For the pipeline, which reads that tag as prompt context anyway (see :func:`read_image_context`)
+    and must not pay a second exiftool call per photo to date a copyright notice. Falls back to the
+    file's mtime when the tag is missing or malformed.
+    """
+    parsed = _parse_exif_datetime(captured) if captured else None
+    return _year_of(image_path, parsed)
+
+
+def read_capture_years(
+    image_paths: Iterable[Path],
+    *,
+    et: ExifToolHelper | None = None,
+) -> dict[Path, int]:
+    """
+    Return the year every photo in *image_paths* was taken, in one batched exiftool call.
+
+    The counterpart to :func:`capture_year` for callers that have read nothing yet, such as the
+    ``set`` command. Every input path gets an answer (see :func:`_year_of`).
+    """
+    paths = list(image_paths)
+    captured = read_capture_times(paths, et=et)
+    return {path: _year_of(path, captured.get(path)) for path in paths}
+
+
 def _first_present(values: dict[str, str], *tags: str) -> str | None:
     """Return the first non-empty value in *values* lookup-ordered by *tags*."""
     for tag in tags:
@@ -853,13 +1017,10 @@ def select_location(location_tags: dict[str, str]) -> tuple[str | None, str | No
     present in each category, the same fallback order :func:`_format_location` uses for the prompt
     hint and the CSV report uses for its columns.
     """
-    city = _first_present(location_tags, "XMP-photoshop:City", "IPTC:City")
-    country = _first_present(
-        location_tags,
-        "XMP-photoshop:Country",
-        "IPTC:Country-PrimaryLocationName",
+    return (
+        _first_present(location_tags, *CITY_TAGS),
+        _first_present(location_tags, *COUNTRY_TAGS),
     )
-    return city, country
 
 
 def _format_location(location_tags: dict[str, str]) -> str | None:
@@ -945,18 +1106,37 @@ def build_contextual_prompt(  # noqa: PLR0913 - each kwarg renders an independen
     return "\n\n".join(sections)
 
 
+# Tag groups an XMP sidecar cannot hold. ExifTool drops them without complaint, but a payload left
+# with nothing in it fails the write outright ("Nothing to write"), which is what a --set of EXIF
+# tags under the default sidecar mode would otherwise do to every photo in the run.
+_NON_XMP_GROUPS = ("EXIF", "IPTC")
+
+
+def _sidecar_writable(tags: Mapping[str, str]) -> dict[str, str]:
+    """Keep the extra tags an XMP sidecar can actually carry (see :data:`_NON_XMP_GROUPS`)."""
+    return {
+        tag: value
+        for tag, value in tags.items()
+        if tag.split(":", 1)[0].upper() not in _NON_XMP_GROUPS
+    }
+
+
 def _build_write_payload(
     keywords: KeywordSet,
     description: str | None,
     title: str | None,
     *,
     use_sidecar: bool,
+    extra: Mapping[str, str] | None = None,
 ) -> dict[str, str | list[str]]:
     """
     Build the exiftool tag map that write_metadata will apply.
 
     *use_sidecar* decides whether EXIF tags belong in the payload: a sidecar holds XMP and nothing
     else, so they are only written when the target is the photo itself.
+
+    *extra* is the resolved copyright and ``--set`` tags (see :mod:`photo_tagger.fields`). It is
+    applied last, so a user who names a tag by hand overrides what the generated fields put there.
     """
     payload: dict[str, str | list[str]] = {}
     if subjects := keywords.subject:
@@ -980,6 +1160,8 @@ def _build_write_payload(
     if title:
         payload["XMP-dc:Title"] = title
         payload[TAG_IPTC_OBJECT_NAME] = title
+    if extra:
+        payload.update(_sidecar_writable(extra) if use_sidecar else extra)
     return payload
 
 
@@ -1070,6 +1252,7 @@ def write_metadata_everywhere(  # noqa: PLR0913 - distinct optional fields are c
     *,
     description: str | None = None,
     title: str | None = None,
+    extra: Mapping[str, str] | None = None,
     backup: bool = True,
     sidecar_mode: SidecarMode,
     et: ExifToolHelper | None = None,
@@ -1089,6 +1272,7 @@ def write_metadata_everywhere(  # noqa: PLR0913 - distinct optional fields are c
             keywords,
             description=description,
             title=title,
+            extra=extra,
             backup=backup,
             use_sidecar=target.use_sidecar,
             et=et,
@@ -1142,6 +1326,7 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
     *,
     description: str | None = None,
     title: str | None = None,
+    extra: Mapping[str, str] | None = None,
     backup: bool = True,
     use_sidecar: bool = True,
     et: ExifToolHelper | None = None,
@@ -1155,6 +1340,8 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         description: Optional short description to write to XMP (and, when embedding, to
             EXIF:ImageDescription, so no camera-written value survives underneath).
         title: Optional short title to write to XMP-dc:Title and IPTC:ObjectName.
+        extra: Optional resolved tag map for the fields the model has no part in (copyright,
+            creator, raw `--set` assignments). See :mod:`photo_tagger.fields`.
         backup: If True, let ExifTool create a backup (`_original` suffix where applicable).
         use_sidecar: If True, write to a sidecar; otherwise embed in the source file.
         et: Optional already-open ExifToolHelper to reuse across a batch.
@@ -1163,7 +1350,13 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         True on success, False on failure.
     """
     target_path = write_target(image_path, use_sidecar=use_sidecar)
-    payload = _build_write_payload(keywords, description, title, use_sidecar=use_sidecar)
+    payload = _build_write_payload(
+        keywords,
+        description,
+        title,
+        use_sidecar=use_sidecar,
+        extra=extra,
+    )
     if not payload:
         logger.warning("no_data_to_write", file=image_path.name)
         return False
@@ -1185,6 +1378,7 @@ def write_metadata(  # noqa: PLR0913 - distinct optional fields are clearer as k
         mode="sidecar" if use_sidecar else "embedded",
         subject_keywords=len(keywords.subject),
         hierarchical_keywords=len(keywords.hierarchical),
+        extra_tags=len(extra or {}),
         backup_created=backup,
     )
     return True

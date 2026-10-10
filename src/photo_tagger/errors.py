@@ -27,6 +27,10 @@ class ObservabilityError(PhotoTaggerError):
     """``--otel`` was asked for but tracing cannot be set up (no endpoint, or no OTel SDK)."""
 
 
+class FieldError(PhotoTaggerError):
+    """A copyright template or a ``--set TAG=VALUE`` assignment cannot be used as written."""
+
+
 class ConfigFileError(PhotoTaggerError):
     """
     The config file on disk cannot be updated in place.

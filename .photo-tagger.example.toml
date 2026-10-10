@@ -44,6 +44,7 @@
 # preserve_description = false # true = keep the description a photo already has
 # write_description = true
 # write_title = true
+# write_copyright = true     # false = skip the [copyright] block below
 # backup_xmp = true           # ExifTool _original backup
 # sidecar_mode = "all"        # "none" = embed; "raw" = sidecar for RAW only; "both" = each
 # dry_run = false
@@ -51,6 +52,18 @@
 # vocabulary = "keywords.txt" # Lightroom keyword export, or one term/path per line
 # vocabulary_strict = false   # true = drop keywords the vocabulary does not cover
 # session_gap_minutes = 60    # group photos into shoots this far apart and harmonize each
+
+# --- copyright ----------------------------------------------------------------
+#
+# The fields no model can guess. Written by every tagging run, and by
+# `photo-tagger set` on its own. {year} is the year the photo was taken.
+
+[copyright]
+# artist = "Your Name"        # EXIF:Artist, XMP-dc:Creator, IPTC:By-line
+# copyright_notice = "Copyright (c) {year} {artist}, All rights reserved"
+# rights = "© {year} {artist}, All rights reserved"   # XMP-dc:Rights only
+# marked = true               # XMP-xmpRights:Marked; false = public domain
+# set_tags = ["XMP-xmpRights:WebStatement=https://example.com/terms"]
 
 # --- filter -------------------------------------------------------------------
 

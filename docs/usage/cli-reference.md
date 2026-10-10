@@ -15,16 +15,18 @@ precedence rules and TOML layout.
 
 ## Commands
 
-Running `photo-tagger` with image inputs tags them (the default command). Five subcommands exist:
+Running `photo-tagger` with image inputs tags them (the default command). Seven subcommands exist:
 
-| Command                   | Description                                                                                               |
-| ------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `photo-tagger`            | Tag the given images (default). Documented by the option groups below.                                    |
-| `photo-tagger doctor`     | Pre-flight check: verifies ExifTool is on `PATH` and the provider serves the model, then exits 0/1.       |
-| `photo-tagger vocabulary` | Build a keyword file from a library's own keywords (see [Building a vocabulary](#building-a-vocabulary)). |
-| `photo-tagger watch`      | Watch folders and tag photos as they arrive (see [Watching a folder](#watching-a-folder)).                |
-| `photo-tagger undo`       | Put back what the last run wrote (see [Undoing a run](#undoing-a-run)).                                   |
-| `photo-tagger gui`        | Launch the optional desktop GUI. Requires the `gui` extra; see [Desktop GUI](gui.md).                     |
+| Command                   | Description                                                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `photo-tagger`            | Tag the given images (default). Documented by the option groups below.                                      |
+| `photo-tagger doctor`     | Pre-flight check: verifies ExifTool is on `PATH` and the provider serves the model, then exits 0/1.         |
+| `photo-tagger show`       | Print the metadata a photo already carries (see [Copyright and other fields](#copyright-and-other-fields)). |
+| `photo-tagger set`        | Write copyright and other fields without calling a model (same section).                                    |
+| `photo-tagger vocabulary` | Build a keyword file from a library's own keywords (see [Building a vocabulary](#building-a-vocabulary)).   |
+| `photo-tagger watch`      | Watch folders and tag photos as they arrive (see [Watching a folder](#watching-a-folder)).                  |
+| `photo-tagger undo`       | Put back what the last run wrote (see [Undoing a run](#undoing-a-run)).                                     |
+| `photo-tagger gui`        | Launch the optional desktop GUI. Requires the `gui` extra; see [Desktop GUI](gui.md).                       |
 
 `doctor` accepts `--provider`, `-m/--model`, `-u/--url`, and `-k/--api-key` (same meanings as below)
 and honors the same config file and environment variables. Run it first when a tagging run will not
@@ -96,6 +98,7 @@ sidecar next to each image and leaves the original untouched.
 | `--write-title` / `--no-write-title`                 | write (`true`)      | `-`     | Generate and write a title.                                                                                                                                                                  |
 | `--write-description` / `--no-write-description`     | write (`true`)      | `-`     | Generate and write a description.                                                                                                                                                            |
 | `--write-keywords` / `--no-write-keywords`           | write (`true`)      | `-`     | Write keywords (merged per `--preserve-keywords`); `--no-write-keywords` leaves existing ones.                                                                                               |
+| `--write-copyright` / `--no-write-copyright`         | write (`true`)      | `-`     | Write the copyright block below. Nothing is written unless it is configured; the flag is how one run skips a configured one.                                                                 |
 | `--write-sidecar` / `--embed-in-photo`               | sidecar (`true`)    | `-`     | Shorthand for `--sidecar-mode all` vs `--sidecar-mode none`.                                                                                                                                 |
 | `--sidecar-mode` {all,none,raw,both}                 | `all`               | `-`     | Where metadata goes: a sidecar per photo, inside each photo, (`raw`) a sidecar for RAW files and embedded for the rest, or (`both`) each photo and a sidecar. Wins over the two flags above. |
 | `--backup-xmp` / `--no-backup-xmp`                   | backup (`true`)     | `-`     | Keep ExifTool's `*_original` backup before writing; `--no-backup-xmp` passes `-overwrite_original`.                                                                                          |
@@ -197,6 +200,87 @@ Two details worth knowing:
     filesystem reason is not the kind of failure a second attempt clears. Analysis failures are
     still retried as usual, and a photo recovered by the retry pass lands on its shoot's agreed
     terms.
+
+## Copyright and other fields
+
+No model can guess who took a photo or who owns it. You write those fields yourself, and they go
+into the same ExifTool call as the generated metadata. They belong to the output group, so
+`photo-tagger` and `photo-tagger watch` both take them.
+
+| Flag                         | Default | Env var | Description                                                                                         |
+| ---------------------------- | ------- | ------- | --------------------------------------------------------------------------------------------------- |
+| `--artist`, `--creator` NAME | none    | `-`     | Who took the photo. Goes to `EXIF:Artist`, `XMP-dc:Creator`, and `IPTC:By-line`.                    |
+| `--copyright` TEXT           | none    | `-`     | The copyright notice. Goes to `EXIF:Copyright`, `IPTC:CopyrightNotice`, and `XMP-dc:Rights`.        |
+| `--rights` TEXT              | none    | `-`     | `XMP-dc:Rights` alone, for when it reads differently from `--copyright`.                            |
+| `--marked` / `--not-marked`  | unset   | `-`     | `XMP-xmpRights:Marked`: under copyright, or in the public domain. Left alone when you pass neither. |
+| `--set` TAG=VALUE            | none    | `-`     | Any other tag, under its ExifTool name. Repeatable. An empty value deletes the tag.                 |
+
+`--copyright` and `--rights` are templates. `{year}` becomes the year of the photo. `{artist}`
+becomes the name from `--artist`. The year is the photo's own `EXIF:DateTimeOriginal`. If the photo
+carries no capture date, the year comes from the file's timestamp. One command therefore stamps a
+decade of shoots, each with its own year.
+
+EXIF types its copyright and artist fields as ASCII. UTF-8 only became legal there in Exif 3.0 (CIPA
+DC-008-2023). Nothing in a file says which of the two a value uses, so a `©` in `EXIF:Copyright` is
+a bet on the reader. XMP is UTF-8 by definition and carries anything. That is what `--rights` is
+for: write `©` there and `(c)` in `--copyright`. Without `--rights`, `XMP-dc:Rights` gets the
+`--copyright` text.
+
+Put the values in the config file to credit every run without typing them again:
+
+```toml
+[copyright]
+artist = "Ada Lovelace"
+copyright_notice = "Copyright (c) {year} {artist}, All rights reserved"
+rights = "© {year} {artist}, All rights reserved"
+marked = true
+```
+
+### Stamping photos that are already tagged
+
+`photo-tagger set` writes the same fields on their own. It calls no model, reads no keyword, and
+rewrites no title or description. Use it on a library that is already tagged, or when you want the
+credit and nothing else.
+
+```console
+$ photo-tagger set -i ~/Pictures/2025 -r --embed-in-photo \
+    --artist "Ada Lovelace" \
+    --copyright "Copyright (c) {year} {artist}, All rights reserved" \
+    --marked
+Wrote 412 of 412 photo(s).
+```
+
+It takes `-i/--input`, `--ext`, `-r/--recursive`, and the five flags above. It also takes
+`--sidecar-mode`, `--write-sidecar` / `--embed-in-photo`, `--backup-xmp` / `--no-backup-xmp`,
+`--undo-log` / `--no-undo-log`, and `--dry-run`, with the meanings they have everywhere else. The
+command records every write, so `photo-tagger undo` puts back a run that went to the wrong folder.
+`--dry-run` prints the tags for each photo and writes none.
+
+### Reading metadata back
+
+`photo-tagger show` prints what a photo already carries and changes nothing. Every line names the
+ExifTool tag the value came from. A value that lives in the XMP sidecar says so. Two tags that
+disagree get a line each, which is how a stale caption under a sidecar becomes visible.
+
+```console
+$ photo-tagger show -i IMG_0001.jpg
+/photos/IMG_0001.jpg
+
+  Title           Osprey in Flight                              XMP:Title (sidecar)
+  Creator         Ada Lovelace                                  XMP:Creator
+  Copyright       © 2019 Ada Lovelace, All rights reserved      XMP:Rights
+                  Copyright (c) 2019 Ada Lovelace, All rig...   EXIF:Copyright
+  Rights marked   True                                          XMP:Marked
+  Captured        2019:07:14 10:32:11                           EXIF:DateTimeOriginal
+```
+
+| Flag     | Default | Env var | Description                                                                           |
+| -------- | ------- | ------- | ------------------------------------------------------------------------------------- |
+| `--all`  | `false` | `-`     | Print every tag ExifTool reports instead of the curated list. Leaves out binary data. |
+| `--json` | `false` | `-`     | Emit one JSON object per photo instead of a table.                                    |
+
+`show` also takes `-i/--input`, `--ext`, and `-r/--recursive`. With `--json` each photo is one line,
+so the output pipes straight into `jq`.
 
 ## Filter
 

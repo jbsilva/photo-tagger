@@ -14,6 +14,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 
 from photo_tagger.ai import _attach_partial_usage
 from photo_tagger.errors import BatchError
+from photo_tagger.fields import ExtraFields
 from photo_tagger.metadata import ImageContext
 from photo_tagger.models import InferenceResult, KeywordSet
 from photo_tagger.pipeline import (
@@ -2478,3 +2479,79 @@ def test_run_batch_counts_the_repair_calls(
 
     assert totals.language_repairs == _WITH_REPAIR
     assert totals.flagged_files == []
+
+
+def test_process_photo_writes_the_copyright_fields_with_the_capture_year(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """The notice is dated by the photo, using the capture date already read for the prompt."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+    options = ProcessingOptions(
+        extra_fields=ExtraFields(
+            artist="Ada Lovelace",
+            notice="Copyright (c) {year} {artist}",
+            marked=True,
+        ),
+    )
+
+    with patch(
+        "photo_tagger.pipeline.read_image_context",
+        return_value=ImageContext(camera_info={"EXIF:DateTimeOriginal": "2019:07:14 10:32:11"}),
+    ):
+        assert process_photo(image, _ctx(options=options)) is True
+
+    extra = patched_pipeline["write"].call_args.kwargs["extra"]
+    assert extra["EXIF:Copyright"] == "Copyright (c) 2019 Ada Lovelace"
+    assert extra["XMP-dc:Creator"] == "Ada Lovelace"
+    assert extra["XMP-xmpRights:Marked"] == "True"
+
+
+def test_process_photo_writes_no_extra_tags_by_default(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A run that asked for no copyright touches no copyright tag."""
+    image = tmp_path / "img.cr3"
+    image.write_text("x")
+
+    assert process_photo(image, _ctx(options=ProcessingOptions())) is True
+
+    assert patched_pipeline["write"].call_args.kwargs["extra"] == {}
+
+
+def test_session_mode_keeps_each_photo_its_own_copyright_year(
+    tmp_path: Path,
+    patched_pipeline: dict[str, Any],
+) -> None:
+    """A deferred write still carries the year of the photo it belongs to, not of its session."""
+    old = tmp_path / "old.cr3"
+    new = tmp_path / "new.cr3"
+    for path in (old, new):
+        path.write_text("x")
+    years = {
+        old: ImageContext(camera_info={"EXIF:DateTimeOriginal": "2011:01:02 03:04:05"}),
+        new: ImageContext(camera_info={"EXIF:DateTimeOriginal": "2025:01:02 03:04:05"}),
+    }
+
+    with patch(
+        "photo_tagger.pipeline.read_image_context",
+        side_effect=lambda path, **_kwargs: years[path],
+    ):
+        run_batch(
+            [old, new],
+            agent=_FAKE_AGENT,
+            options=ProcessingOptions(
+                extra_fields=ExtraFields(notice="(c) {year}"),
+                # One session for the batch, so both writes are deferred to the same flush.
+                output_language="English",
+            ),
+            session_plan=SessionPlan(sessions=[[old, new]], index_of={old: 0, new: 0}),
+        )
+
+    written = {
+        call.args[0]: call.kwargs["extra"]["EXIF:Copyright"]
+        for call in patched_pipeline["write"].call_args_list
+    }
+    assert written == {old: "(c) 2011", new: "(c) 2025"}

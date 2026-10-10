@@ -45,6 +45,7 @@ from photo_tagger.config import (
     SidecarMode,
 )
 from photo_tagger.config_file import apply_overrides, find_config_file, load_config
+from photo_tagger.fields import ExtraFields, build_extra_fields
 from photo_tagger.pipeline import ProcessingOptions
 
 # Runtime import (not type-only): cyclopts evaluates the Annotated[ProviderName, ...] field
@@ -174,8 +175,81 @@ class InferenceConfig:
 
 
 @dataclass
-class OutputConfig:
-    """How metadata is merged with existing tags and where it is written."""
+class CopyrightConfig:
+    """
+    Authorship and rights fields, plus the raw escape hatch for any other tag.
+
+    Nothing here involves the model: these are the fields only the photographer knows. The ``set``
+    command takes this group on its own, to stamp photos without calling a model; ``tag`` and
+    ``watch`` inherit it through :class:`OutputConfig` and write it in the same ExifTool call as the
+    generated metadata, so a run credits every photo it touches.
+    """
+
+    artist: Annotated[
+        str | None,
+        Parameter(
+            name=("--artist", "--creator"),
+            help=(
+                "Who took the photo. Written to EXIF:Artist, XMP-dc:Creator, and IPTC:By-line, so "
+                "every application that shows a credit finds one"
+            ),
+        ),
+    ] = None
+    copyright_notice: Annotated[
+        str | None,
+        Parameter(
+            name=("--copyright",),
+            help=(
+                "The copyright notice, written to EXIF:Copyright, IPTC:CopyrightNotice, and "
+                "XMP-dc:Rights. Use {year} for the year the photo was taken and {artist} for the "
+                "name, e.g. 'Copyright (c) {year} {artist}, All rights reserved'"
+            ),
+        ),
+    ] = None
+    rights: Annotated[
+        str | None,
+        Parameter(
+            name=("--rights",),
+            help=(
+                "XMP-dc:Rights, for when it should read differently from --copyright: XMP is UTF-8 "
+                "and safe for '© {year}' where EXIF gets '(c) {year}'. Defaults to --copyright"
+            ),
+        ),
+    ] = None
+    marked: Annotated[
+        bool | None,
+        Parameter(
+            name=("--marked",),
+            negative="--not-marked",
+            help=(
+                "Set XMP-xmpRights:Marked, the flag that says whether the photo is under copyright "
+                "(--marked) or in the public domain (--not-marked). Left alone unless asked for"
+            ),
+        ),
+    ] = None
+    set_tags: Annotated[
+        list[str] | None,
+        Parameter(
+            name=("--set",),
+            help=(
+                "Write any other tag, as TAG=VALUE, using ExifTool's own tag names (repeat this "
+                "option). For example --set 'XMP-xmpRights:WebStatement=https://example.com/terms'."
+                " An empty value deletes the tag. Applied after everything else, so it wins"
+            ),
+        ),
+    ] = None
+
+
+@dataclass
+class OutputConfig(CopyrightConfig):
+    """
+    How metadata is merged with existing tags and where it is written.
+
+    Inherits :class:`CopyrightConfig` so ``tag`` and ``watch`` accept the authorship flags without a
+    tenth option-group parameter, which would put both commands over the parameter count a single
+    function can be read at. The same reason ``--otel`` lives in :class:`LogConfig`. It is the right
+    group either way: a copyright notice is part of what a run writes.
+    """
 
     preserve_keywords: Annotated[
         bool,
@@ -226,6 +300,18 @@ class OutputConfig:
                 "Write keywords (merged with existing ones per --preserve-keywords). Pass "
                 "--no-write-keywords to leave existing keywords untouched, e.g. to refresh only "
                 "the title and description"
+            ),
+        ),
+    ] = True
+    write_copyright: Annotated[
+        bool,
+        Parameter(
+            name=("--write-copyright",),
+            negative="--no-write-copyright",
+            help=(
+                "Write the copyright block (--artist, --copyright, --rights, --marked, --set). On "
+                "by default, and writes nothing unless one of those is set. Pass "
+                "--no-write-copyright to skip it for one run without clearing your config file"
             ),
         ),
     ] = True
@@ -740,6 +826,10 @@ DEFAULT_RECURSIVE = False
 _CONFIG_TABLES: dict[str, type] = {
     "provider": ProviderConfig,
     "output": OutputConfig,
+    # After [output], which inherits these same fields: later tables win, and [copyright] is the
+    # table the docs name and the GUI saves, so a change made there must not lose to a stale
+    # [output] key.
+    "copyright": CopyrightConfig,
     "inference": InferenceConfig,
     "log": LogConfig,
     "display": DisplayConfig,
@@ -884,6 +974,23 @@ def resolve_notify(display: DisplayConfig) -> tuple[bool, bool]:
     return (display.notify or display.notify_sound, display.notify_sound)
 
 
+def to_extra_fields(config: CopyrightConfig) -> ExtraFields:
+    """
+    Translate the CLI's copyright group into the writer's own value object.
+
+    Mirrors :func:`to_trim_rules`: the schema module owns the flags, :mod:`photo_tagger.fields` owns
+    the behavior. Raises :class:`~photo_tagger.errors.FieldError` on a malformed ``--set`` or an
+    placeholder it cannot fill, so the run stops before it stamps the first photo.
+    """
+    return build_extra_fields(
+        artist=config.artist,
+        notice=config.copyright_notice,
+        rights=config.rights,
+        marked=config.marked,
+        assignments=config.set_tags,
+    )
+
+
 def to_processing_options(
     output: OutputConfig,
     inference: InferenceConfig,
@@ -917,6 +1024,10 @@ def to_processing_options(
         vocabulary_strict=output.vocabulary_strict,
         output_language=inference.output_language,
         repair_language=inference.repair_language,
+        # OutputConfig is a CopyrightConfig (see its docstring), so the authorship flags arrive
+        # with the rest of the output group. --no-write-copyright switches the whole block off
+        # without anyone having to empty the fields that hold it.
+        extra_fields=to_extra_fields(output) if output.write_copyright else ExtraFields(),
     )
 
 
@@ -968,7 +1079,12 @@ def load_defaults(config: dict[str, Any] | None = None) -> Defaults:
     file_config = load_config() if config is None else config
     return Defaults(
         provider=apply_overrides(ProviderConfig(), file_config.get("provider", {})),
-        output=apply_overrides(OutputConfig(), file_config.get("output", {})),
+        # The authorship fields are part of OutputConfig but keep their own [copyright] table, so
+        # both feed the same instance here. [copyright] wins, as the later one (see _CONFIG_TABLES).
+        output=apply_overrides(
+            OutputConfig(),
+            {**file_config.get("output", {}), **file_config.get("copyright", {})},
+        ),
         inference=apply_overrides(InferenceConfig(), file_config.get("inference", {})),
         log=apply_overrides(LogConfig(), file_config.get("log", {})),
         display=apply_overrides(DisplayConfig(), file_config.get("display", {})),

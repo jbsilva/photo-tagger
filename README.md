@@ -37,6 +37,9 @@ directly into each photo with `--embed-in-photo`, or split the two by file type 
   (`photo-tagger vocabulary`)
 - Harmonizes each shoot: every frame of the same subject gets the same keyword and the same
   hierarchy, instead of "Osprey" here and "Ospreys" there
+- Writes the fields no model can guess: your credit and copyright notice, dated by the year of each
+  photo (`--artist`, `--copyright`), plus any other tag you name (`--set`)
+- Prints the metadata a photo already carries, tag by tag (`photo-tagger show`)
 - Works with Ollama, LM Studio, llama.cpp, and any hosted OpenAI-compatible API
 - Ships a `doctor` command that pre-flights ExifTool and your model provider
 - Records what each run writes, so `photo-tagger undo` puts a bad batch back
@@ -257,6 +260,44 @@ photo-tagger -i ~/Pictures/Mixed --skip-tagged
 A successful run creates or updates an `.xmp` sidecar for every processed image (unless you embed
 the metadata). Existing metadata is merged so Lightroom keeps hierarchical keywords such as
 `Animal|Bird|Osprey` intact.
+
+### Copyright and other metadata
+
+Title, description, and keywords come from the model. Your name and your copyright notice do not,
+and the file is open anyway, so photo-tagger writes them in the same pass:
+
+```bash
+photo-tagger -i ~/Pictures/2025 \
+  --artist "Ada Lovelace" \
+  --copyright "Copyright (c) {year} {artist}, All rights reserved" \
+  --rights "© {year} {artist}, All rights reserved" \
+  --marked
+```
+
+The credit goes to `EXIF:Artist`, `XMP-dc:Creator`, and `IPTC:By-line`. The notice goes to
+`EXIF:Copyright` and `IPTC:CopyrightNotice`, and `--rights` gives `XMP-dc:Rights` its own UTF-8
+wording. `--marked` sets `XMP-xmpRights:Marked`. `{year}` is the year of the photo, read from its
+capture date, so a folder of ten years gets ten different notices. `--set 'TAG=VALUE'` writes any
+other ExifTool tag.
+
+To stamp photos that are already tagged, `photo-tagger set` does the same without calling a model:
+
+```bash
+photo-tagger set -i ~/Pictures -r --embed-in-photo --artist "Ada Lovelace" --marked
+```
+
+Put the values under `[copyright]` in the config file and every run credits your photos, with no
+flags to remember. `photo-tagger undo` puts back a `set` run, the same as a tagging run.
+
+To see what a photo already carries, tag by tag:
+
+```bash
+photo-tagger show -i IMG_0001.CR3
+```
+
+Each line names the ExifTool tag behind the value, and says when the value lives in the XMP sidecar
+rather than in the photo. Add `--all` for every tag ExifTool reports, or `--json` to pipe the report
+into another tool.
 
 ### Examples
 

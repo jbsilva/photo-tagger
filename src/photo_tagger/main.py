@@ -30,7 +30,10 @@ from typing import TYPE_CHECKING, Annotated, Protocol
 
 from cyclopts import App, Parameter, validators
 from loguru import logger
+from rich import box
 from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
 from photo_tagger import __version__, i18n, telemetry
 from photo_tagger.ai import create_agent
@@ -41,6 +44,7 @@ from photo_tagger.cli_options import (
     DEFAULT_WORKERS,
     ArtifactConfig,
     ConfigFileSource,
+    CopyrightConfig,
     DisplayConfig,
     FilterConfig,
     InferenceConfig,
@@ -51,10 +55,12 @@ from photo_tagger.cli_options import (
     VocabularyBuildConfig,
     WatchConfig,
     resolve_notify,
+    resolve_sidecar_mode,
+    to_extra_fields,
     to_processing_options,
     to_trim_rules,
 )
-from photo_tagger.config import DEFAULT_USER_PROMPT
+from photo_tagger.config import DEFAULT_USER_PROMPT, SidecarMode
 from photo_tagger.config_file import configured_exiftool_path, load_config
 from photo_tagger.csv_report import CsvReportWriter, ReportRow
 from photo_tagger.diagnostics import render_report, run_checks
@@ -65,10 +71,28 @@ from photo_tagger.discovery import (
     make_skip_list_appender,
     resolve_image_batch,
 )
-from photo_tagger.errors import BatchError, DiscoveryError, ObservabilityError, PhotoTaggerError
+from photo_tagger.errors import (
+    BatchError,
+    DiscoveryError,
+    FieldError,
+    ObservabilityError,
+    PhotoTaggerError,
+)
+from photo_tagger.fields import SHOWN_FIELDS
 from photo_tagger.locking import FileLock, LockHeldError
 from photo_tagger.logging_setup import setup_logging
-from photo_tagger.metadata import prompt_with_hint, select_camera_fields, select_location
+from photo_tagger.metadata import (
+    SOURCE_SIDECAR,
+    managed_helper,
+    prompt_with_hint,
+    read_all_tags,
+    read_capture_years,
+    read_fields,
+    select_camera_fields,
+    select_location,
+    write_metadata_everywhere,
+)
+from photo_tagger.models import KeywordSet
 from photo_tagger.notify import APP_NAME, notify
 from photo_tagger.observability import configure_tracing
 from photo_tagger.pipeline import BatchTotals, ImageOutcome, ProcessingOptions, run_batch
@@ -108,9 +132,12 @@ from photo_tagger.watch import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from exiftool import ExifToolHelper  # type: ignore[attr-defined]
     from pydantic_ai import Agent
 
     from photo_tagger.cache import InferenceCache
+    from photo_tagger.fields import ExtraFields
+    from photo_tagger.metadata import FieldReading
     from photo_tagger.models import GeneratedMetadata
     from photo_tagger.undo import UndoJournal
 
@@ -135,6 +162,9 @@ _DEFAULT_ARTIFACTS = ArtifactConfig()
 _DEFAULT_FILTER = FilterConfig()
 _DEFAULT_TELEMETRY = TelemetryConfig()
 _DEFAULT_WATCH = WatchConfig()
+# The `set` command's own group. `tag` and `watch` get these flags through OutputConfig, which
+# inherits them; only a command that takes them *without* the rest of the output group needs this.
+_DEFAULT_COPYRIGHT = CopyrightConfig()
 
 
 def _apply_exiftool_path(path: str | None) -> None:
@@ -233,6 +263,329 @@ def gui() -> None:
         )
         raise SystemExit(1) from exc
     raise SystemExit(gui_module.launch())
+
+
+def _quiet_logging() -> None:
+    """
+    Leave only warnings and errors on stderr, for the commands whose output is the report.
+
+    ``show`` and ``set`` print what they found or wrote; the usual INFO stream would bury it. Going
+    quiet is not the same as going silent, though: a failed ExifTool read must not come out as a
+    photo with no metadata, so warnings still reach the terminal.
+    """
+    logger.remove()
+    logger.add(sys.stderr, level="WARNING", format="{message}")
+
+
+def _two_column_table(first: str, second: str) -> Table:
+    """Build the borderless two-column table both ``show`` layouts print."""
+    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
+    table.add_column(first, style="cyan", no_wrap=True)
+    table.add_column(second, overflow="fold")
+    return table
+
+
+def _render_readings(console: Console, readings: list[FieldReading]) -> None:
+    """Print one photo's fields, naming a label once and the tag behind every value."""
+    table = _two_column_table("Field", "Value")
+    table.add_column("Tag", style="dim", no_wrap=True)
+    previous = ""
+    for reading in readings:
+        label = "" if reading.label == previous else reading.label
+        previous = reading.label
+        tag = f"{reading.tag} (sidecar)" if reading.source == SOURCE_SIDECAR else reading.tag
+        # Values come off the file, so they are printed as text: a keyword like "[b]" is a
+        # keyword, not rich markup.
+        table.add_row(label, Text(reading.value), tag)
+    console.print(table)
+
+
+def _render_tag_dump(console: Console, by_file: dict[str, dict[str, str]]) -> None:
+    """
+    Print every tag ExifTool reported, one table per file it came from.
+
+    Each file is its own heading here, unlike the curated view: a sidecar and its photo can hold
+    different values for the same tag, and ``--all`` is where somebody goes to see which is which.
+    """
+    for source, tags in by_file.items():
+        console.print(source, style="bold")
+        table = _two_column_table("Tag", "Value")
+        for tag, value in sorted(tags.items()):
+            table.add_row(tag, Text(value))
+        console.print(table)
+
+
+def _emit_json_line(payload: dict[str, object]) -> None:
+    """Write one JSON object to stdout, unwrapped, so a pipe gets exactly one line per photo."""
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _show_one(
+    console: Console,
+    image_file: Path,
+    *,
+    all_tags: bool,
+    as_json: bool,
+    et: ExifToolHelper | None = None,
+) -> None:
+    """Report a single photo, as a table or as one JSON line."""
+    if all_tags:
+        by_file = read_all_tags(image_file, et=et)
+        if as_json:
+            _emit_json_line({"file": str(image_file), "tags": by_file})
+        else:
+            _render_tag_dump(console, by_file)
+        return
+
+    readings = read_fields(image_file, SHOWN_FIELDS, et=et)
+    if as_json:
+        _emit_json_line({"file": str(image_file), "fields": [asdict(r) for r in readings]})
+        return
+    console.print(str(image_file), style="bold")
+    if readings:
+        _render_readings(console, readings)
+    else:
+        console.print("  no metadata", style="dim")
+
+
+@app.command
+def show(
+    inputs: Annotated[
+        list[Path] | None,
+        Parameter(
+            name=("--input", "-i"),
+            validator=validators.Path(exists=True),
+            help="One or more paths: files and/or directories (repeat this option)",
+        ),
+    ] = None,
+    *,
+    image_extensions: Annotated[
+        str,
+        Parameter(name=("--ext", "--extensions"), help="Extensions to scan for (case insensitive)"),
+    ] = DEFAULT_EXTENSIONS,
+    recursive: Annotated[
+        bool,
+        Parameter(name=("--recursive", "-r"), help="Scan subdirectories too"),
+    ] = DEFAULT_RECURSIVE,
+    all_tags: Annotated[
+        bool,
+        Parameter(
+            name=("--all",),
+            help="Print every tag ExifTool reports, not the curated list. Binary payloads are cut",
+        ),
+    ] = False,
+    as_json: Annotated[
+        bool,
+        Parameter(name=("--json",), help="Emit one JSON object per photo instead of a table"),
+    ] = False,
+) -> None:
+    """
+    Print the metadata a photo already carries, without changing anything.
+
+    The read side of ``set``: title, description, keywords, creator, copyright, camera, and place,
+    each with the ExifTool tag it came from and a note when the value lives in the XMP sidecar
+    rather than the photo. A field two tags disagree about is listed twice, which is the whole point
+    of showing the tag: it is how a stale caption in the photo, shadowed by its sidecar, becomes
+    visible.
+
+    Add ``--all`` for every tag ExifTool can read, and ``--json`` to pipe any of it elsewhere.
+
+    Examples:
+        photo-tagger show -i IMG_0001.CR3
+
+        photo-tagger show -i ~/Pictures/Shoot -r --json | jq '.fields[] | select(.label)'
+    """
+    _apply_exiftool_path(configured_exiftool_path())
+    _quiet_logging()
+    console = Console()
+    # resolve_image_batch raises rather than returning an empty batch, so "nothing matched" and
+    # "that path is unusable" arrive here as the same clean error.
+    try:
+        image_files = resolve_image_batch(inputs, image_extensions, recursive=recursive)
+    except DiscoveryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+    # One ExifTool process for the whole report: a folder of five thousand photos must not pay a
+    # process spawn each.
+    with managed_helper(None) as helper:
+        for image_file in image_files:
+            _show_one(console, image_file, all_tags=all_tags, as_json=as_json, et=helper)
+
+
+def _write_fields(
+    image_files: list[Path],
+    fields: ExtraFields,
+    *,
+    sidecar_mode: SidecarMode,
+    backup: bool,
+    journal: UndoJournal | None,
+) -> tuple[int, list[Path]]:
+    """
+    Stamp every photo with *fields*, dated by its own capture year.
+
+    Returns (written, failed). One ExifTool process for the batch, and one batched read of the
+    capture dates before it, so a thousand photos cost two round trips plus one write each.
+    """
+    written = 0
+    failed: list[Path] = []
+    with managed_helper(None) as helper:
+        years = read_capture_years(image_files, et=helper)
+        for image_file in image_files:
+            ok, targets = write_metadata_everywhere(
+                image_file,
+                KeywordSet(),
+                extra=fields.resolve(years[image_file]),
+                backup=backup,
+                sidecar_mode=sidecar_mode,
+                et=helper,
+            )
+            if journal is not None:
+                for target in targets:
+                    journal.record(
+                        image_file,
+                        target.path,
+                        created=not target.existed,
+                        backed_up=backup,
+                    )
+            if ok:
+                written += 1
+            else:
+                failed.append(image_file)
+    return written, failed
+
+
+@app.command(name="set")
+def set_fields(  # noqa: PLR0913 - cyclopts entry point; each arg is a CLI flag.
+    inputs: Annotated[
+        list[Path] | None,
+        Parameter(
+            name=("--input", "-i"),
+            validator=validators.Path(exists=True),
+            help="One or more paths: files and/or directories (repeat this option)",
+        ),
+    ] = None,
+    *,
+    image_extensions: Annotated[
+        str,
+        Parameter(name=("--ext", "--extensions"), help="Extensions to scan for (case insensitive)"),
+    ] = DEFAULT_EXTENSIONS,
+    recursive: Annotated[
+        bool,
+        Parameter(name=("--recursive", "-r"), help="Scan subdirectories too"),
+    ] = DEFAULT_RECURSIVE,
+    sidecar_mode: Annotated[
+        SidecarMode | None,
+        Parameter(
+            name=("--sidecar-mode",),
+            help=(
+                "Where the fields go: 'all' (the default) writes an XMP sidecar next to every "
+                "photo, 'none' embeds them in the photo itself, 'raw' splits by file type, 'both' "
+                "writes each photo and a sidecar beside it"
+            ),
+        ),
+    ] = None,
+    use_sidecar: Annotated[
+        bool | None,
+        Parameter(
+            name=("--write-sidecar",),
+            negative="--embed-in-photo",
+            help="Shorthand for --sidecar-mode: 'all' or 'none'. An explicit mode wins over both",
+        ),
+    ] = None,
+    backup_xmp: Annotated[
+        bool,
+        Parameter(
+            name=("--backup-xmp",),
+            negative="--no-backup-xmp",
+            help="Create an ExifTool backup (_original) before overwriting metadata",
+        ),
+    ] = True,
+    undo_log: Annotated[
+        bool,
+        Parameter(
+            name=("--undo-log",),
+            negative="--no-undo-log",
+            help="Record what this run writes so 'photo-tagger undo' can put it back",
+        ),
+    ] = True,
+    dry_run: Annotated[
+        bool,
+        Parameter(name=("--dry-run",), help="Print the tags each photo would get, and write none"),
+    ] = False,
+    copyright_config: Annotated[CopyrightConfig, Parameter(name="*")] = _DEFAULT_COPYRIGHT,
+) -> None:
+    """
+    Write copyright, creator, and any other tag, without calling a model.
+
+    The fields no model can guess. ``tag`` writes them too, in the same pass as the generated
+    metadata; this is for the photos that are already tagged, or for a library you want credited
+    without paying for inference.
+
+    The year comes from each photo, not from today: ``{year}`` in a notice becomes the year that
+    photo was taken (its EXIF capture date, falling back to the file's own timestamp), so one
+    command stamps a decade of shoots correctly.
+
+    Nothing else on the photo is touched: no keyword, title, or description is read or rewritten.
+    Writes are recorded, so ``photo-tagger undo`` puts back a run that went to the wrong folder.
+
+    Exit status: 1 when nothing was asked for, no photo matched, or any write failed.
+
+    Examples:
+        photo-tagger set -i ~/Pictures/2025 -r --embed-in-photo \
+            --artist "Ada Lovelace" \
+            --copyright "Copyright (c) {year} {artist}, All rights reserved" \
+            --marked
+
+        photo-tagger set -i photo.jpg --set "XMP-xmpRights:WebStatement=https://example.com/terms"
+    """
+    _apply_exiftool_path(configured_exiftool_path())
+    _quiet_logging()
+    console = Console()
+    try:
+        fields = to_extra_fields(copyright_config)
+    except FieldError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+    if fields.is_empty:
+        console.print(
+            "[yellow]Nothing to set. Pass --artist, --copyright, --rights, --marked, or "
+            "--set TAG=VALUE.[/yellow]",
+        )
+        raise SystemExit(1)
+
+    try:
+        image_files = resolve_image_batch(inputs, image_extensions, recursive=recursive)
+    except DiscoveryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    mode = resolve_sidecar_mode(OutputConfig(sidecar_mode=sidecar_mode, use_sidecar=use_sidecar))
+    if dry_run:
+        _preview_fields(console, image_files, fields)
+        return
+
+    written, failed = _write_fields(
+        image_files,
+        fields,
+        sidecar_mode=mode,
+        backup=backup_xmp,
+        journal=open_journal(datetime.now(tz=UTC), enabled=undo_log),
+    )
+    console.print(f"[green]Wrote {written} of {len(image_files)} photo(s).[/green]")
+    if failed:
+        console.print(f"[red]{len(failed)} failed; see the log for what ExifTool said.[/red]")
+        raise SystemExit(1)
+
+
+def _preview_fields(console: Console, image_files: list[Path], fields: ExtraFields) -> None:
+    """Print the tags each photo would get under ``--dry-run``, without opening it for writing."""
+    years = read_capture_years(image_files)
+    for image_file in image_files:
+        console.print(str(image_file), style="bold")
+        table = _two_column_table("Tag", "Value")
+        for tag, value in fields.resolve(years[image_file]).items():
+            table.add_row(tag, Text(value))
+        console.print(table)
 
 
 def _build_census(
@@ -1135,6 +1488,7 @@ def _log_startup(  # noqa: PLR0913 - the run itself plus the four inputs that ar
         max_keywords=options.max_new_keywords,
         vocabulary_terms=len(options.vocabulary.terms) if options.vocabulary else 0,
         vocabulary_strict=options.vocabulary_strict,
+        extra_fields=not (options.extra_fields is None or options.extra_fields.is_empty),
         session_gap_minutes=setup.session_gap_minutes,
         temperature=options.temperature,
         max_tokens=options.max_tokens,

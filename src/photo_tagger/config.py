@@ -139,12 +139,11 @@ def exiftool_executable() -> str | None:
     return os.getenv("PHOTO_TAGGER_EXIFTOOL") or None
 
 
-LOCATION_TAGS = (
-    "XMP-photoshop:Country",
-    "IPTC:Country-PrimaryLocationName",
-    "XMP-photoshop:City",
-    "IPTC:City",
-)
+# XMP-photoshop and IPTC each define their own place fields, so every reader takes both and uses
+# the first one that answers.
+COUNTRY_TAGS = ("XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName")
+CITY_TAGS = ("XMP-photoshop:City", "IPTC:City")
+LOCATION_TAGS = (*COUNTRY_TAGS, *CITY_TAGS)
 
 # When the shutter fired. Read as prompt context, and on its own when grouping a batch into shoots.
 TAG_EXIF_DATE_TIME_ORIGINAL = "EXIF:DateTimeOriginal"
@@ -170,6 +169,8 @@ TAG_IPTC_OBJECT_NAME = "IPTC:ObjectName"
 TAG_XMP_TITLE = "XMP:Title"
 TAG_XMP_DESCRIPTION = "XMP:Description"
 TAG_EXIF_IMAGE_DESCRIPTION = "EXIF:ImageDescription"
+# The family-0 spelling of XMP-tiff:ImageDescription, the mirror our own writes produce.
+TAG_XMP_IMAGE_DESCRIPTION = "XMP:ImageDescription"
 
 # The language the model writes titles, descriptions, and keywords in. Any language name the
 # model understands works ("German", "Brazilian Portuguese", ...); it is spliced into the system
