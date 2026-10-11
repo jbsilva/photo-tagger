@@ -303,6 +303,11 @@ def test_joined_keeps_the_names_that_fit_after_one_that_does_not() -> None:
     assert result == "b,c"
 
 
+def _absolute(path: str) -> str:
+    """Give a POSIX-style absolute path a drive on Windows, where it is not absolute without one."""
+    return f"C:{path}" if sys.platform == "win32" and path.startswith("/") else path
+
+
 @pytest.mark.parametrize(
     ("filename", "roots", "expected"),
     [
@@ -336,7 +341,7 @@ def test_frame_module_names_modules_never_folders(
     expected: str,
 ) -> None:
     """Only a package path below an import root survives; a user's folder never does."""
-    assert facts.frame_module(filename, roots) == expected
+    assert facts.frame_module(_absolute(filename), [_absolute(root) for root in roots]) == expected
 
 
 def test_import_roots_are_only_where_libraries_live(

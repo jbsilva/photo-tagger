@@ -2,6 +2,7 @@
 
 import os
 import stat
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,10 +14,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+# Windows finds a program only by an extension listed in PATHEXT, so the stand-ins need one there.
+_EXE = ".exe" if sys.platform == "win32" else ""
+
+
 def _tool(folder: Path, name: str) -> Path:
     """Create an executable file *name* in *folder*."""
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / name
+    path = folder / f"{name}{_EXE}"
     path.write_text("#!/bin/sh\n", encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
@@ -33,8 +38,10 @@ def test_find_program_ignores_the_current_directory(
     monkeypatch.chdir(photos)
     monkeypatch.setenv("PATH", os.pathsep.join([".", "", str(real.parent)]))
 
-    assert find_program("exiftool") == str(real)
-    assert find_program("exiftool") != str(decoy)
+    found = os.path.normcase(find_program("exiftool") or "")
+    # normcase: on Windows the extension comes back as PATHEXT spells it (.EXE).
+    assert found == os.path.normcase(real)
+    assert found != os.path.normcase(decoy)
 
 
 def test_find_program_is_none_when_only_the_current_directory_has_it(
