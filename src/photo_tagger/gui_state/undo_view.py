@@ -1,6 +1,7 @@
 """The Undo Writes dialog's texts: journal names, actions, and the summary of a run."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from photo_tagger.i18n import _, gettext_noop, ngettext
@@ -16,7 +17,6 @@ from photo_tagger.undo import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from pathlib import Path
 
     from photo_tagger.undo import UndoResult, WriteRecord
 
@@ -89,11 +89,12 @@ def reverted_images(records: Iterable[WriteRecord], results: Iterable[UndoResult
     A photo is back once any file written for it was restored or deleted. Everything read from such
     a photo is stale afterwards, so the window reads it again.
     """
-    images = {record.target: record.image for record in records}
+    # Compared as paths, not strings: a path's text differs by OS (the separator, for one).
+    images = {Path(record.target): record.image for record in records}
     reverted = (
-        images[str(result.target)]
+        images[result.target]
         for result in results
-        if result.action in UNDO_OK_ACTIONS and str(result.target) in images
+        if result.action in UNDO_OK_ACTIONS and result.target in images
     )
     return list(dict.fromkeys(reverted))
 
