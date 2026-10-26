@@ -40,3 +40,7 @@ class ConfigFileError(PhotoTaggerError):
     Settings has to preserve everything it does not manage, and it cannot do that with a file it
     could not parse. Raised so the window reports the problem and leaves the file alone.
     """
+
+
+class DngDecodeError(PhotoTaggerError):
+    """The Deflate DNG fallback cannot decode a file: another kind of DNG, or a damaged one."""

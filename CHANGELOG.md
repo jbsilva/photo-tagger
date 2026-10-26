@@ -12,6 +12,8 @@ This file lists all notable changes to this project. The format follows the
 
 ### Fixed
 
+- DNG files from the Insta360 X6 no longer fail with an image-read error. LibRaw cannot decode their
+  Deflate-compressed integer data, so photo-tagger decodes it itself.
 - If a background job that the GUI let go of comes to an end, the GUI no longer crashes with a
   segmentation fault. A thumbnail decode after **Remove Unchecked** was one way to cause it.
 

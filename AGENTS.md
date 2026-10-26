@@ -59,6 +59,10 @@ module owns one part of that pipeline:
   the install id and the notice markers. `telemetry_facts.py` reduces URLs, install paths, stack
   frames, and the environment to coarse categories for it. A new field needs a line in
   `docs/telemetry.md`.
+- `deflate_dng.py`: decodes the DNG files that LibRaw rejects (integer samples under Deflate, as the
+  Insta360 X6 writes them). If rawpy fails on a DNG, `image_io.py` calls it. It is a workaround. If
+  a rawpy update brings a LibRaw that decodes these files, the test
+  `test_rawpy_still_rejects_integer_deflate_dng` fails. Then delete the module and its call.
 - `cache.py`, `locking.py`, `image_io.py`, `discovery.py`, `progress.py`, `logging_setup.py`,
   `diagnostics.py`, `programs.py`: small helpers with one purpose each. `programs.py` finds every
   helper program (ExifTool too) by absolute path, never in the current directory. `errors.py`: the

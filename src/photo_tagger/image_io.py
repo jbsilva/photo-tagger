@@ -9,32 +9,28 @@ from PIL import Image, ImageOps
 from pydantic_ai import BinaryContent
 
 from photo_tagger.config import DEFAULT_DIMENSIONS, DEFAULT_JPEG_QUALITY, NON_RAW_EXTENSIONS
+from photo_tagger.deflate_dng import open_deflate_dng
+from photo_tagger.errors import DngDecodeError
 
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _open_image(image_path: Path) -> Image.Image:
+def _open_image(image_path: Path, max_size: int = DEFAULT_DIMENSIONS) -> Image.Image:
     """
     Open an image with PIL, using rawpy unless the suffix is a format PIL handles natively.
 
     Returns a fully loaded, upright image, in whatever mode the file has (see :func:`_to_rgb`). The
     underlying file handle is closed before this function returns, so the caller can operate on the
-    result without holding the source file open.
+    result without holding the source file open. *max_size* is a hint: a decoder may return a
+    smaller image, but never one with a long side below it, unless the photo itself is smaller.
     """
     suffix = image_path.suffix.lower()
     if suffix in NON_RAW_EXTENSIONS:
         logger.info("skipping_rawpy_for_known_format", extension=suffix)
-    else:
-        try:
-            with rawpy.imread(str(image_path)) as raw:  # type: ignore[no-untyped-call]
-                rgb = raw.postprocess()
-            logger.info("image_opened_with_rawpy")
-            # rawpy.postprocess() already applies camera orientation; return as-is.
-            return Image.fromarray(rgb)
-        except Exception as exc:  # noqa: BLE001 - rawpy raises bare Exception subclasses
-            logger.warning("rawpy_failed_falling_back_to_pil", error=str(exc))
+    elif (img := _open_raw(image_path, max_size)) is not None:
+        return img
 
     logger.info("opening_image_with_pil", extension=suffix or "")
     # Use Image.open in a with-block so PIL closes the file handle eagerly even
@@ -46,6 +42,34 @@ def _open_image(image_path: Path) -> Image.Image:
         # type checker.
         transposed = ImageOps.exif_transpose(img)
         return transposed if transposed is not None else img
+
+
+def _open_raw(image_path: Path, max_size: int) -> Image.Image | None:
+    """
+    Decode a RAW file with rawpy, or a DNG that LibRaw rejects with ours.
+
+    None if neither can.
+    """
+    try:
+        with rawpy.imread(str(image_path)) as raw:  # type: ignore[no-untyped-call]
+            rgb = raw.postprocess()
+    except Exception as exc:  # noqa: BLE001 - rawpy raises bare Exception subclasses
+        logger.warning("rawpy_failed", error=str(exc))
+    else:
+        logger.info("image_opened_with_rawpy")
+        # rawpy.postprocess() already applies camera orientation; return as-is.
+        return Image.fromarray(rgb)
+
+    if image_path.suffix.lower() != ".dng":
+        return None
+    # LibRaw inflates only floating-point DNG data, so it fails on the Insta360 X6 files.
+    try:
+        img = open_deflate_dng(image_path, max_size)
+    except DngDecodeError as exc:
+        logger.warning("deflate_dng_fallback_failed", error=str(exc))
+        return None
+    logger.info("image_opened_with_deflate_dng_fallback")
+    return img
 
 
 def _to_rgb(img: Image.Image) -> Image.Image:
@@ -78,7 +102,7 @@ def prepare_image_for_agent(
         BinaryContent wrapping the in-memory JPEG bytes.
     """
     try:
-        img = _to_rgb(_open_image(image_path))
+        img = _to_rgb(_open_image(image_path, max_size))
         logger.info("resizing_image", max_size=max_size)
         img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
 
