@@ -6,6 +6,8 @@ This file lists all notable changes to this project. The format follows the
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/jbsilva/photo-tagger/compare/v0.10.0...v0.10.1) - 2026-10-26
+
 ### Changed
 
 - The documentation moved to <https://docs.tagger.photo/>. The old address sends you there.

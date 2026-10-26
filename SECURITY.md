@@ -19,10 +19,10 @@ line. To get the fix, upgrade.
 
 | Version         | Supported          |
 | --------------- | ------------------ |
-| 0.10.0 (latest) | :white_check_mark: |
-| < 0.10.0        | :x:                |
+| 0.10.1 (latest) | :white_check_mark: |
+| < 0.10.1        | :x:                |
 
-The current release is 0.10.0. Upgrade with:
+The current release is 0.10.1. Upgrade with:
 
 ```bash
 uv tool upgrade photo-tagger
