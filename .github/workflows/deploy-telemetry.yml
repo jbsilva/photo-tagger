@@ -49,7 +49,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: telemetry
-          wranglerVersion: "4.148.0"
+          wranglerVersion: "4.152.0"
           command: |
             d1 migrations apply DB --remote
             deploy
