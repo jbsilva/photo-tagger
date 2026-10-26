@@ -17,7 +17,7 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/astral-sh/uv-pre-commit"
-rev = "0.13.0"
+rev = "0.13.5"
 hooks = [{ id = "uv-lock" }]
 
 # Docformatter: format docstrings and make sure we use 100 columns.
@@ -41,7 +41,7 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.17.0"
+rev = "v0.17.2"
 hooks = [
   { id = "ruff-check", args = ["--fix"] },
   { id = "ruff-format" },
@@ -82,7 +82,7 @@ hooks = [{ id = "pyupgrade", args = ["--py314-plus"] }]
 
 [[repos]]
 repo = "https://github.com/streetsidesoftware/cspell-cli"
-rev = "v10.3.0"
+rev = "v10.4.0"
 hooks = [
   # Spell check changed files.
   { id = "cspell" },
@@ -104,14 +104,14 @@ hooks = [{ id = "typos" }]
 # Renovate config validator. Catches a typo in renovate.json5 before it silently breaks updates.
 [[repos]]
 repo = "https://github.com/renovatebot/pre-commit-hooks"
-rev = "44.149.2"
+rev = "44.182.2"
 hooks = [{ id = "renovate-config-validator", args = ["--strict"] }]
 
 # Static analysis for the GitHub Actions workflows. Same tool as the zizmor.yml workflow, so a
 # finding shows up here first instead of on a red CI run.
 [[repos]]
 repo = "https://github.com/zizmorcore/zizmor-pre-commit"
-rev = "v1.30.1"
+rev = "v1.31.1"
 hooks = [{ id = "zizmor" }]
 
 # Local hooks run the tool already installed in the project venv, so the hook, CI, and the commands

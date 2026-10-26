@@ -28,17 +28,17 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Recognition",
 ]
 dependencies = [
-    "cyclopts>=5.2.0",
-    "filelock>=4.1.0",
-    "httpx2>=2.13.1",
+    "cyclopts>=5.3.0",
+    "filelock>=4.2.4",
+    "httpx2>=2.16.0",
     "loguru>=0.7.3",
-    "pillow>=12.3.0",
-    "pydantic-ai>=2.55.0",
-    "pydantic>=2.14.0",
+    "pillow>=13.0.0",
+    "pydantic-ai>=2.61.0",
+    "pydantic>=2.14.1",
     "pyexiftool>=0.5.6",
     "rawpy>=0.27.1",
     "rich>=15.0.0",
-    "tomlkit>=0.15.1",
+    "tomlkit>=0.15.2",
 ]
 
 [project.optional-dependencies]
@@ -50,8 +50,8 @@ gui = ["pyside6>=6.12.0"]
 # actually declare what it needs: pydantic-ai is free to drop that extra, and photo-tagger is free
 # to move to pydantic-ai-slim, without silently breaking tracing.
 otel = [
-    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
-    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
 ]
 
 [dependency-groups]
@@ -59,20 +59,20 @@ dev = [
     "babel>=2.18.0",
     "bandit>=1.9.4",
     "import-linter>=2.15",
-    "poethepoet>=0.48.0",
+    "poethepoet>=0.49.0",
     "pycroscope>=0.5.0",
-    "ruff>=0.17.0",
-    "zizmor>=1.30.1",
-    "zuban>=0.10.0",
+    "ruff>=0.17.2",
+    "zizmor>=1.31.1",
+    "zuban>=0.10.1",
 ]
 docs = [
-    "zensical>=0.0.69",
+    "zensical>=0.0.72",
 ]
 package = [
     "pyinstaller>=6.22.3",
 ]
 test = [
-    "inline-snapshot>=0.36.0",
+    "inline-snapshot>=0.36.1",
     "pytest-cov>=7.1.0",
     "pytest-random-order>=1.2.0",
     "pytest-xdist[psutil]>=3.8.0",
