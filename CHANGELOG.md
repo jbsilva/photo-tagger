@@ -10,6 +10,11 @@ This file lists all notable changes to this project. The format follows the
 
 - The documentation moved to <https://docs.tagger.photo/>. The old address sends you there.
 
+### Fixed
+
+- If a background job that the GUI let go of comes to an end, the GUI no longer crashes with a
+  segmentation fault. A thumbnail decode after **Remove Unchecked** was one way to cause it.
+
 ## [0.10.0](https://github.com/jbsilva/photo-tagger/compare/v0.9.0...v0.10.0) - 2026-10-11
 
 ### Added

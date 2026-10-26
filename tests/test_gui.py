@@ -34,7 +34,7 @@ pytest.importorskip("PySide6")
 # Must be set before the first QApplication is created.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import QObject, Qt, QThread
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -52,6 +52,7 @@ from photo_tagger.errors import ProviderError
 from photo_tagger.gui import detail_pane, main_window, select_menu, viewer, widgets, workers
 from photo_tagger.gui.common import COL_STATUS, COL_TAGGED, IS_DIR_ROLE, PATH_ROLE
 from photo_tagger.gui.scan_controller import ScanController
+from photo_tagger.gui.threads import release_thread
 from photo_tagger.gui_state import (
     DEFAULT_GUI_EXTENSIONS,
     EXTRA_PASSES,
@@ -4296,15 +4297,54 @@ def test_remove_items_tells_a_running_scan_to_skip_them(
     assert list(worker._live_paths()) == [b]  # noqa: SLF001
 
 
-class _FakeScanThread:
+class _ProbeThread(QThread):
+    """A QThread that notes, each time it is freed, whether it had fully stopped by then."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stopped_when_freed: list[bool] = []
+
+    def deleteLater(self) -> None:  # noqa: N802 - Qt override.
+        self.stopped_when_freed.append(self.wait(0))
+        super().deleteLater()
+
+
+def test_a_detached_thread_is_freed_only_once_it_has_stopped(qapp: QApplication) -> None:
+    """
+    A detached thread must not be freed while it is still winding down.
+
+    A thread emits finished before it destroys the worker that deleteLater left on it, and that
+    teardown calls back into the thread's Python wrapper. Freeing the thread straight from finished
+    let the main thread free that wrapper at the same time: Remove Unchecked crashed the app when a
+    thumbnail decode it had detached came to an end.
+    """
+    busy = threading.Event()
+    thread = _ProbeThread()
+    thread.started.connect(lambda: busy.wait(5.0), Qt.ConnectionType.DirectConnection)
+    thread.start()
+
+    release_thread(thread, timeout_ms=1, detached_event="test_thread_detached", level="DEBUG")
+    # Hold the thread between finished and its exit, as a slow worker teardown would.
+    thread.finished.connect(lambda: time.sleep(0.2), Qt.ConnectionType.DirectConnection)
+    busy.set()
+
+    deadline = time.monotonic() + 5.0
+    while not thread.stopped_when_freed:
+        assert time.monotonic() < deadline, "the detached thread was never freed"
+        QApplication.processEvents()
+    assert thread.stopped_when_freed == [True]
+
+
+class _FakeScanThread(QObject):
     """
     Stands in for a QThread without starting one, so tests stay fast and deterministic.
 
     Exposes only what ScanController.stop touches: quit(), wait(ms), deleteLater(), and a finished
-    signal with connect().
+    signal with connect(). It is a QObject because release_thread parents a helper to the thread.
     """
 
     def __init__(self, *, finishes_in_time: bool) -> None:
+        super().__init__()
         self._finishes_in_time = finishes_in_time
         self.quit_called = False
         self.deleted = False
