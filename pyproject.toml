@@ -106,7 +106,7 @@ zensical = "6 hours"
 zuban = "6 hours"
 
 [build-system]
-requires = ["uv_build>=0.13.0,<1.0.0"]
+requires = ["uv_build>=0.13.5,<1.0.0"]
 build-backend = "uv_build"
 
 # Dev tasks: `uv run poe` lists them. Each task runs through `uv run`, so it uses the locked versions
