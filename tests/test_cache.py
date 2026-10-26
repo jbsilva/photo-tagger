@@ -145,8 +145,8 @@ def test_open_cache_closes_connection_when_setup_fails(tmp_path: Path) -> None:
     opened: list[MagicMock] = []
     real_connect = sqlite3.connect
 
-    def tracking_connect(database: str, **kwargs: bool) -> MagicMock:
-        conn = real_connect(database, **kwargs)
+    def tracking_connect(database: str, *, check_same_thread: bool = True) -> MagicMock:
+        conn = real_connect(database, check_same_thread=check_same_thread)
         wrapper = MagicMock(wraps=conn)
         opened.append(wrapper)
         return wrapper

@@ -307,6 +307,13 @@ disallow_untyped_defs = true
 warn_unreachable = true
 python_executable = ".venv/bin/python"
 
+# logfire 5.3 ships a second copy of itself under `_logfire_sdk/`, added to the path by a `.pth`
+# file. zuban treats that path as project code, not as an installed library, and reports logfire's
+# own errors. This hides them, as mypy does for any installed package.
+[[tool.zuban.overrides]]
+module = ["logfire", "logfire.*"]
+ignore_errors = true
+
 [tool.typos.default.extend-words]
 # PyInstaller's Analysis(...) parameter is literally named "datas"; not a typo for "data".
 datas = "datas"
